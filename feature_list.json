@@ -890,7 +890,7 @@
       "Step 3: Verify response has Content-Length header",
       "Step 4: Verify Content-Length value matches actual body size"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -901,7 +901,7 @@
       "Step 3: Verify response has headers but no body",
       "Step 4: Verify Content-Length is preserved from original response"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -912,7 +912,7 @@
       "Step 3: Verify response is 500 with error page",
       "Step 4: Verify stack trace shown in development mode only"
     ],
-    "passes": false
+    "passes": true
   },
 
   {

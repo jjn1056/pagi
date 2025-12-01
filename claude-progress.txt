@@ -1,5 +1,78 @@
 # PAGI Reference Server - Development Progress
 
+## Session 18: Step 14 - Core HTTP Middleware (2025-12-01)
+
+### Completed Tasks
+
+1. **Implemented PAGI::Middleware::ContentLength**
+   - Auto-adds Content-Length header to responses
+   - Buffers response body to calculate length
+   - Skips streaming responses (more => 1)
+   - Preserves existing Content-Length headers
+   - Supports auto_chunked config option
+
+2. **Implemented PAGI::Middleware::Head**
+   - Handles HEAD requests by suppressing body
+   - Converts HEAD to GET for inner app
+   - Preserves Content-Length header
+   - Suppresses trailers for HEAD requests
+
+3. **Implemented PAGI::Middleware::ErrorHandler**
+   - Catches exceptions and returns error pages
+   - Supports HTML, JSON, text/plain content types
+   - Shows stack trace in development mode only
+   - Supports on_error callback for logging
+   - Respects exception status_code method
+
+4. **Created comprehensive tests**
+   - t/middleware/01-content-length.t (7 tests)
+   - t/middleware/02-head.t (6 tests)
+   - t/middleware/03-error-handler.t (10 tests)
+
+### Test Results
+
+All tests pass:
+```
+prove -l t/
+All tests successful.
+Files=12, Tests=86
+```
+
+Middleware tests:
+```
+prove -l t/middleware/
+All tests successful.
+Files=4, Tests=29
+```
+
+### Features Status: 82/147 passing (56%)
+
+- Steps 1-12 (Server): 75/75 passing (100%)
+- Step 13 (Infrastructure): 4/4 passing (100%)
+- Step 14 (Core HTTP): 3/3 passing (100%)
+- Steps 15-35 (Remaining): 0/65 passing (0%)
+
+### Key Code Changes
+
+**New files:**
+- lib/PAGI/Middleware/ContentLength.pm
+- lib/PAGI/Middleware/Head.pm
+- lib/PAGI/Middleware/ErrorHandler.pm
+- t/middleware/01-content-length.t
+- t/middleware/02-head.t
+- t/middleware/03-error-handler.t
+
+### Next Steps
+
+1. **Step 15: Static File Serving Middleware**
+   - Implement PAGI::Middleware::Static
+   - Path traversal prevention
+   - MIME type detection
+   - ETag and 304 responses
+   - Range request support
+
+---
+
 ## Session 17: Add Middleware and Application Feature Tests (2025-12-01)
 
 ### Completed Tasks
