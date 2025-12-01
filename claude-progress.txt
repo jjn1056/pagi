@@ -1,5 +1,91 @@
 # PAGI Reference Server - Development Progress
 
+## Session 11: Step 8 - TLS Support and Extension (2024-12-01)
+
+### Completed Tasks
+
+1. **Implemented TLS Support**
+   - Added IO::Async::SSL integration for TLS termination
+   - Server automatically uses TLS when `ssl` config is provided
+   - TLS connections properly detected via IO::Socket::SSL handle
+
+2. **Updated PAGI::Server**
+   - Added SSL listener options when `ssl` config provided
+   - Supports `cert_file`, `key_file`, `ca_file`, and `verify_client` options
+   - Auto-adds `tls` extension to `extensions` when SSL enabled
+   - Displays https:// URL in startup message for TLS
+
+3. **Updated PAGI::Server::Connection**
+   - Added `_extract_tls_info()` method to extract TLS metadata from socket
+   - Added `_get_scheme()` and `_get_ws_scheme()` helpers for scheme detection
+   - Added `_get_extensions_for_scope()` to add TLS info to scope
+   - Populates `scope.extensions.tls` with TLS version, cipher suite, certificates
+   - Sets `scheme => 'https'` for HTTP, `'wss'` for WebSocket over TLS
+   - TLS extension omitted entirely for non-TLS connections (per spec)
+
+4. **TLS Extension Per Spec**
+   - `server_cert` - PEM-encoded server certificate
+   - `client_cert_chain` - Array of client certificates (if provided)
+   - `client_cert_name` - DN of client certificate
+   - `client_cert_error` - Verification error (if any)
+   - `tls_version` - Numeric TLS version (0x0303 for TLS 1.2, etc.)
+   - `cipher_suite` - Numeric cipher suite ID
+
+5. **Fixed examples/08-tls-introspection/app.pl**
+   - Added lifespan scope handling
+   - Changed return statement to `\&app;` for proper `do` loading
+
+6. **Created test certificates**
+   - Generated self-signed server certificate (t/certs/server.crt, server.key)
+   - Generated CA and client certificates for future client cert testing
+
+7. **Created comprehensive t/08-tls.t tests**
+   - HTTPS connection works with 08-tls-introspection example app
+   - TLS connection populates scope.extensions.tls correctly
+   - TLS connection has scheme 'https'
+   - Non-TLS connection has no tls extension (per spec)
+   - Non-TLS request shows "Connection is not using TLS"
+
+### Test Results
+
+All tests pass:
+```
+prove -l t/
+All tests successful.
+Files=10, Tests=51
+```
+
+### Features Marked as Passing (32/75)
+
+New features passing (2 new):
+- TLS connection populates scope.extensions.tls - 08-tls-introspection app
+- Non-TLS connections have no tls extension
+
+### Key Code Changes
+
+**lib/PAGI/Server.pm:**
+- Added `IO::Async::SSL` import
+- Modified `listen()` to add SSL options when `$self->{ssl}` configured
+- Added `tls_enabled` flag to track TLS mode
+
+**lib/PAGI/Server/Connection.pm:**
+- Added TLS support methods: `_extract_tls_info()`, `_get_scheme()`, `_get_ws_scheme()`, `_get_extensions_for_scope()`
+- Updated `_create_scope()`, `_create_sse_scope()`, `_create_websocket_scope()` to use TLS-aware helpers
+- TLS info extracted from IO::Socket::SSL handle using Net::SSLeay
+
+### Next Steps for Future Sessions
+
+1. **Step 8 continued: Client Certificate Testing**
+   - Test client certificate capture and verification
+   - Update CLI to support --ssl-cert and --ssl-key options
+
+2. **Step 9: PSGI Compatibility Bridge**
+   - Create PAGI::App::WrapPSGI adapter module
+   - Convert PAGI scope to PSGI %env
+   - Support streaming PSGI responses
+
+---
+
 ## Session 10: Step 7 - Extensions Framework (2024-11-30)
 
 ### Completed Tasks

@@ -13,7 +13,22 @@ async sub drain_body ($receive) {
 }
 
 async sub app ($scope, $receive, $send) {
-    die "Unsupported scope" if $scope->{type} ne 'http';
+    # Handle lifespan scope
+    if ($scope->{type} eq 'lifespan') {
+        while (1) {
+            my $event = await $receive->();
+            if ($event->{type} eq 'lifespan.startup') {
+                await $send->({ type => 'lifespan.startup.complete' });
+            }
+            elsif ($event->{type} eq 'lifespan.shutdown') {
+                await $send->({ type => 'lifespan.shutdown.complete' });
+                last;
+            }
+        }
+        return;
+    }
+
+    die "Unsupported scope type: $scope->{type}" unless $scope->{type} eq 'http';
     await drain_body($receive);
 
     my $tls = $scope->{extensions}{tls};
@@ -38,4 +53,4 @@ async sub app ($scope, $receive, $send) {
     await $send->({ type => 'http.response.body', body => $body, more => 0 });
 }
 
-return \&app unless caller;
+\&app;

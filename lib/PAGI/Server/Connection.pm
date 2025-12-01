@@ -57,6 +57,8 @@ sub new ($class, %args) {
         server      => $args{server},
         extensions  => $args{extensions} // {},
         state       => $args{state} // {},
+        tls_enabled => $args{tls_enabled} // 0,
+        tls_info    => undef,  # Populated on first request if TLS
         buffer      => '',
         closed      => 0,
         response_started => 0,
@@ -75,6 +77,11 @@ sub new ($class, %args) {
         sse_mode          => 0,
         sse_started       => 0,
     }, $class;
+
+    # Extract TLS info if this is a TLS connection
+    if ($self->{tls_enabled}) {
+        $self->_extract_tls_info;
+    }
 
     return $self;
 }
@@ -241,7 +248,7 @@ sub _create_scope ($self, $request) {
         },
         http_version => $request->{http_version},
         method       => $request->{method},
-        scheme       => 'http',  # Will be 'https' when TLS is enabled
+        scheme       => $self->_get_scheme,
         path         => $request->{path},
         raw_path     => $request->{raw_path},
         query_string => $request->{query_string},
@@ -250,7 +257,7 @@ sub _create_scope ($self, $request) {
         client       => [$client_host, $client_port],
         server       => [$server_host, $server_port],
         state        => { %{$self->{state}} },  # Shallow copy per spec
-        extensions   => $self->{extensions},
+        extensions   => $self->_get_extensions_for_scope,
     };
 
     return $scope;
@@ -613,6 +620,142 @@ sub _close ($self) {
 }
 
 #
+# TLS Support Methods
+#
+
+sub _extract_tls_info ($self) {
+    my $stream = $self->{stream};
+    my $handle = $stream->read_handle;
+
+    # Check if handle is an IO::Socket::SSL
+    return unless $handle && $handle->isa('IO::Socket::SSL');
+
+    my $tls_info = {
+        server_cert       => undef,
+        client_cert_chain => [],
+        client_cert_name  => undef,
+        client_cert_error => undef,
+        tls_version       => undef,
+        cipher_suite      => undef,
+    };
+
+    # Get TLS version - IO::Socket::SSL returns something like 'TLSv1_3'
+    if (my $version_str = $handle->get_sslversion) {
+        # Map version string to numeric value per TLS spec
+        my %version_map = (
+            'SSLv3'   => 0x0300,
+            'TLSv1'   => 0x0301,
+            'TLSv1_1' => 0x0302,
+            'TLSv1_2' => 0x0303,
+            'TLSv1_3' => 0x0304,
+        );
+        $tls_info->{tls_version} = $version_map{$version_str};
+    }
+
+    # Get cipher suite
+    if (my $cipher = $handle->get_cipher) {
+        # IO::Socket::SSL provides cipher name, we need to map to numeric
+        # For now, get the raw bits if available, or store undef
+        # IO::Socket::SSL doesn't easily expose the numeric cipher ID
+        # We'll try to get it from the SSL object
+        my $ssl = $handle->_get_ssl_object;
+        if ($ssl && $ssl->can('get_cipher_bits')) {
+            # Unfortunately, OpenSSL doesn't expose cipher ID easily via perl bindings
+            # We'll leave cipher_suite as undef for this reference implementation
+            # A production server could use Net::SSLeay::get_current_cipher and
+            # Net::SSLeay::CIPHER_get_id for the actual numeric ID
+            eval {
+                require Net::SSLeay;
+                my $current_cipher = Net::SSLeay::get_current_cipher($ssl);
+                if ($current_cipher) {
+                    my $id = Net::SSLeay::CIPHER_get_id($current_cipher);
+                    # The ID from OpenSSL includes protocol bits in upper bytes
+                    # We want just the cipher suite ID (lower 16 bits usually, but SSL3+ uses different encoding)
+                    # For TLS, the ID is returned as a 32-bit value with protocol in upper bits
+                    # Extract lower 16 bits for the cipher suite
+                    $tls_info->{cipher_suite} = $id & 0xFFFF if defined $id;
+                }
+            };
+            # Ignore errors - cipher_suite will remain undef
+        }
+    }
+
+    # Get server certificate (our certificate)
+    eval {
+        my $cert = $handle->get_servercert;
+        if ($cert) {
+            require Net::SSLeay;
+            $tls_info->{server_cert} = Net::SSLeay::PEM_get_string_X509($cert);
+        }
+    };
+
+    # Get client certificate if provided
+    eval {
+        my $client_cert = $handle->peer_certificate;
+        if ($client_cert) {
+            require Net::SSLeay;
+
+            # Get client cert chain
+            my @chain;
+            push @chain, Net::SSLeay::PEM_get_string_X509($client_cert);
+
+            # Try to get additional certs in chain
+            if (my $ssl = $handle->_get_ssl_object) {
+                my $chain_obj = Net::SSLeay::get_peer_cert_chain($ssl);
+                if ($chain_obj) {
+                    for my $i (0 .. Net::SSLeay::sk_X509_num($chain_obj) - 1) {
+                        my $cert = Net::SSLeay::sk_X509_value($chain_obj, $i);
+                        push @chain, Net::SSLeay::PEM_get_string_X509($cert) if $cert;
+                    }
+                }
+            }
+            $tls_info->{client_cert_chain} = \@chain;
+
+            # Get client cert DN (Subject)
+            my $subject = Net::SSLeay::X509_NAME_oneline(
+                Net::SSLeay::X509_get_subject_name($client_cert)
+            );
+            $tls_info->{client_cert_name} = $subject if $subject;
+
+            # Check for verification errors
+            my $verify_result = $handle->get_sslversion_int;
+            # Actually, use verify_result
+            if (my $ssl = $handle->_get_ssl_object) {
+                my $result = Net::SSLeay::get_verify_result($ssl);
+                if ($result != 0) {  # X509_V_OK = 0
+                    $tls_info->{client_cert_error} = Net::SSLeay::X509_verify_cert_error_string($result);
+                }
+            }
+        }
+    };
+
+    $self->{tls_info} = $tls_info;
+}
+
+sub _get_scheme ($self) {
+    return $self->{tls_enabled} ? 'https' : 'http';
+}
+
+sub _get_ws_scheme ($self) {
+    return $self->{tls_enabled} ? 'wss' : 'ws';
+}
+
+sub _get_extensions_for_scope ($self) {
+    my %extensions = %{$self->{extensions}};
+
+    # Add TLS info to extensions if this is a TLS connection
+    if ($self->{tls_enabled} && $self->{tls_info}) {
+        $extensions{tls} = $self->{tls_info};
+    }
+    # Remove tls extension if not a TLS connection (per spec)
+    elsif (!$self->{tls_enabled}) {
+        delete $extensions{tls};
+    }
+
+    return \%extensions;
+}
+
+#
 # SSE (Server-Sent Events) Support Methods
 #
 
@@ -672,7 +815,7 @@ sub _create_sse_scope ($self, $request) {
         },
         http_version => $request->{http_version},
         method       => $request->{method},
-        scheme       => 'http',  # Will be 'https' when TLS is enabled
+        scheme       => $self->_get_scheme,
         path         => $request->{path},
         raw_path     => $request->{raw_path},
         query_string => $request->{query_string},
@@ -681,7 +824,7 @@ sub _create_sse_scope ($self, $request) {
         client       => [$client_host, $client_port],
         server       => [$server_host, $server_port],
         state        => { %{$self->{state}} },  # Shallow copy per spec
-        extensions   => $self->{extensions},
+        extensions   => $self->_get_extensions_for_scope,
     };
 
     return $scope;
@@ -902,7 +1045,7 @@ sub _create_websocket_scope ($self, $request) {
             loop         => $loop,
         },
         http_version => $request->{http_version},
-        scheme       => 'ws',  # Will be 'wss' when TLS is enabled
+        scheme       => $self->_get_ws_scheme,
         path         => $request->{path},
         raw_path     => $request->{raw_path},
         query_string => $request->{query_string},
@@ -912,7 +1055,7 @@ sub _create_websocket_scope ($self, $request) {
         server       => [$server_host, $server_port],
         subprotocols => \@subprotocols,
         state        => { %{$self->{state}} },  # Shallow copy per spec
-        extensions   => $self->{extensions},
+        extensions   => $self->_get_extensions_for_scope,
     };
 
     return $scope;

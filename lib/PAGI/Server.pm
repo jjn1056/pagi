@@ -5,6 +5,7 @@ use experimental 'signatures';
 use parent 'IO::Async::Notifier';
 use IO::Async::Listener;
 use IO::Async::Stream;
+use IO::Async::SSL;
 use Future;
 use Future::AsyncAwait;
 use Scalar::Util qw(weaken);
@@ -188,8 +189,8 @@ async sub listen ($self) {
     $self->add_child($listener);
     $self->{listener} = $listener;
 
-    # Start listening
-    my $listen_future = $listener->listen(
+    # Build listener options
+    my %listen_opts = (
         addr => {
             family   => 'inet',
             socktype => 'stream',
@@ -197,6 +198,31 @@ async sub listen ($self) {
             port     => $self->{port},
         },
     );
+
+    # Add SSL options if configured
+    if (my $ssl = $self->{ssl}) {
+        $listen_opts{extensions} = ['SSL'];
+        $listen_opts{SSL_server} = 1;
+        $listen_opts{SSL_cert_file} = $ssl->{cert_file} if $ssl->{cert_file};
+        $listen_opts{SSL_key_file} = $ssl->{key_file} if $ssl->{key_file};
+
+        # Client certificate verification
+        if ($ssl->{verify_client}) {
+            $listen_opts{SSL_verify_mode} = 0x01;  # SSL_VERIFY_PEER
+            $listen_opts{SSL_ca_file} = $ssl->{ca_file} if $ssl->{ca_file};
+        } else {
+            $listen_opts{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
+        }
+
+        # Mark that TLS is enabled
+        $self->{tls_enabled} = 1;
+
+        # Auto-add tls extension when SSL is configured
+        $self->{extensions}{tls} = {} unless exists $self->{extensions}{tls};
+    }
+
+    # Start listening
+    my $listen_future = $listener->listen(%listen_opts);
 
     await $listen_future;
 
@@ -207,7 +233,8 @@ async sub listen ($self) {
 
     unless ($self->{quiet}) {
         my $log = $self->{access_log};
-        print $log "PAGI Server listening on http://$self->{host}:$self->{bound_port}/\n";
+        my $scheme = $self->{tls_enabled} ? 'https' : 'http';
+        print $log "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/\n";
     }
 
     return $self;
@@ -217,12 +244,13 @@ sub _on_connection ($self, $stream) {
     weaken(my $weak_self = $self);
 
     my $conn = PAGI::Server::Connection->new(
-        stream     => $stream,
-        app        => $self->{app},
-        protocol   => $self->{protocol},
-        server     => $self,
-        extensions => $self->{extensions},
-        state      => $self->{state},
+        stream      => $stream,
+        app         => $self->{app},
+        protocol    => $self->{protocol},
+        server      => $self,
+        extensions  => $self->{extensions},
+        state       => $self->{state},
+        tls_enabled => $self->{tls_enabled} // 0,
     );
 
     # Track the connection
