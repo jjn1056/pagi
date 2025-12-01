@@ -22,6 +22,7 @@ pagi-server - PAGI Reference Server CLI
         --host, -h      Bind address (default: 127.0.0.1)
         --port, -p      Bind port (default: 5000)
         --workers, -w   Number of worker processes (default: 1)
+        --loop, -l      Event loop backend (Poll, EV, Epoll, UV)
         --ssl-cert      Path to SSL certificate (enables HTTPS)
         --ssl-key       Path to SSL private key
         --access-log    Path to access log file (default: STDERR)
@@ -36,6 +37,63 @@ pagi-server - PAGI Reference Server CLI
     # Start with HTTPS
     pagi-server -a myapp.pl -p 3000 --ssl-cert cert.pem --ssl-key key.pem
 
+    # Start with multiple workers
+    pagi-server -a myapp.pl -p 5000 --workers 4
+
+    # Use a specific event loop backend (for better performance)
+    pagi-server -a myapp.pl -p 5000 --workers 4 --loop EV
+
+    # Or via environment variable
+    IO_ASYNC_LOOP=Epoll pagi-server -a myapp.pl -p 5000 --workers 4
+
+=head1 ENVIRONMENT
+
+=over 4
+
+=item IO_ASYNC_LOOP
+
+Specifies which IO::Async::Loop backend to use. The default is auto-detection,
+which typically selects Poll on most systems. For better performance, especially
+with many concurrent connections, install and use one of:
+
+    IO_ASYNC_LOOP=Epoll    # Linux (requires IO::Async::Loop::Epoll)
+    IO_ASYNC_LOOP=EV       # Cross-platform (requires IO::Async::Loop::EV)
+
+The --loop command-line option takes precedence over this environment variable.
+
+The chosen loop type is displayed at startup unless --quiet is specified.
+In multi-worker mode, all worker processes inherit the same loop type.
+
+=back
+
+=head1 EVENT LOOP BACKENDS
+
+The following event loop backends are supported (requires corresponding module):
+
+=over 4
+
+=item Poll
+
+The default fallback. Uses poll() system call. O(n) complexity per event.
+Works everywhere but slower with many connections.
+
+=item EV
+
+High-performance backend using libev. Uses kqueue on macOS/BSD, epoll on Linux.
+Recommended for production. Install: C<cpanm IO::Async::Loop::EV EV>
+
+=item Epoll
+
+Linux-specific backend using epoll. O(1) complexity.
+Install: C<cpanm IO::Async::Loop::Epoll>
+
+=item UV
+
+Backend using libuv (Node.js's event library). Cross-platform.
+Install: C<cpanm IO::Async::Loop::UV UV>
+
+=back
+
 =cut
 
 my %opts = (
@@ -49,6 +107,7 @@ GetOptions(
     'host|h=s'      => \$opts{host},
     'port|p=i'      => \$opts{port},
     'workers|w=i'   => \$opts{workers},
+    'loop|l=s'      => \$opts{loop},
     'ssl-cert=s'    => \$opts{ssl_cert},
     'ssl-key=s'     => \$opts{ssl_key},
     'access-log=s'  => \$opts{access_log},
@@ -101,8 +160,16 @@ if ($opts{access_log}) {
     $server_opts{access_log} = $log_fh;
 }
 
-# Create event loop and server
-my $loop = IO::Async::Loop->new;
+# Create event loop (--loop option takes precedence over IO_ASYNC_LOOP env)
+my $loop;
+if ($opts{loop}) {
+    my $loop_class = "IO::Async::Loop::$opts{loop}";
+    eval "require $loop_class" or die "Error: Cannot load loop backend '$opts{loop}': $@\n" .
+        "Install it with: cpanm $loop_class\n";
+    $loop = $loop_class->new;
+} else {
+    $loop = IO::Async::Loop->new;
+}
 
 my $server = PAGI::Server->new(%server_opts);
 $loop->add($server);
