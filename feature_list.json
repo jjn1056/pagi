@@ -846,7 +846,7 @@
       "Step 3: Verify returned value is a valid async sub",
       "Step 4: Verify wrapped app handles requests correctly"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -856,7 +856,7 @@
       "Step 2: Send request to composed app",
       "Step 3: Verify both middleware are applied in correct order"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -868,7 +868,7 @@
       "Step 4: Send request not matching condition",
       "Step 5: Verify middleware is skipped"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -878,7 +878,7 @@
       "Step 2: Verify inner app receives modified scope",
       "Step 3: Verify original scope object is not mutated"
     ],
-    "passes": false
+    "passes": true
   },
 
   {
