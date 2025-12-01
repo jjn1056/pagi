@@ -79,10 +79,11 @@ die "App file must return a coderef" unless ref $app eq 'CODE';
 
 # Build server options
 my %server_opts = (
-    app   => $app,
-    host  => $opts{host},
-    port  => $opts{port},
-    quiet => $opts{quiet} ? 1 : 0,
+    app     => $app,
+    host    => $opts{host},
+    port    => $opts{port},
+    quiet   => $opts{quiet} ? 1 : 0,
+    workers => $opts{workers} > 1 ? $opts{workers} : 0,  # 0 = single process mode
 );
 
 # Add SSL config if provided

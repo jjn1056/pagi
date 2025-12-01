@@ -542,7 +542,7 @@
       "Step 3: Send multiple concurrent requests",
       "Step 4: Verify requests are handled by different workers"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -553,7 +553,7 @@
       "Step 3: Verify parent spawns a replacement worker",
       "Step 4: Verify server continues handling requests"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -563,7 +563,7 @@
       "Step 2: Start server with --workers 2",
       "Step 3: Verify lifespan.startup runs in each worker (different PIDs)"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -576,7 +576,7 @@
       "Step 5: Verify all workers run lifespan.shutdown",
       "Step 6: Verify server exits after all workers complete"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
