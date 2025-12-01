@@ -176,18 +176,12 @@ sub _create_receive ($self, $request) {
         return { type => 'http.disconnect' } unless $weak_self;
         return { type => 'http.disconnect' } if $weak_self->{closed};
 
-        # Check if there's a pending receive
-        if ($weak_self->{receive_pending}) {
-            # Already waiting, return the pending future
-            return await $weak_self->{receive_pending};
-        }
-
-        # Check queue first
+        # Check queue first - events from disconnect handler
         if (@{$weak_self->{receive_queue}}) {
             return shift @{$weak_self->{receive_queue}};
         }
 
-        # For requests without body, return empty body immediately
+        # For requests without body, return empty body immediately (first call only)
         if (!$content_length && !$body_sent) {
             $body_sent = 1;
             return {
@@ -197,13 +191,8 @@ sub _create_receive ($self, $request) {
             };
         }
 
-        # If body already sent, return disconnect
-        if ($body_sent) {
-            return { type => 'http.disconnect' };
-        }
-
-        # Wait for body data from buffer
-        if (length $weak_self->{buffer} > 0) {
+        # Wait for body data from buffer (for POST/PUT with body)
+        if (!$body_sent && length $weak_self->{buffer} > 0) {
             my $body = $weak_self->{buffer};
             $weak_self->{buffer} = '';
             $body_sent = 1;
@@ -214,19 +203,39 @@ sub _create_receive ($self, $request) {
             };
         }
 
-        # No body yet, return empty body
-        $body_sent = 1;
-        return {
-            type => 'http.request',
-            body => '',
-            more => 0,
-        };
+        # No body data in buffer but not yet sent empty body
+        if (!$body_sent) {
+            $body_sent = 1;
+            return {
+                type => 'http.request',
+                body => '',
+                more => 0,
+            };
+        }
+
+        # Body already sent - wait for disconnect event
+        # Create a pending Future that will be completed when disconnect happens
+        if (!$weak_self->{receive_pending}) {
+            $weak_self->{receive_pending} = Future->new;
+        }
+
+        # Return disconnect if connection already closed
+        if ($weak_self->{closed}) {
+            my $f = $weak_self->{receive_pending};
+            $weak_self->{receive_pending} = undef;
+            return { type => 'http.disconnect' };
+        }
+
+        # Wait for the pending future to be completed
+        return await $weak_self->{receive_pending};
     };
 }
 
 sub _create_send ($self, $request) {
     my $chunked = 0;
     my $response_started = 0;
+    my $expects_trailers = 0;
+    my $body_complete = 0;
 
     weaken(my $weak_self = $self);
 
@@ -240,6 +249,7 @@ sub _create_send ($self, $request) {
             return if $response_started;
             $response_started = 1;
             $weak_self->{response_started} = 1;
+            $expects_trailers = $event->{trailers} // 0;
 
             my $status = $event->{status} // 200;
             my $headers = $event->{headers} // [];
@@ -267,21 +277,50 @@ sub _create_send ($self, $request) {
         }
         elsif ($type eq 'http.response.body') {
             return unless $response_started;
+            return if $body_complete;
 
             my $body = $event->{body} // '';
             my $more = $event->{more} // 0;
 
-            if (length $body || !$more) {
-                my $data = $weak_self->{protocol}->serialize_response_body(
-                    $body, $more, $chunked
-                );
-                $weak_self->{stream}->write($data) if length $data;
+            if ($chunked) {
+                # For chunked encoding, send the chunk
+                if (length $body) {
+                    my $len = sprintf("%x", length($body));
+                    $weak_self->{stream}->write("$len\r\n$body\r\n");
+                }
 
-                # If chunked and no more data, send final chunk
-                if ($chunked && !$more && length($body) == 0) {
-                    $weak_self->{stream}->write("0\r\n\r\n");
+                # If no more body data coming
+                if (!$more) {
+                    $body_complete = 1;
+                    # If trailers are expected, don't send final chunk terminator yet
+                    # The trailers event will send it
+                    if (!$expects_trailers) {
+                        $weak_self->{stream}->write("0\r\n\r\n");
+                    }
                 }
             }
+            else {
+                # Non-chunked: just send the body
+                $weak_self->{stream}->write($body) if length $body;
+            }
+        }
+        elsif ($type eq 'http.response.trailers') {
+            return unless $response_started;
+            return unless $expects_trailers;
+            return unless $chunked;  # Trailers only work with chunked encoding
+
+            my $trailer_headers = $event->{headers} // [];
+
+            # Send final chunk + trailers
+            my $trailers = "0\r\n";
+            for my $header (@$trailer_headers) {
+                my ($name, $value) = @$header;
+                $trailers .= "$name: $value\r\n";
+            }
+            $trailers .= "\r\n";
+
+            $weak_self->{stream}->write($trailers);
+            $body_complete = 1;
         }
 
         return;
@@ -307,13 +346,11 @@ sub _send_error_response ($self, $status, $message) {
 }
 
 sub _handle_disconnect ($self) {
-    return if $self->{closed};
-
-    # Queue disconnect event
+    # Queue disconnect event (do this even if already closed)
     push @{$self->{receive_queue}}, { type => 'http.disconnect' };
 
     # Complete any pending receive
-    if ($self->{receive_pending}) {
+    if ($self->{receive_pending} && !$self->{receive_pending}->is_ready) {
         $self->{receive_pending}->done({ type => 'http.disconnect' });
         $self->{receive_pending} = undef;
     }
@@ -322,6 +359,9 @@ sub _handle_disconnect ($self) {
 sub _close ($self) {
     return if $self->{closed};
     $self->{closed} = 1;
+
+    # Complete any pending receive with disconnect
+    $self->_handle_disconnect;
 
     if ($self->{stream}) {
         $self->{stream}->close_when_empty;

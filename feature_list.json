@@ -51,7 +51,7 @@
       "Step 4: Verify response body contains 'Chunk 1', 'Chunk 2', 'Chunk 3' in order",
       "Step 5: Verify response completes successfully"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -62,7 +62,7 @@
       "Step 3: Verify Trailer header is present in response",
       "Step 4: Verify x-stream-complete: 1 trailer appears after body"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
