@@ -129,7 +129,7 @@
       "Step 4: Send a text message 'Hello'",
       "Step 5: Verify server responds with 'echo: Hello'"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -140,7 +140,7 @@
       "Step 3: Send a binary frame with bytes",
       "Step 4: Verify server echoes the binary frame unchanged"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -152,7 +152,7 @@
       "Step 4: Verify server responds with close frame",
       "Step 5: Verify websocket.disconnect event is emitted to app"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -163,7 +163,7 @@
       "Step 3: Verify server responds with negotiated subprotocol in websocket.accept",
       "Step 4: Verify Sec-WebSocket-Protocol in 101 response matches"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -175,7 +175,7 @@
       "Step 4: Verify server responds with PONG frame",
       "Step 5: Verify PING/PONG is transparent to the application"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -793,7 +793,7 @@
       "Step 3: Verify server responds with HTTP 403 Forbidden",
       "Step 4: Verify connection is closed"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",

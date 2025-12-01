@@ -1,5 +1,82 @@
 # PAGI Reference Server - Development Progress
 
+## Session 7: Step 4 - WebSocket Support (2024-11-30)
+
+### Completed Tasks
+
+1. **Implemented WebSocket Support**
+   - Detect WebSocket upgrade requests (Upgrade: websocket header)
+   - Create websocket scope with `type => 'websocket'` and `subprotocols` array
+   - Implemented websocket.connect event (first receive returns connect event)
+   - Implemented websocket.accept event (sends 101 Switching Protocols)
+   - Implemented websocket.send for text and binary frames
+   - Implemented websocket.close with proper close handshake
+   - Implemented websocket.receive for incoming text/binary frames
+   - Implemented websocket.disconnect event when connection closes
+   - PING/PONG handling (automatic, transparent to application)
+
+2. **Added Protocol::WebSocket Integration**
+   - Using Protocol::WebSocket::Frame for frame parsing/building
+   - Fixed binary frame handling - use `next_bytes()` instead of `next()` to avoid UTF-8 corruption
+   - Proper SHA1 WebSocket key calculation for 101 response
+
+3. **Updated Connection.pm**
+   - Added `_is_websocket_upgrade()` detection
+   - Added `_handle_websocket_request()` async handler
+   - Added `_create_websocket_scope()` with subprotocol parsing
+   - Added `_create_websocket_receive()` and `_create_websocket_send()`
+   - Added `_process_websocket_frames()` for frame processing
+   - Updated `_handle_disconnect()` to use websocket.disconnect for WS mode
+
+4. **Fixed examples/04-websocket-echo/app.pl**
+   - Changed return statement to `\&app;` for proper `do` loading
+
+5. **Created comprehensive t/04-websocket.t tests**
+   - WebSocket handshake and text echo
+   - Binary frame echo (verified raw bytes preserved)
+   - Multiple messages in sequence
+   - Clean close handshake
+   - WebSocket scope type verification
+   - Subprotocol parsing from Sec-WebSocket-Protocol header
+   - WebSocket upgrade rejection returns 403
+
+### Test Results
+
+All tests pass:
+```
+prove -l t/
+All tests successful.
+Files=10, Tests=30
+```
+
+### Features Marked as Passing (20/75)
+
+New features passing (6 new):
+- WebSocket echo - 04-websocket-echo app echoes messages
+- WebSocket binary frames are echoed correctly
+- WebSocket clean close handshake works
+- WebSocket subprotocol negotiation works
+- WebSocket PING frames receive automatic PONG response
+- WebSocket upgrade rejection returns HTTP 403
+
+### Key Code Changes
+
+**lib/PAGI/Server/Connection.pm:**
+- Added WebSocket imports: Protocol::WebSocket::Frame, Digest::SHA, Encode
+- Added WebSocket state fields: websocket_mode, websocket_frame, websocket_accepted
+- Added WS_GUID constant for handshake
+- Implemented full WebSocket lifecycle handling
+
+### Next Steps for Future Sessions
+
+1. **Step 5: Server-Sent Events (SSE)** (next priority)
+   - Detect SSE requests (GET + Accept: text/event-stream)
+   - Create sse scope
+   - Handle sse.start and sse.send events
+   - Format SSE wire protocol (event:, data:, id:, retry:)
+
+---
+
 ## Session 6: Fix Async Future Warnings (2024-11-30)
 
 ### Issue Analyzed
