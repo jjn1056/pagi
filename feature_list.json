@@ -322,7 +322,7 @@
       "Step 3: Verify response status is 200",
       "Step 4: Verify response body contains 'PSGI says hi'"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -332,7 +332,7 @@
       "Step 2: Send a POST request with body 'test data'",
       "Step 3: Verify response body contains 'Body: test data'"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -348,7 +348,7 @@
       "Step 8: Verify HTTP_* headers are set",
       "Step 9: Verify psgi.version, psgi.url_scheme, psgi.input, psgi.errors are set"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -358,7 +358,7 @@
       "Step 2: Wrap it with PAGI::App::WrapPSGI",
       "Step 3: Verify streaming response is converted to http.response.body events"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",

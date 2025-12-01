@@ -67,8 +67,13 @@ sub to_app ($self) {
         # Call PSGI app
         my $response = $psgi_app->($env);
 
-        # Handle response
-        await $self->_send_response($send, $response);
+        # Handle response - could be arrayref or coderef (streaming)
+        if (ref $response eq 'CODE') {
+            # Delayed/streaming response
+            await $self->_handle_streaming_response($send, $response);
+        } else {
+            await $self->_send_response($send, $response);
+        }
     };
 }
 
@@ -118,7 +123,6 @@ sub _build_env ($self, $scope) {
 }
 
 async sub _send_response ($self, $send, $response) {
-    # TODO: Implement in Step 9
     my ($status, $headers, $body) = @$response;
 
     await $send->({
@@ -135,9 +139,21 @@ async sub _send_response ($self, $send, $response) {
             more => 0,
         });
     } elsif (ref $body eq 'CODE') {
-        # Streaming response
-        $body->(sub {
-            # TODO: Handle streaming callback
+        # Streaming response body (coderef)
+        # This is the "pull" pattern where we call the coderef repeatedly
+        while (1) {
+            my $chunk = $body->();
+            last unless defined $chunk;
+            await $send->({
+                type => 'http.response.body',
+                body => $chunk,
+                more => 1,
+            });
+        }
+        await $send->({
+            type => 'http.response.body',
+            body => '',
+            more => 0,
         });
     } else {
         # Filehandle
@@ -150,6 +166,135 @@ async sub _send_response ($self, $send, $response) {
         });
     }
 }
+
+# Handle PSGI delayed/streaming response pattern
+async sub _handle_streaming_response ($self, $send, $responder_callback) {
+    my @body_chunks;
+    my $response_started = 0;
+    my $writer;
+
+    # Create a writer object for streaming
+    my $create_writer = sub ($send_ref, $status, $headers) {
+        return {
+            write => sub {
+                my ($chunk) = @_;
+                push @body_chunks, $chunk;
+            },
+            close => sub {
+                # Mark as closed - will be handled after responder returns
+            },
+        };
+    };
+
+    # Create the responder callback for the PSGI app
+    my $responder = sub {
+        my ($response) = @_;
+
+        if (@$response == 3) {
+            # Complete response [status, headers, body]
+            my ($status, $headers, $body) = @$response;
+            $response_started = 1;
+
+            # Store for later sending
+            push @body_chunks, { status => $status, headers => $headers, body => $body };
+            return;
+        } elsif (@$response == 2) {
+            # Streaming response [status, headers] - return writer
+            my ($status, $headers) = @$response;
+            $response_started = 1;
+
+            # Store header info
+            push @body_chunks, { status => $status, headers => $headers };
+
+            # Return a writer object
+            $writer = bless {
+                chunks => \@body_chunks,
+            }, 'PAGI::App::WrapPSGI::Writer';
+
+            return $writer;
+        }
+    };
+
+    # Call the PSGI delayed response callback
+    $responder_callback->($responder);
+
+    # Now send all the collected response data
+    if (@body_chunks) {
+        my $first = shift @body_chunks;
+
+        if (ref $first eq 'HASH') {
+            my $status = $first->{status};
+            my $headers = $first->{headers};
+            my $body = $first->{body};
+
+            await $send->({
+                type    => 'http.response.start',
+                status  => $status,
+                headers => [ map { [lc($_->[0]), $_->[1]] } @{_pairs($headers)} ],
+            });
+
+            if (defined $body) {
+                # Complete response with body
+                await $self->_send_body($send, $body);
+            } else {
+                # Streaming - send collected chunks
+                for my $chunk (@body_chunks) {
+                    await $send->({
+                        type => 'http.response.body',
+                        body => $chunk,
+                        more => 1,
+                    });
+                }
+                await $send->({
+                    type => 'http.response.body',
+                    body => '',
+                    more => 0,
+                });
+            }
+        }
+    }
+}
+
+async sub _send_body ($self, $send, $body) {
+    if (ref $body eq 'ARRAY') {
+        my $content = join '', @$body;
+        await $send->({
+            type => 'http.response.body',
+            body => $content,
+            more => 0,
+        });
+    } elsif (ref $body eq 'GLOB' || (ref $body && $body->can('getline'))) {
+        # Filehandle
+        local $/;
+        my $content = <$body>;
+        await $send->({
+            type => 'http.response.body',
+            body => $content // '',
+            more => 0,
+        });
+    } else {
+        await $send->({
+            type => 'http.response.body',
+            body => $body // '',
+            more => 0,
+        });
+    }
+}
+
+# Simple writer class for streaming responses
+package PAGI::App::WrapPSGI::Writer;
+
+sub write {
+    my ($self, $chunk) = @_;
+    push @{$self->{chunks}}, $chunk;
+}
+
+sub close {
+    my ($self) = @_;
+    # Nothing special needed - chunks are already collected
+}
+
+package PAGI::App::WrapPSGI;
 
 sub _pairs ($arrayref) {
     my @pairs;
