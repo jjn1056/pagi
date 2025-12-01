@@ -1,13 +1,13 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
-use Getopt::Long;
-use Pod::Usage;
-use IO::Async::Loop;
 
 use lib 'lib';
-use PAGI::Server;
+use PAGI::Runner;
+
+PAGI::Runner->new->run(@ARGV);
+
+__END__
 
 =head1 NAME
 
@@ -15,36 +15,170 @@ pagi-server - PAGI Reference Server CLI
 
 =head1 SYNOPSIS
 
-    pagi-server --app app.pl [options]
+    pagi-server [options] [app] [key=value ...]
 
-    Options:
-        --app, -a       Path to .pl file returning PAGI app coderef (required)
-        --host, -h      Bind address (default: 127.0.0.1)
-        --port, -p      Bind port (default: 5000)
-        --workers, -w   Number of worker processes (default: 1)
-        --loop, -l      Event loop backend (Poll, EV, Epoll, UV)
-        --ssl-cert      Path to SSL certificate (enables HTTPS)
-        --ssl-key       Path to SSL private key
-        --access-log    Path to access log file (default: STDERR)
-        --quiet, -q     Suppress startup banner
-        --help          Show this help
+    # Serve current directory (default)
+    pagi-server
+
+    # Serve a specific directory
+    pagi-server PAGI::App::Directory root=/var/www
+
+    # Run a PAGI app file
+    pagi-server ./app.pl
+    pagi-server --app app.pl        # legacy syntax
+
+    # With options
+    pagi-server -p 8080 PAGI::App::Directory root=/var/www
+    pagi-server -w 4 ./myapp.pl
+
+=head1 DESCRIPTION
+
+pagi-server is the command-line interface for running PAGI applications.
+It can load apps from files or from installed C<PAGI::App::*> modules.
+
+=head1 OPTIONS
+
+=over 4
+
+=item --app, -a FILE
+
+Path to .pl/.psgi file returning PAGI app coderef. Legacy option for
+backward compatibility; you can also just pass the file as an argument.
+
+=item --host, -h HOST
+
+Bind address (default: 127.0.0.1)
+
+=item --port, -p PORT
+
+Bind port (default: 5000)
+
+=item --workers, -w NUM
+
+Number of worker processes (default: 1)
+
+=item --loop, -l BACKEND
+
+Event loop backend (Poll, EV, Epoll, UV). Default is auto-detect.
+
+=item --ssl-cert FILE
+
+Path to SSL certificate (enables HTTPS)
+
+=item --ssl-key FILE
+
+Path to SSL private key
+
+=item --access-log FILE
+
+Path to access log file (default: STDERR)
+
+=item --quiet, -q
+
+Suppress startup banner
+
+=item --help
+
+Show this help
+
+=back
+
+=head1 APP SPECIFICATION
+
+The app can be specified in three ways:
+
+=head2 Module Name
+
+If the argument contains C<::>, it's treated as a Perl module name:
+
+    pagi-server PAGI::App::Directory root=/var/www
+
+The module must have C<new()> and C<to_app()> methods. Constructor
+arguments are passed as C<key=value> pairs.
+
+=head2 File Path
+
+If the argument contains C</> or ends with C<.pl>/C<.psgi>:
+
+    pagi-server ./app.pl
+    pagi-server /path/to/myapp.psgi
+
+The file must return a PAGI app coderef.
+
+=head2 Default
+
+If no app is specified, serves the current directory:
+
+    pagi-server
+    # equivalent to: pagi-server PAGI::App::Directory root=.
 
 =head1 EXAMPLES
 
-    # Start with a simple app
-    pagi-server --app examples/01-hello-http/app.pl --port 8080
+    # Serve current directory on default port
+    pagi-server
 
-    # Start with HTTPS
+    # Serve /var/www on port 8080
+    pagi-server -p 8080 PAGI::App::Directory root=/var/www
+
+    # Run an app file with HTTPS
     pagi-server -a myapp.pl -p 3000 --ssl-cert cert.pem --ssl-key key.pem
 
-    # Start with multiple workers
-    pagi-server -a myapp.pl -p 5000 --workers 4
+    # Run with multiple workers
+    pagi-server -w 4 ./myapp.pl
 
-    # Use a specific event loop backend (for better performance)
-    pagi-server -a myapp.pl -p 5000 --workers 4 --loop EV
+    # Use EV event loop for better performance
+    pagi-server --loop EV ./myapp.pl
 
     # Or via environment variable
-    IO_ASYNC_LOOP=Epoll pagi-server -a myapp.pl -p 5000 --workers 4
+    IO_ASYNC_LOOP=EV pagi-server ./myapp.pl
+
+    # Run a proxy app
+    pagi-server PAGI::App::Proxy target=http://backend:3000
+
+    # Directory listing with hidden files
+    pagi-server PAGI::App::Directory root=/home show_hidden=1
+
+=head1 BUNDLED APPS
+
+The following C<PAGI::App::*> modules are available:
+
+=over 4
+
+=item PAGI::App::Directory
+
+Serve static files with directory listings.
+
+    pagi-server PAGI::App::Directory root=/var/www
+
+=item PAGI::App::File
+
+Serve static files (no directory listings).
+
+    pagi-server PAGI::App::File root=/var/www
+
+=item PAGI::App::Proxy
+
+HTTP reverse proxy.
+
+    pagi-server PAGI::App::Proxy target=http://backend:3000
+
+=item PAGI::App::Redirect
+
+URL redirector.
+
+    pagi-server PAGI::App::Redirect location=https://example.com
+
+=item PAGI::App::URLMap
+
+Mount multiple apps at different paths.
+
+=item PAGI::App::Cascade
+
+Try multiple apps in sequence.
+
+=back
+
+See individual module documentation for available options.
 
 =head1 ENVIRONMENT
 
@@ -52,35 +186,29 @@ pagi-server - PAGI Reference Server CLI
 
 =item IO_ASYNC_LOOP
 
-Specifies which IO::Async::Loop backend to use. The default is auto-detection,
-which typically selects Poll on most systems. For better performance, especially
-with many concurrent connections, install and use one of:
+Specifies which IO::Async::Loop backend to use. The default is auto-detection.
+For better performance, especially with many concurrent connections:
 
-    IO_ASYNC_LOOP=Epoll    # Linux (requires IO::Async::Loop::Epoll)
-    IO_ASYNC_LOOP=EV       # Cross-platform (requires IO::Async::Loop::EV)
+    IO_ASYNC_LOOP=EV pagi-server ./myapp.pl      # Cross-platform (libev)
+    IO_ASYNC_LOOP=Epoll pagi-server ./myapp.pl   # Linux-specific
 
-The --loop command-line option takes precedence over this environment variable.
-
-The chosen loop type is displayed at startup unless --quiet is specified.
-In multi-worker mode, all worker processes inherit the same loop type.
+The C<--loop> option takes precedence over this environment variable.
 
 =back
 
 =head1 EVENT LOOP BACKENDS
 
-The following event loop backends are supported (requires corresponding module):
-
 =over 4
 
 =item Poll
 
-The default fallback. Uses poll() system call. O(n) complexity per event.
-Works everywhere but slower with many connections.
+Default fallback. Uses poll() system call. Works everywhere but slower
+with many connections.
 
 =item EV
 
-High-performance backend using libev. Uses kqueue on macOS/BSD, epoll on Linux.
-Recommended for production. Install: C<cpanm IO::Async::Loop::EV EV>
+High-performance backend using libev. Recommended for production.
+Install: C<cpanm IO::Async::Loop::EV EV>
 
 =item Epoll
 
@@ -94,110 +222,9 @@ Install: C<cpanm IO::Async::Loop::UV UV>
 
 =back
 
-=cut
+=head1 SEE ALSO
 
-my %opts = (
-    host    => '127.0.0.1',
-    port    => 5000,
-    workers => 1,
-);
-
-GetOptions(
-    'app|a=s'       => \$opts{app},
-    'host|h=s'      => \$opts{host},
-    'port|p=i'      => \$opts{port},
-    'workers|w=i'   => \$opts{workers},
-    'loop|l=s'      => \$opts{loop},
-    'ssl-cert=s'    => \$opts{ssl_cert},
-    'ssl-key=s'     => \$opts{ssl_key},
-    'access-log=s'  => \$opts{access_log},
-    'quiet|q'       => \$opts{quiet},
-    'help'          => \$opts{help},
-) or pod2usage(2);
-
-pod2usage(1) if $opts{help};
-pod2usage("--app is required") unless $opts{app};
-
-# Validate app file exists
-die "App file not found: $opts{app}\n" unless -f $opts{app};
-
-# Validate SSL options
-if ($opts{ssl_cert} || $opts{ssl_key}) {
-    die "--ssl-cert and --ssl-key must be specified together\n"
-        unless $opts{ssl_cert} && $opts{ssl_key};
-    die "SSL cert not found: $opts{ssl_cert}\n" unless -f $opts{ssl_cert};
-    die "SSL key not found: $opts{ssl_key}\n" unless -f $opts{ssl_key};
-}
-
-# Load the app - convert to absolute path for proper do() behavior
-use File::Spec;
-my $app_path = File::Spec->rel2abs($opts{app});
-my $app = do $app_path;
-die "Failed to load app: $@" if $@;
-die "App file must return a coderef" unless ref $app eq 'CODE';
-
-# Build server options
-my %server_opts = (
-    app     => $app,
-    host    => $opts{host},
-    port    => $opts{port},
-    quiet   => $opts{quiet} ? 1 : 0,
-    workers => $opts{workers} > 1 ? $opts{workers} : 0,  # 0 = single process mode
-);
-
-# Add SSL config if provided
-if ($opts{ssl_cert} && $opts{ssl_key}) {
-    $server_opts{ssl} = {
-        cert_file => $opts{ssl_cert},
-        key_file  => $opts{ssl_key},
-    };
-}
-
-# Add access log if provided
-if ($opts{access_log}) {
-    open my $log_fh, '>>', $opts{access_log}
-        or die "Cannot open access log $opts{access_log}: $!\n";
-    $server_opts{access_log} = $log_fh;
-}
-
-# Create event loop (--loop option takes precedence over IO_ASYNC_LOOP env)
-my $loop;
-if ($opts{loop}) {
-    my $loop_class = "IO::Async::Loop::$opts{loop}";
-    eval "require $loop_class" or die "Error: Cannot load loop backend '$opts{loop}': $@\n" .
-        "Install it with: cpanm $loop_class\n";
-    $loop = $loop_class->new;
-} else {
-    $loop = IO::Async::Loop->new;
-}
-
-my $server = PAGI::Server->new(%server_opts);
-$loop->add($server);
-
-# Start listening with proper error handling
-eval {
-    $server->listen->get;
-};
-if ($@) {
-    my $error = $@;
-    # Clean up common IO::Async error messages
-    if ($error =~ /Cannot bind\(\).*Address already in use/i) {
-        die "Error: Port $opts{port} is already in use\n";
-    }
-    elsif ($error =~ /Cannot bind\(\).*Permission denied/i) {
-        die "Error: Permission denied to bind to port $opts{port}\n";
-    }
-    elsif ($error =~ /Cannot bind\(\)/) {
-        $error =~ s/\s+at\s+\S+\s+line\s+\d+.*//s;  # Strip stack trace
-        die "Error: $error\n";
-    }
-    die "Error starting server: $error\n";
-}
-
-# Run the event loop
-$loop->run;
-
-__END__
+L<PAGI::Runner>, L<PAGI::Server>, L<PAGI::App::Directory>
 
 =head1 AUTHOR
 
