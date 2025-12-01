@@ -255,7 +255,7 @@
       "Step 3: Verify each chunk is received immediately after http.fullflush",
       "Step 4: Verify response body contains 'Line 1', 'Line 2', 'Line 3'"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -266,7 +266,7 @@
       "Step 3: Verify scope.extensions.fullflush exists when enabled",
       "Step 4: Verify scope.extensions.fullflush is absent when not enabled"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -276,7 +276,7 @@
       "Step 2: Create a test app that sends http.fullflush event",
       "Step 3: Verify the event is rejected or causes an error"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",

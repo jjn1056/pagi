@@ -515,6 +515,27 @@ sub _create_send ($self, $request) {
             $weak_self->{stream}->write($trailers);
             $body_complete = 1;
         }
+        elsif ($type eq 'http.fullflush') {
+            # Fullflush extension - force immediate TCP buffer flush
+            # Per spec: servers that don't advertise the extension must reject
+            unless (exists $weak_self->{extensions}{fullflush}) {
+                warn "PAGI: http.fullflush event rejected - extension not enabled\n";
+                die "Extension not enabled: fullflush\n";
+            }
+
+            # Force flush by ensuring TCP_NODELAY and flushing any pending writes
+            my $handle = $weak_self->{stream}->write_handle;
+            if ($handle && $handle->can('setsockopt')) {
+                # Ensure TCP_NODELAY is set to disable Nagle buffering
+                require Socket;
+                $handle->setsockopt(Socket::IPPROTO_TCP(), Socket::TCP_NODELAY(), 1);
+            }
+
+            # In IO::Async, writes are queued and sent when the event loop allows.
+            # The above TCP_NODELAY ensures no Nagle buffering delays.
+            # For this reference implementation, we return immediately as the
+            # write buffer will be flushed by the event loop.
+        }
 
         return;
     };
@@ -787,6 +808,21 @@ sub _create_sse_send ($self, $request) {
             # Send as chunked data
             my $len = sprintf("%x", length($sse_data));
             $weak_self->{stream}->write("$len\r\n$sse_data\r\n");
+        }
+        elsif ($type eq 'http.fullflush') {
+            # Fullflush extension - force immediate TCP buffer flush
+            # Per spec: servers that don't advertise the extension must reject
+            unless (exists $weak_self->{extensions}{fullflush}) {
+                warn "PAGI: http.fullflush event rejected - extension not enabled\n";
+                die "Extension not enabled: fullflush\n";
+            }
+
+            # Force flush by ensuring TCP_NODELAY
+            my $handle = $weak_self->{stream}->write_handle;
+            if ($handle && $handle->can('setsockopt')) {
+                require Socket;
+                $handle->setsockopt(Socket::IPPROTO_TCP(), Socket::TCP_NODELAY(), 1);
+            }
         }
 
         return;
