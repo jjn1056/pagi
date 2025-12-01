@@ -1451,11 +1451,23 @@
   },
   {
     "category": "functional",
-    "description": "Step 29: App::Router generates URLs from named routes",
+    "description": "Step 29: App::Router supports wildcard/splat patterns",
     "steps": [
-      "Step 1: Create Router with named route 'user' => GET /users/:id",
-      "Step 2: Call url_for('user', id => 123)",
-      "Step 3: Verify returns /users/123"
+      "Step 1: Create Router with GET /files/*path route",
+      "Step 2: Send GET /files/docs/readme.txt",
+      "Step 3: Verify route handler called",
+      "Step 4: Verify params->{path} = 'docs/readme.txt'"
+    ],
+    "passes": false
+  },
+  {
+    "category": "functional",
+    "description": "Step 29: App::Router handles HEAD as GET without body",
+    "steps": [
+      "Step 1: Create Router with GET /resource route",
+      "Step 2: Send HEAD /resource",
+      "Step 3: Verify route handler called",
+      "Step 4: Verify response has headers but no body"
     ],
     "passes": false
   },
@@ -1568,6 +1580,17 @@
       "Step 1: Create Throttle app wrapping inner app",
       "Step 2: Send requests up to limit",
       "Step 3: Verify excess requests are throttled"
+    ],
+    "passes": false
+  },
+  {
+    "category": "functional",
+    "description": "Step 34: App::Delayed supports deferred responses",
+    "steps": [
+      "Step 1: Create Delayed app with response callback",
+      "Step 2: Send request that triggers delayed response",
+      "Step 3: Verify response arrives after callback fires",
+      "Step 4: Verify timeout returns appropriate error"
     ],
     "passes": false
   },
