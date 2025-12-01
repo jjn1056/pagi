@@ -1050,7 +1050,7 @@
       "Step 3: Verify Content-Encoding: gzip in response",
       "Step 4: Verify response body is compressed"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -1061,7 +1061,7 @@
       "Step 3: Verify ETag header in response",
       "Step 4: Verify ETag is stable for same content"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -1072,7 +1072,7 @@
       "Step 3: Request same resource with If-None-Match",
       "Step 4: Verify response is 304 Not Modified"
     ],
-    "passes": false
+    "passes": true
   },
 
   {
@@ -1085,7 +1085,7 @@
       "Step 4: Send request exceeding limit",
       "Step 5: Verify response is 429 Too Many Requests"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -1097,7 +1097,7 @@
       "Step 4: Verify X-RateLimit-Remaining header",
       "Step 5: Verify X-RateLimit-Reset header"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -1108,7 +1108,7 @@
       "Step 3: Verify response is 408 or 504 after timeout",
       "Step 4: Verify app Future is cancelled"
     ],
-    "passes": false
+    "passes": true
   },
 
   {
@@ -1119,7 +1119,7 @@
       "Step 2: Send POST with Content-Type: application/json",
       "Step 3: Verify scope->{json_body} contains parsed data"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -1129,7 +1129,7 @@
       "Step 2: Send POST with application/x-www-form-urlencoded",
       "Step 3: Verify scope->{form_body} contains parsed fields"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -1151,7 +1151,7 @@
       "Step 3: Verify scope contains negotiation info",
       "Step 4: Verify types are ordered by preference"
     ],
-    "passes": false
+    "passes": true
   },
 
   {
@@ -1622,7 +1622,7 @@
       "Step 1: Run prove -l t/middleware/",
       "Step 2: Verify all tests pass"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "style",

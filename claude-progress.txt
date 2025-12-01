@@ -1,5 +1,104 @@
 # PAGI Reference Server - Development Progress
 
+## Session 22: Steps 18-20 - Compression, Flow Control, Body Parsing (2025-12-01)
+
+### Completed Tasks
+
+1. **Step 18: Compression/Caching Middleware**
+   - PAGI::Middleware::GZip - Response compression with gzip
+     - Compresses when client accepts gzip (Accept-Encoding header)
+     - Configurable min_size and mime_types
+     - Adds Content-Encoding: gzip and Vary headers
+   - PAGI::Middleware::ETag - ETag generation
+     - MD5-based ETag from response body
+     - Supports weak ETags (W/"...")
+     - Preserves existing ETags
+   - PAGI::Middleware::ConditionalGet - 304 Not Modified responses
+     - Handles If-None-Match header for ETag matching
+     - Handles If-Modified-Since for Last-Modified
+     - Only affects GET/HEAD requests
+
+2. **Step 19: Flow Control Middleware**
+   - PAGI::Middleware::RateLimit - Request rate limiting
+     - Token bucket algorithm for per-client limiting
+     - Configurable requests_per_second and burst
+     - Custom key_generator for rate limit scope
+     - X-RateLimit-* headers in responses
+     - 429 Too Many Requests with Retry-After
+   - PAGI::Middleware::Timeout - Request timeout
+     - Configurable timeout in seconds
+     - 504 Gateway Timeout for slow requests
+     - Optional on_timeout callback
+     - Cancels app Future on timeout
+
+3. **Step 20: Body Parsing Middleware**
+   - PAGI::Middleware::JSONBody - JSON request body parsing
+     - Parses application/json and +json types
+     - Adds pagi.parsed_body and pagi.raw_body to scope
+     - 400 for invalid JSON, 413 for oversized body
+   - PAGI::Middleware::FormBody - URL-encoded form parsing
+     - Parses application/x-www-form-urlencoded
+     - URL decoding for keys and values
+     - Multiple values become arrayrefs
+   - PAGI::Middleware::ContentNegotiation - Accept header parsing
+     - Parses Accept header with quality values
+     - Supports wildcard matching (*/*, type/*)
+     - 406 Not Acceptable in strict mode
+
+### Test Results
+
+All tests pass:
+```
+prove -l t/
+All tests successful.
+Files=12, Tests=86
+```
+
+Middleware tests:
+```
+prove -l t/middleware/
+All tests successful.
+Files=10, Tests=99
+```
+
+### Features Status: 103/147 passing (70%)
+
+- Steps 1-12 (Server): 75/75 passing (100%)
+- Step 13 (Infrastructure): 4/4 passing (100%)
+- Step 14 (Core HTTP): 3/3 passing (100%)
+- Step 15 (Static Files): 4/4 passing (100%)
+- Step 16 (Logging): 3/3 passing (100%)
+- Step 17 (Security): 4/4 passing (100%)
+- Step 18 (Compression): 3/3 passing (100%)
+- Step 19 (Flow Control): 3/3 passing (100%)
+- Step 20 (Body Parsing): 3/4 passing (75%) - multipart not implemented
+- Steps 21-35 (Remaining): 0/44 passing (0%)
+
+### Key Code Changes
+
+**New files:**
+- lib/PAGI/Middleware/GZip.pm
+- lib/PAGI/Middleware/ETag.pm
+- lib/PAGI/Middleware/ConditionalGet.pm
+- lib/PAGI/Middleware/RateLimit.pm
+- lib/PAGI/Middleware/Timeout.pm
+- lib/PAGI/Middleware/JSONBody.pm
+- lib/PAGI/Middleware/FormBody.pm
+- lib/PAGI/Middleware/ContentNegotiation.pm
+- t/middleware/07-compression.t
+- t/middleware/08-flow-control.t
+- t/middleware/09-body-parsing.t
+
+### Next Steps
+
+1. **Step 21: Session Middleware**
+   - Cookie middleware (cookie parsing)
+   - Session middleware (session persistence)
+   - Auth::Basic middleware
+   - Auth::Bearer middleware
+
+---
+
 ## Session 21: Step 17 - Security Middleware (2025-12-01)
 
 ### Completed Tasks
