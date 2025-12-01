@@ -1,5 +1,63 @@
 # PAGI Reference Server - Development Progress
 
+## Session 20: Step 16 - Logging Middleware (2025-12-01)
+
+### Completed Tasks
+
+1. **Implemented PAGI::Middleware::AccessLog**
+   - Combined, common, and tiny log formats
+   - Captures client IP, method, path, status, response size
+   - Includes referer and user-agent in combined format
+   - Request duration timing
+
+2. **Implemented PAGI::Middleware::RequestId**
+   - Generates unique request IDs (UUID-like format)
+   - Adds ID to scope for app access
+   - Adds X-Request-ID header to response
+   - Optional trust_incoming for proxy chains
+   - Configurable header name
+
+3. **Implemented PAGI::Middleware::Runtime**
+   - Measures request processing time
+   - Adds X-Runtime header to response
+   - Configurable precision and header name
+
+### Test Results
+
+All tests pass:
+```
+prove -l t/
+All tests successful.
+Files=12, Tests=86
+```
+
+### Features Status: 89/147 passing (61%)
+
+- Steps 1-12 (Server): 75/75 passing (100%)
+- Step 13 (Infrastructure): 4/4 passing (100%)
+- Step 14 (Core HTTP): 3/3 passing (100%)
+- Step 15 (Static Files): 4/4 passing (100%)
+- Step 16 (Logging): 3/3 passing (100%)
+- Steps 17-35 (Remaining): 0/58 passing (0%)
+
+### Key Code Changes
+
+**New files:**
+- lib/PAGI/Middleware/AccessLog.pm
+- lib/PAGI/Middleware/RequestId.pm
+- lib/PAGI/Middleware/Runtime.pm
+- t/middleware/05-logging.t
+
+### Next Steps
+
+1. **Step 17: Security Middleware**
+   - CORS middleware (preflight handling)
+   - SecurityHeaders middleware
+   - TrustedHosts middleware
+   - CSRF middleware
+
+---
+
 ## Session 19: Step 15 - Static File Middleware (2025-12-01)
 
 ### Completed Tasks

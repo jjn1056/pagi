@@ -969,7 +969,7 @@
       "Step 2: Send request to app",
       "Step 3: Verify log contains client IP, method, path, status, size"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -980,7 +980,7 @@
       "Step 3: Verify X-Request-ID header in each response",
       "Step 4: Verify IDs are unique"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "category": "functional",
@@ -991,7 +991,7 @@
       "Step 3: Verify X-Runtime header is present",
       "Step 4: Verify value is a valid duration"
     ],
-    "passes": false
+    "passes": true
   },
 
   {
