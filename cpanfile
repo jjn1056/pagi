@@ -20,6 +20,8 @@ requires 'IO::Socket::SSL', '2.074';
 
 # Utilities
 requires 'URI::Escape', '5.09';
+requires 'Hash::MultiValue', '0.16';
+requires 'JSON::MaybeXS', '1.004003';
 
 # Testing
 on 'test' => sub {

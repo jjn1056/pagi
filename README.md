@@ -19,7 +19,7 @@ PAGI is a specification for asynchronous Perl web applications, designed as a sp
 
 ```bash
 # Set up environment (installs dependencies)
-./init.sh
+cpanm --installdeps .
 
 # Run tests
 prove -l t/
