@@ -103,6 +103,7 @@ Reserved `type` prefixes include:
 
 Custom user-defined protocols should avoid clashing with these prefixes.
 
+```perl
 my $event = await $recv->();
 await $send->({ type => 'http.response.start', ... });
 ```
