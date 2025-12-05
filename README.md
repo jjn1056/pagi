@@ -2,6 +2,51 @@
 
 PAGI is a specification for asynchronous Perl web applications, designed as a spiritual successor to PSGI. It defines a standard interface between async-capable Perl web servers, frameworks, and applications, supporting HTTP/1.1, WebSocket, and Server-Sent Events (SSE).
 
+## UTF-8 Handling (Raw PAGI)
+
+- `scope->{path}` is UTF-8 decoded from the percent-encoded `raw_path`. Use `raw_path` when you need on-the-wire bytes.
+- `scope->{query_string}` and request bodies are byte data (often percent-encoded). Decode explicitly with `Encode` using replacement or strict modes as needed.
+- Response bodies/headers must be bytes; set `Content-Length` from byte length. Encode with `Encode::encode('UTF-8', $str, FB_CROAK)` (or another charset you declare in `Content-Type`).
+
+Minimal raw example with explicit UTF-8 handling:
+
+```perl
+use Future::AsyncAwait;
+use experimental 'signatures';
+use Encode qw(encode decode FB_DEFAULT FB_CROAK);
+
+async sub app ($scope, $receive, $send) {
+    # Handle lifespan if your server sends it; otherwise fail on unsupported types.
+    die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
+
+    my $text = '';
+    if ($scope->{query_string} =~ /text=([^&]+)/) {
+        my $bytes = $1; $bytes =~ s/%([0-9A-Fa-f]{2})/chr hex $1/eg;
+        $text = decode('UTF-8', $bytes, FB_DEFAULT);  # replacement for invalid
+    }
+
+    my $body    = "You sent: $text";
+    my $encoded = encode('UTF-8', $body, FB_CROAK);
+
+    await $send->({
+        type    => 'http.response.start',
+        status  => 200,
+        headers => [
+            ['content-type',   'text/plain; charset=utf-8'],
+            ['content-length', length($encoded)],
+        ],
+    });
+    await $send->({
+        type => 'http.response.body',
+        body => $encoded,
+        more => 0,
+    });
+}
+```
+
+For a higher-level default-decoding experience (with raw/strict options), see `PAGI::Simple`.
+Browse the `examples/` directory for end-to-end apps (both raw PAGI and PAGI::Simple) including UTF-8-focused demos.
+
 ## Repository Contents
 
 - **docs/** - PAGI specification documents

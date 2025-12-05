@@ -57,6 +57,67 @@ Perl web applications, designed as a spiritual successor to PSGI. It defines a
 standard interface between async-capable Perl web servers, frameworks, and
 applications, supporting HTTP/1.1, WebSocket, and Server-Sent Events (SSE).
 
+=head1 UTF-8 HANDLING OVERVIEW
+
+PAGI scopes provide decoded text where mandated by the spec and preserve raw
+bytes where the application must decide. Broad guidance:
+
+=over 4
+
+=item *
+C<$scope->{path}> is already UTF-8 decoded from the percent-encoded
+C<$scope->{raw_path}>. If you need exact on-the-wire bytes, use C<raw_path>.
+
+=item *
+C<$scope->{query_string}> and request bodies arrive as percent-encoded or raw
+bytes. Frameworks (e.g., L<PAGI::Simple>) may auto-decode with replacement by
+default, but raw values remain available via C<query_string> and the body
+stream. If you need strict validation, decode yourself with C<Encode> and
+C<FB_CROAK>.
+
+=item *
+Response bodies and header values sent over the wire must be encoded to bytes.
+If you construct raw events, encode with C<Encode::encode('UTF-8', $str,
+FB_CROAK)> (or another charset you set in Content-Type) and set
+C<Content-Length> based on byte length.
+
+=back
+
+Raw PAGI example with explicit UTF-8 handling:
+
+    use Future::AsyncAwait;
+    use experimental 'signatures';
+    use Encode qw(encode decode);
+
+    async sub app ($scope, $receive, $send) {
+        # Handle lifespan if your server sends it; otherwise fail on unsupported types.
+        die "Unsupported type: $scope->{type}" unless $scope->{type} eq 'http';
+
+        # Decode query param manually (percent-decoded bytes)
+        my $text = '';
+        if ($scope->{query_string} =~ /text=([^&]+)/) {
+            my $bytes = $1; $bytes =~ s/%([0-9A-Fa-f]{2})/chr hex $1/eg;
+            $text = decode('UTF-8', $bytes, Encode::FB_DEFAULT);  # replacement for invalid
+        }
+
+        my $body = "You sent: $text";
+        my $encoded = encode('UTF-8', $body, Encode::FB_CROAK);
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [
+                ['content-type',   'text/plain; charset=utf-8'],
+                ['content-length', length($encoded)],
+            ],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => $encoded,
+            more => 0,
+        });
+    }
+
 =head2 Beta Software Notice
 
 B<WARNING: This is beta software.>
