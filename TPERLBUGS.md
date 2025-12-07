@@ -1,12 +1,12 @@
 # Template::EmbeddedPerl Bugs
 
-## Bug 1: Comparison operator `<` before variable misinterpreted as readline operator
+## Bug 1: Comparison operators `<` and `>` in multi-line code blocks cause parse errors
 
 **Version:** Template::EmbeddedPerl 0.001014
 
 **Description:**
-When using the `<` comparison operator before a variable name inside a code block,
-the parser/compiler misinterprets it as the start of a `<>` (diamond/readline) operator.
+When using `<` or `>` comparison operators inside a multi-line `<% %>` code block,
+the parser/compiler misinterprets them, causing "Unterminated <> operator" errors.
 
 **Error Message:**
 ```
@@ -17,11 +17,21 @@ Internal Server Error: Unterminated <> operator at unknown line 6
 7: <div class="options-fields">
 ```
 
+Also fails with `>`:
+```
+Internal Server Error: Unterminated <> operator at unknown line 8
+
+7:     my $show_add = $max_options > $count;
+8: %>
+9: <div class="options-fields">
+```
+
 **Minimal Reproduction:**
 ```perl
 use Template::EmbeddedPerl;
 
-my $template = <<'TEMPLATE';
+# This FAILS - multi-line block with < operator
+my $template_bad = <<'TEMPLATE';
 <%
     my $count = 3;
     my $max = 6;
@@ -30,9 +40,19 @@ my $template = <<'TEMPLATE';
 <div>Show: <%= $show %></div>
 TEMPLATE
 
+# This also FAILS - multi-line block with > operator
+my $template_also_bad = <<'TEMPLATE';
+<%
+    my $count = 3;
+    my $max = 6;
+    my $show = $max > $count;
+%>
+<div>Show: <%= $show %></div>
+TEMPLATE
+
 my $ep = Template::EmbeddedPerl->new();
-my $compiled = $ep->from_string($template);
-my $output = $compiled->render({});
+my $compiled = $ep->from_string($template_bad);
+my $output = $compiled->render({});  # Dies here
 print $output;
 ```
 
@@ -41,28 +61,35 @@ print $output;
 **Actual:** Error: "Unterminated <> operator"
 
 **Analysis:**
-The sequence `< $variable_name` followed by `%>` on a subsequent line appears to
-confuse the parser. It seems like `< $max` is being interpreted as the start of
-`<$max>` (readline on filehandle `$max`), and the `>` in `%>` is not being
-recognized as the closing delimiter.
+The `<` and `>` characters in comparison operators appear to interfere with the
+template parser's detection of `<%` and `%>` delimiters. This seems to only affect
+multi-line code blocks where the closing `%>` is on a different line than the
+comparison operator.
 
 **Workarounds:**
 
-1. Reverse the comparison:
+1. Use `<=` or `>=` with adjusted values:
    ```perl
-   my $show = $max > $count;  # instead of $count < $max
+   my $show = $count <= 5;  # instead of $count < 6
+   my $show = $count >= 1;  # instead of $count > 0
    ```
 
-2. Use a literal value:
+2. Use `!=` or `==` where possible:
    ```perl
-   my $show = $count < 6;  # instead of $count < $max_options
+   my $show = $count != 6;  # if you just need "not equal to max"
    ```
 
-3. Use parentheses (may or may not help):
+3. Use `unless` with opposite condition:
    ```perl
-   my $show = ($count < $max);
+   <% unless ($count >= $max) { %>  # instead of if ($count < $max)
    ```
+
+4. Single-line code blocks (may work):
+   ```perl
+   <% my $show = $count < $max; %>
+   ```
+
+5. Pass computed values from controller instead of comparing in template.
 
 **Affected Code Patterns:**
-Any `< $variable` comparison inside `<% %>` blocks, especially when the closing
-`%>` appears on a following line.
+Any `<` or `>` comparison inside multi-line `<% %>` blocks.
