@@ -1,7 +1,7 @@
 <% my $values = $v->{values} // ['', '']; my $count = scalar @$values; %>
 <% my $max_options = 6; %>
 <% my $show_add = $count != $max_options; %>
-<div class="options-fields">
+<div id="options-fields" class="options-fields">
     <% for my $i (0 .. $#$values) { %>
         <%= include('polls/_option_input',
                     index => $i,
@@ -14,9 +14,9 @@
             class="btn btn-secondary"
             style="margin-top: 4px;"
             <%= hx_post('/polls/options/add',
-                        target => '#options-container',
-                        swap => 'innerHTML') %>
-            hx-include="[name='options[]']">
+                        target => '#options-fields',
+                        swap => 'outerHTML') %>
+            hx-include="#options-fields [name='options[]']">
         + Add Option
     </button>
     <% } else { %>

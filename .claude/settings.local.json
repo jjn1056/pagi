@@ -14,7 +14,22 @@
       "Bash(do echo -n \"$f: \")",
       "Bash(done)",
       "Bash(prove -lv:*)",
-      "Bash(git restore:*)"
+      "Bash(git restore:*)",
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(git -C /Users/jnapiorkowski/Desktop/PAGI log --oneline)",
+      "WebFetch(domain:metacpan.org)",
+      "WebFetch(domain:fastht.ml)",
+      "WebFetch(domain:docs.fastht.ml)",
+      "WebFetch(domain:www.fastht.ml)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:perladvent.org)",
+      "Bash(chmod:*)",
+      "Bash(ls:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(curl:*)",
+      "Bash(perldoc:*)"
     ],
     "deny": [],
     "ask": []

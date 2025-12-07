@@ -13,9 +13,9 @@
             class="btn btn-danger"
             style="padding: 8px 12px; min-width: auto;"
             <%= hx_post('/polls/options/remove',
-                        target => '#options-container',
-                        swap => 'innerHTML') %>
-            hx-include="[name='options[]']"
+                        target => '#options-fields',
+                        swap => 'outerHTML') %>
+            hx-include="#options-fields [name='options[]']"
             hx-vals='{"remove_index": <%= $index %>}'>
         &times;
     </button>

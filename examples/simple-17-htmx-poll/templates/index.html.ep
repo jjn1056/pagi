@@ -7,7 +7,7 @@
           <%= hx_post('/polls/create',
                       target => '#polls',
                       swap => 'afterbegin') %>
-          hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('options-container').innerHTML = document.getElementById('options-template').innerHTML; }">
+          hx-on::after-request="if(event.detail.successful && event.detail.elt === this) { this.reset(); htmx.ajax('GET', '/polls/options/default', '#options-container'); }">
         <input type="text" name="question" placeholder="Enter your question..." required style="margin-bottom: 12px;">
 
         <label style="display: block; margin-bottom: 8px; font-weight: 500;">Poll Options:</label>
@@ -17,11 +17,6 @@
 
         <button type="submit" class="btn btn-primary" style="margin-top: 12px;">Create Poll</button>
     </form>
-
-    <!-- Hidden template for resetting options -->
-    <template id="options-template">
-        <%= include('polls/_options_fields', values => ['', '']) %>
-    </template>
 </div>
 
 <h2 style="margin-bottom: 16px;">Active Polls</h2>

@@ -5,63 +5,34 @@ use experimental 'signatures';
 use utf8;
 use Future::AsyncAwait;
 
-# PAGI::Simple Live Poll Example - Demonstrates htmx Integration
+# PAGI::Simple Live Poll Example - Demonstrates htmx Integration + Service System
 # Run with: pagi-server --app examples/simple-17-htmx-poll/app.pl --port 5000
 #
 # Features demonstrated:
+# - Service system with $c->service('Poll')
+# - PerApp service singleton (initialized at startup)
 # - htmx() script tag helper
 # - hx_get(), hx_post(), hx_delete() attribute helpers
 # - hx_sse() for real-time vote updates
 # - Layout system with extends() and content_for()
 # - Partial templates with include()
+#
+# Step 4 Features (htmx request/response integration):
+# - is_htmx() - detect htmx requests
+# - Auto-fragment detection - layout auto-skipped for htmx requests
+# - render_or_redirect() - render for htmx, redirect for browser
+# - empty_or_redirect() - empty response for htmx delete, redirect for browser
+# - hx_trigger() - trigger client-side events from server
+# - layout => 0/1 - explicit layout control override
 
 use PAGI::Simple;
 
-# In-memory poll storage
-my $next_id = 1;
-my %polls = ();
-
-# ============================================================================
-# Helper functions (defined before use)
-# ============================================================================
-
-sub _create_poll ($question, $options) {
-    my $id = $next_id++;
-    $polls{$id} = {
-        id       => $id,
-        question => $question,
-        options  => { map { $_ => 0 } @$options },
-        created  => time(),
-    };
-    return $polls{$id};
-}
-
-sub _all_polls {
-    return sort { $b->{created} <=> $a->{created} } values %polls;
-}
-
-sub _get_poll ($id) {
-    return $polls{$id};
-}
-
-sub _vote ($id, $option) {
-    my $poll = $polls{$id} or return;
-    $poll->{options}{$option}++ if exists $poll->{options}{$option};
-    return $poll;
-}
-
-sub _delete_poll ($id) {
-    return delete $polls{$id};
-}
-
-# Seed with sample data
-_create_poll('What is your favorite programming language?', ['Perl', 'Python', 'JavaScript', 'Rust']);
-_create_poll('Best web framework approach?', ['Full-stack', 'Micro-framework', 'Static + API']);
-
 my $app = PAGI::Simple->new(
-    name  => 'Live Poll',
-    views => 'templates',
-    share => 'htmx',  # Mount PAGI's bundled htmx (required for htmx() helper)
+    name   => 'Live Poll',
+    views  => 'templates',
+    share  => 'htmx',  # Mount PAGI's bundled htmx (required for htmx() helper)
+    # namespace => 'LivePoll' is auto-generated from name
+    # lib => './lib' is the default
 );
 
 # ============================================================================
@@ -70,16 +41,19 @@ my $app = PAGI::Simple->new(
 
 # Home page - list all polls
 $app->get('/' => sub ($c) {
+    my $polls = $c->service('Poll');
+
     $c->render('index',
         title => 'Live Polls',
-        polls => [_all_polls()],
+        polls => [$polls->all],
     );
 })->name('home');
 
 # Watch a poll with live SSE updates
 $app->get('/polls/:id/watch' => sub ($c) {
     my $id = $c->path_params->{id};
-    my $poll = _get_poll($id);
+    my $polls = $c->service('Poll');
+    my $poll = $polls->find($id);
 
     unless ($poll) {
         return $c->status(404)->text('Poll not found');
@@ -91,58 +65,70 @@ $app->get('/polls/:id/watch' => sub ($c) {
     );
 })->name('watch_poll');
 
+# Get default options (for form reset)
+$app->get('/polls/options/default' => sub ($c) {
+    $c->render('polls/_options_fields', values => ['', '']);
+});
+
 # Add option field (htmx endpoint)
 $app->post('/polls/options/add' => async sub ($c) {
     my $params = await $c->req->body_params;
-    my $values = $params->get_all('options[]');
+    my @values = $params->get_all('options[]');
 
     # Add empty option (max 6)
-    if (@$values < 6) {
-        push @$values, '';
-    }
+    push @values, '' if @values != 6;
 
-    $c->render('polls/_options_fields', values => $values);
+    $c->render('polls/_options_fields', values => \@values);
 });
 
 # Remove option field (htmx endpoint)
 $app->post('/polls/options/remove' => async sub ($c) {
     my $params = await $c->req->body_params;
-    my $values = $params->get_all('options[]');
+    my @values = $params->get_all('options[]');
     my $remove_index = $params->{remove_index} // -1;
 
     # Remove the specified index (min 2 options)
-    if (@$values > 2 && $remove_index >= 0 && $remove_index < @$values) {
-        splice(@$values, $remove_index, 1);
+    if (@values != 2 && $remove_index >= 0 && $remove_index != @values) {
+        splice(@values, $remove_index, 1);
     }
 
-    $c->render('polls/_options_fields', values => $values);
+    $c->render('polls/_options_fields', values => \@values);
 });
 
 # Create a new poll
+# Demonstrates: render_or_redirect() and hx_trigger()
 $app->post('/polls/create' => async sub ($c) {
     my $params = await $c->req->body_params;
     my $question = $params->{question} // '';
 
-    # Get options from array-style params
-    my $options = $params->get_all('options[]');
+    # Get options from array-style params (get_all returns list, not arrayref)
+    my @raw_options = $params->get_all('options[]');
 
     # Filter empty values and trim whitespace
-    my @options = map { s/^\s+|\s+$//gr } @$options;
-    @options = grep { length } @options;
+    my @options = grep { length } map { s/^\s+|\s+$//gr } @raw_options;
 
     if ($question && @options >= 2 && @options <= 6) {
-        my $poll = _create_poll($question, \@options);
-        # Return just the new poll card
-        $c->render('polls/_card', poll => $poll);
+        my $polls = $c->service('Poll');
+        my $poll = $polls->create($question, \@options);
+
+        # Trigger client-side event (htmx will listen for this)
+        $c->hx_trigger('pollCreated', poll_id => $poll->{id});
+
+        # render_or_redirect():
+        # - htmx request: renders 'polls/_card' partial (layout auto-skipped)
+        # - browser request: redirects to home page
+        await $c->render_or_redirect('/', 'polls/_card', poll => $poll);
     } else {
         $c->status(400)->html('<div class="card"><p style="color:#dc2626">Need a question and 2-6 options</p></div>');
     }
 });
 
 # Vote on a poll option
+# Demonstrates: hx_trigger() to notify other components
 $app->post('/polls/:id/vote' => async sub ($c) {
     my $id = $c->path_params->{id};
-    my $poll = _get_poll($id);
+    my $polls = $c->service('Poll');
+    my $poll = $polls->find($id);
 
     unless ($poll) {
         return $c->status(404)->text('Poll not found');
@@ -153,26 +139,36 @@ $app->post('/polls/:id/vote' => async sub ($c) {
     my $option = $params->{option};
 
     if ($option && exists $poll->{options}{$option}) {
-        _vote($id, $option);
+        $polls->vote($id, $option);
 
-        # Broadcast vote update via SSE
-        $app->pubsub->publish("poll:$id", "vote");
+        # Broadcast vote update via SSE (for live watchers)
+        $app->pubsub->publish($polls->channel_name($id), "vote");
+
+        # Trigger client-side event with vote data
+        $c->hx_trigger('voteRecorded', poll_id => $id, option => $option);
     }
 
-    # Return updated poll card (htmx will swap it in)
-    $c->render('polls/_card', poll => $poll);
+    # Return updated poll card (layout auto-skipped for htmx requests)
+    await $c->render('polls/_card', poll => $poll);
 });
 
 # Delete a poll
-$app->delete('/polls/:id' => sub ($c) {
+# Demonstrates: empty_or_redirect() and hx_trigger()
+$app->delete('/polls/:id' => async sub ($c) {
     my $id = $c->path_params->{id};
+    my $polls = $c->service('Poll');
 
-    if (_delete_poll($id)) {
+    if ($polls->delete($id)) {
         # Notify any watchers that the poll was deleted
-        $app->pubsub->publish("poll:$id", { action => 'deleted' });
+        $app->pubsub->publish($polls->channel_name($id), { action => 'deleted' });
 
-        # Return empty response - htmx will remove the element
-        $c->html('');
+        # Trigger client-side event for any listeners
+        $c->hx_trigger('pollDeleted', poll_id => $id);
+
+        # empty_or_redirect():
+        # - htmx request: returns empty 200 (element gets swapped out)
+        # - browser request: redirects to home page
+        await $c->empty_or_redirect('/');
     } else {
         $c->status(404)->text('Poll not found');
     }
@@ -181,7 +177,10 @@ $app->delete('/polls/:id' => sub ($c) {
 # SSE endpoint for live poll updates
 $app->sse('/polls/:id/live' => sub ($sse) {
     my $id = $sse->param('id');
-    my $poll = _get_poll($id);
+
+    # Get the Poll service from app's registry (PerApp services are singletons)
+    my $poll_service = $sse->app->service_registry->{Poll};
+    my $poll = $poll_service->find($id);
 
     return unless $poll;
 
@@ -192,7 +191,7 @@ $app->sse('/polls/:id/live' => sub ($sse) {
     );
 
     # Subscribe to this poll's channel with a callback for updates
-    $sse->subscribe("poll:$id", sub ($msg) {
+    $sse->subscribe($poll_service->channel_name($id), sub ($msg) {
         my $view = $sse->app->view;
 
         # Check if this is a deletion notification
@@ -205,8 +204,8 @@ $app->sse('/polls/:id/live' => sub ($sse) {
             return;
         }
 
-        # Otherwise it's a vote update
-        my $poll = _get_poll($id);
+        # Otherwise it's a vote update - get fresh poll data
+        my $poll = $poll_service->find($id);
         return unless $poll;
 
         my $html = $view->render('polls/_card', poll => $poll, show_vote => 0, show_delete => 0, show_watch => 0);

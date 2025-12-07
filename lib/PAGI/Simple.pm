@@ -408,8 +408,49 @@ sub new ($class, %args) {
     require File::Spec;
     my $caller_dir = File::Basename::dirname(File::Spec->rel2abs($caller_file));
 
+    my $name = $args{name} // 'PAGI::Simple';
+
+    # Handle namespace: explicit, or generate from name
+    my $namespace;
+    if (exists $args{namespace}) {
+        $namespace = $args{namespace};
+    }
+    elsif (exists $args{model_namespace}) {
+        # Backwards compatibility: model_namespace is deprecated
+        # Strip ::Model suffix since new namespace adds it automatically
+        warn "[PAGI::Simple] 'model_namespace' is deprecated, use 'namespace' instead\n";
+        $namespace = $args{model_namespace};
+        $namespace =~ s/::Model$//;  # TestApp::Model => TestApp
+    }
+    else {
+        # Generate namespace from app name
+        $namespace = _generate_namespace($name);
+    }
+
+    # Handle lib directory: explicit, or default to 'lib'
+    my $lib_dir;
+    if (exists $args{lib}) {
+        if (defined $args{lib}) {
+            $lib_dir = $args{lib};
+            # Make relative paths relative to caller dir
+            unless (File::Spec->file_name_is_absolute($lib_dir)) {
+                $lib_dir = File::Spec->catdir($caller_dir, $lib_dir);
+            }
+        }
+        # lib => undef means don't add anything to @INC
+    }
+    else {
+        # Default: 'lib' relative to caller dir
+        $lib_dir = File::Spec->catdir($caller_dir, 'lib');
+    }
+
+    # Add lib to @INC if specified and not already there
+    if (defined $lib_dir && !grep { $_ eq $lib_dir } @INC) {
+        unshift @INC, $lib_dir;
+    }
+
     my $self = bless {
-        name       => $args{name} // 'PAGI::Simple',
+        name       => $name,
         router     => PAGI::Simple::Router->new,
         ws_router  => PAGI::Simple::Router->new,  # WebSocket routes
         sse_router => PAGI::Simple::Router->new,  # SSE routes
@@ -427,8 +468,12 @@ sub new ($class, %args) {
         _view            => undef,        # View instance for template rendering
         _view_config     => undef,        # Deferred view configuration
         _caller_dir      => $caller_dir,  # Directory of the file creating the app
-        model_namespace  => $args{model_namespace},   # Model auto-discovery namespace
-        model_config     => $args{model_config} // {},  # Per-model configuration
+        _namespace       => $namespace,   # App namespace for models, etc.
+        _lib_dir         => $lib_dir,     # Lib directory added to @INC
+        model_config     => $args{model_config} // {},  # Per-model configuration (deprecated)
+        service_config   => $args{service_config} // {},  # Per-service configuration
+        _service_registry => {},          # Initialized services (instance or coderef)
+        _pending_services => [],          # Services to init at startup [(class, name), ...]
     }, $class;
 
     # Handle views configuration in constructor
@@ -445,6 +490,34 @@ sub new ($class, %args) {
     }
 
     return $self;
+}
+
+# Internal: Generate a valid Perl package namespace from app name
+sub _generate_namespace ($name) {
+    return 'App' unless defined $name && length $name;
+
+    # Split on word boundaries (spaces, hyphens, underscores, colons)
+    my @words = split /[\s\-_:]+/, $name;
+
+    # Title case each word and remove invalid characters
+    my @parts;
+    for my $word (@words) {
+        # Remove non-alphanumeric characters
+        $word =~ s/[^A-Za-z0-9]//g;
+        next unless length $word;
+        # Title case
+        push @parts, ucfirst(lc($word));
+    }
+
+    my $namespace = join('', @parts);
+
+    # Ensure we have something
+    $namespace = 'App' unless length $namespace;
+
+    # Ensure starts with letter (prepend 'App' if starts with number)
+    $namespace = "App$namespace" if $namespace =~ /^[0-9]/;
+
+    return $namespace;
 }
 
 # Internal: Configure views from constructor or views() method
@@ -718,6 +791,204 @@ sub home ($self) {
     return $self->{_caller_dir};
 }
 
+=head2 namespace
+
+    my $ns = $app->namespace;  # e.g., 'LivePoll'
+
+Returns the application's namespace. This is used for resolving model classes:
+C<< $c->model('Poll') >> becomes C<< ${namespace}::Model::Poll >>.
+
+The namespace is either:
+
+=over 4
+
+=item * Explicitly set via C<< namespace => 'MyApp' >> in the constructor
+
+=item * Auto-generated from the app name (title-cased, special chars removed)
+
+=back
+
+=cut
+
+sub namespace ($self) {
+    return $self->{_namespace};
+}
+
+=head2 lib_dir
+
+    my $lib = $app->lib_dir;  # e.g., '/path/to/app/lib'
+
+Returns the application's lib directory path, which was added to C<@INC>
+at app creation. Returns C<undef> if lib was disabled via C<< lib => undef >>.
+
+=cut
+
+sub lib_dir ($self) {
+    return $self->{_lib_dir};
+}
+
+=head2 add_service
+
+    # Register a service class manually
+    $app->add_service('Cache', 'MyApp::Service::Cache');
+
+    # Register with a factory coderef
+    $app->add_service('Redis', sub ($app) {
+        return MyRedisConnection->new(host => 'localhost');
+    });
+
+Register a service with the application. Services are initialized at startup
+(during lifespan.startup) and available via C<< $c->service('Name') >>.
+
+The second argument can be:
+
+=over 4
+
+=item * A class name that inherits from a PAGI::Simple::Service scope class
+
+=item * A coderef that receives C<$app> and returns an instance or factory
+
+=back
+
+Returns C<$app> for chaining.
+
+=cut
+
+sub add_service ($self, $name, $class_or_factory) {
+    if (ref($class_or_factory) eq 'CODE') {
+        # Factory coderef - will be called at startup
+        push @{$self->{_pending_services}}, {
+            name => $name,
+            factory => $class_or_factory,
+        };
+    }
+    else {
+        # Class name - will be loaded and init_service called
+        push @{$self->{_pending_services}}, {
+            name => $name,
+            class => $class_or_factory,
+        };
+    }
+    return $self;
+}
+
+=head2 service_registry
+
+    my $registry = $app->service_registry;
+
+Returns the service registry hashref. Each key is a service name, and the
+value is either:
+
+=over 4
+
+=item * An instance (for PerApp services)
+
+=item * A coderef factory (for Factory and PerRequest services)
+
+=back
+
+This is primarily for internal use. Use C<< $c->service('Name') >> to access
+services from route handlers.
+
+=cut
+
+sub service_registry ($self) {
+    return $self->{_service_registry};
+}
+
+# Internal: Discover services in ${namespace}::Service::*
+sub _discover_services ($self) {
+    my $namespace = $self->{_namespace};
+    return unless $namespace;
+
+    my $service_ns = "${namespace}::Service";
+
+    # Use Module::Pluggable to find service classes
+    eval {
+        require Module::Pluggable;
+        Module::Pluggable->import(
+            search_path => [$service_ns],
+            require => 0,
+            sub_name => '_service_plugins',
+            on_require_error => sub { },  # Silently skip errors
+        );
+    };
+    return if $@;  # Module::Pluggable not available
+
+    # Get all service classes
+    my @classes = $self->_service_plugins;
+
+    for my $class (@classes) {
+        # Load the class
+        my $loaded = eval "require $class; 1";
+        next unless $loaded;
+
+        # Must inherit from a Service scope class
+        next unless $class->isa('PAGI::Simple::Service::_Base');
+
+        # Extract short name from class (e.g., MyApp::Service::Poll -> Poll)
+        my $name = $class;
+        $name =~ s/^\Q${service_ns}::\E//;
+
+        # Don't overwrite manually registered services
+        next if exists $self->{_service_registry}{$name};
+        next if grep { $_->{name} eq $name } @{$self->{_pending_services}};
+
+        # Add to pending list
+        push @{$self->{_pending_services}}, {
+            name => $name,
+            class => $class,
+        };
+    }
+}
+
+# Internal: Initialize all pending services
+sub _init_services ($self) {
+    # First, discover services
+    $self->_discover_services();
+
+    # Then initialize all pending services
+    for my $pending (@{$self->{_pending_services}}) {
+        my $name = $pending->{name};
+
+        if ($pending->{factory}) {
+            # Custom factory - call it and store result
+            my $result = $pending->{factory}->($self);
+            $self->{_service_registry}{$name} = $result;
+            warn "[PAGI::Simple]   Service: $name (factory)\n";
+        }
+        elsif ($pending->{class}) {
+            my $class = $pending->{class};
+
+            # Load the class if not already loaded
+            my $loaded = eval "require $class; 1";
+            unless ($loaded) {
+                warn "[PAGI::Simple] Warning: Failed to load service $class: $@\n";
+                next;
+            }
+
+            # Get config for this service
+            my $config = $self->{service_config}{$name} // {};
+
+            # Call init_service - returns instance or coderef
+            my $result = eval { $class->init_service($self, $config) };
+            if ($@) {
+                warn "[PAGI::Simple] Warning: Failed to init service $name: $@\n";
+                next;
+            }
+
+            $self->{_service_registry}{$name} = $result;
+
+            # Log what type of service
+            my $type = ref($result) eq 'CODE' ? 'factory' : 'singleton';
+            warn "[PAGI::Simple]   Service: $name ($type)\n";
+        }
+    }
+
+    # Clear pending list
+    @{$self->{_pending_services}} = ();
+}
+
 =head2 share_dir
 
     my $htmx_dir = $app->share_dir('htmx');
@@ -933,6 +1204,41 @@ async sub _handle_lifespan ($self, $scope, $receive, $send) {
         my $type = $event->{type} // '';
 
         if ($type eq 'lifespan.startup') {
+            # Debug output on startup
+            warn "[PAGI::Simple] Starting '$self->{name}'\n";
+            warn "[PAGI::Simple]   Home dir:   $self->{_caller_dir}\n";
+            warn "[PAGI::Simple]   Namespace:  $self->{_namespace}\n";
+
+            # Show lib dir status
+            if (defined $self->{_lib_dir}) {
+                if (-d $self->{_lib_dir}) {
+                    warn "[PAGI::Simple]   Lib dir:    $self->{_lib_dir}\n";
+                } else {
+                    warn "[PAGI::Simple]   Lib dir:    $self->{_lib_dir} (not found)\n";
+                }
+            } else {
+                warn "[PAGI::Simple]   Lib dir:    (none)\n";
+            }
+
+            if ($self->{_shared_assets} && %{$self->{_shared_assets}}) {
+                for my $asset (sort keys %{$self->{_shared_assets}}) {
+                    my $dir = eval { $self->share_dir($asset) } // '(not found)';
+                    warn "[PAGI::Simple]   Share dir ($asset): $dir\n";
+                }
+            }
+
+            # Initialize services before startup hooks
+            eval {
+                $self->_init_services();
+            };
+            if ($@) {
+                await $send->({
+                    type    => 'lifespan.startup.failed',
+                    message => "Service initialization failed: $@",
+                });
+                return;
+            }
+
             eval {
                 for my $hook (@{$self->{_startup_hooks}}) {
                     $hook->($self);
@@ -1044,6 +1350,9 @@ async sub _handle_http ($self, $scope, $receive, $send) {
             };
             # Ignore errors in after hooks
         }
+
+        # Call service cleanup hooks (always run at end of request)
+        $c->_call_service_cleanups();
     }
     else {
         # No route matched - check static handlers first

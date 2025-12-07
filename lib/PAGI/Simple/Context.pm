@@ -18,6 +18,7 @@ use PAGI::Simple::Negotiate;
 use PAGI::Simple::StreamWriter;
 use PAGI::Util::AsyncFile;
 use File::Basename ();
+use File::Spec;
 
 =head1 NAME
 
@@ -250,6 +251,88 @@ to this request and will not leak to other requests.
 
 sub stash ($self) {
     return $self->{stash};
+}
+
+=head2 _register_service_for_cleanup
+
+    $c->_register_service_for_cleanup($service);
+
+Internal method called by PerRequest services to register for cleanup.
+At the end of the request, C<on_request_end> is called on all registered
+services.
+
+=cut
+
+sub _register_service_for_cleanup ($self, $service) {
+    push @{$self->{_cleanup_services}}, $service;
+}
+
+=head2 _call_service_cleanups
+
+    $c->_call_service_cleanups();
+
+Internal method called at request end to invoke C<on_request_end> on
+all registered services. Called automatically by the framework.
+
+=cut
+
+sub _call_service_cleanups ($self) {
+    my $services = $self->{_cleanup_services} // [];
+    for my $service (@$services) {
+        eval { $service->on_request_end($self) };
+        if ($@) {
+            warn "[PAGI::Simple] Service cleanup error: $@\n";
+        }
+    }
+}
+
+=head2 service
+
+    my $poll = $c->service('Poll');
+    my $poll = $c->service('Poll', active => 1);  # With runtime args
+
+Get a service instance from the service registry. Services are initialized
+at application startup via C<init_service> and available via this method.
+
+    # With namespace => 'MyApp' (or app name 'My App')
+    $c->service('Poll')       # Returns Poll service
+    $c->service('User')       # Returns User service
+
+Service scopes determine instantiation behavior:
+
+=over 4
+
+=item * L<PAGI::Simple::Service::Factory> - New instance every call
+
+=item * L<PAGI::Simple::Service::PerRequest> - Cached per request
+
+=item * L<PAGI::Simple::Service::PerApp> - Singleton at app level
+
+=back
+
+For Factory and PerRequest services, any C<%args> passed are given to the
+factory coderef. For PerApp services (which are singletons), args are ignored.
+
+B<Note:> Services must be registered before app startup, either via auto-discovery
+(classes in C<${namespace}::Service::>) or via C<< $app->add_service() >>.
+
+=cut
+
+sub service ($self, $name, %args) {
+    my $app = $self->{app};
+    my $registry = $app->service_registry;
+
+    # Look up in registry
+    my $entry = $registry->{$name};
+    croak("Unknown service '$name' - not found in service registry") unless defined $entry;
+
+    # If it's a coderef (Factory or PerRequest), call it
+    if (ref($entry) eq 'CODE') {
+        return $entry->($self, \%args);
+    }
+
+    # Otherwise it's a PerApp singleton instance
+    return $entry;
 }
 
 =head2 param
@@ -809,8 +892,24 @@ Variables passed are available in the template via the C<$v> object.
 Output is automatically UTF-8 encoded and sent with
 C<Content-Type: text/html; charset=utf-8>.
 
-Auto-detects htmx requests and renders fragment vs full page.
-For htmx requests (HX-Request header present), the layout is skipped.
+=head3 Auto-Fragment Detection
+
+By default, htmx requests (HX-Request header present) automatically skip the
+layout and return just the template content. Browser requests render with
+the full layout.
+
+=head3 Layout Control
+
+You can override the auto-detection with the C<layout> option:
+
+    # Force layout ON (for htmx requests that need full page, e.g., hx-boost)
+    await $c->render('page', layout => 1, %vars);
+
+    # Force layout OFF (for browser requests, e.g., printable view)
+    await $c->render('page', layout => 0, %vars);
+
+    # Auto-detect (default)
+    await $c->render('page', %vars);
 
 =cut
 
@@ -887,9 +986,19 @@ async sub empty_or_redirect ($self, $redirect_url) {
     $c->hx_trigger('eventName');
     $c->hx_trigger('eventName', key => 'value');
 
+    # Example usage - must still send a response:
+    $c->hx_trigger('pollCreated', poll_id => $poll->{id});
+    await $c->render('polls/_card', poll => $poll);
+
 Set the HX-Trigger response header to trigger client-side events.
 When called with just an event name, triggers a simple event.
 When called with key-value pairs, triggers an event with data (JSON encoded).
+
+B<Note:> This method only sets a response header. You must still send
+a response using C<render()>, C<json()>, C<text()>, C<html()>, etc.
+The HX-Trigger header will be included when the response is sent.
+
+Returns C<$c> for chaining.
 
 =cut
 
@@ -910,9 +1019,15 @@ sub hx_trigger ($self, $event, %data) {
 =head2 hx_redirect
 
     $c->hx_redirect('/new-location');
+    await $c->html('');  # Must still send a response
 
 Set the HX-Redirect response header for client-side redirect.
 htmx will perform a full page navigation to the given URL.
+
+B<Note:> This method only sets a response header. You must still send
+a response (even an empty one) for the header to be delivered to the client.
+
+Returns C<$c> for chaining.
 
 =cut
 
@@ -924,8 +1039,14 @@ sub hx_redirect ($self, $url) {
 =head2 hx_refresh
 
     $c->hx_refresh;
+    await $c->html('');  # Must still send a response
 
 Set the HX-Refresh response header to trigger a full page refresh.
+
+B<Note:> This method only sets a response header. You must still send
+a response (even an empty one) for the header to be delivered to the client.
+
+Returns C<$c> for chaining.
 
 =cut
 

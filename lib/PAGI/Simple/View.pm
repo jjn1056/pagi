@@ -169,6 +169,31 @@ Returns the rendered HTML string.
 If rendering for an htmx request (detected via _context), automatically
 returns just the content block without layout wrapping.
 
+=head3 Layout Control Options
+
+You can explicitly control layout rendering with the C<layout> option:
+
+    # Force layout ON (even for htmx requests)
+    $view->render('page', layout => 1, %vars);
+
+    # Force layout OFF (even for browser requests)
+    $view->render('page', layout => 0, %vars);
+
+    # Auto-detect (default): skip layout for htmx, use layout for browser
+    $view->render('page', %vars);
+
+This is useful when:
+
+=over 4
+
+=item * htmx request needs full page (e.g., hx-boost navigation)
+
+=item * Browser request should skip layout (e.g., printable view, iframe embed)
+
+=item * You want consistent behavior regardless of request type
+
+=back
+
 =cut
 
 # Package variable to track current view during rendering
@@ -177,6 +202,9 @@ returns just the content block without layout wrapping.
 our $_current_view;
 
 sub render ($self, $template_name, %vars) {
+    # Extract layout control option (if provided)
+    my $layout_override = delete $vars{layout};
+
     # Store any request context
     local $self->{_context} = $vars{_context} // $self->{_context};
     local $self->{_blocks} = {};
@@ -192,14 +220,24 @@ sub render ($self, $template_name, %vars) {
     # Render the template - pass vars hashref as first arg (accessed as $v)
     my $output = $template->render(\%vars);
 
-    # Check if this is an htmx request - if so, skip layout
-    my $is_htmx = 0;
-    if ($self->{_context} && $self->{_context}->can('req')) {
-        $is_htmx = $self->{_context}->req->is_htmx;
+    # Determine whether to use layout:
+    # - layout => 1: force layout ON
+    # - layout => 0: force layout OFF
+    # - layout not specified: auto-detect (skip for htmx, use for browser)
+    my $use_layout;
+    if (defined $layout_override) {
+        $use_layout = $layout_override ? 1 : 0;
+    } else {
+        # Auto-detect: skip layout for htmx requests
+        my $is_htmx = 0;
+        if ($self->{_context} && $self->{_context}->can('req')) {
+            $is_htmx = $self->{_context}->req->is_htmx;
+        }
+        $use_layout = !$is_htmx;
     }
 
-    # If a layout was set and NOT htmx request, render it
-    if ($self->{_layout} && !$is_htmx) {
+    # If a layout was set and we should use it, render it
+    if ($self->{_layout} && $use_layout) {
         $output = $self->_render_layout($output, %vars);
     }
 
