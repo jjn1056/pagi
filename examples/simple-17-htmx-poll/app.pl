@@ -102,7 +102,7 @@ $app->get('/polls/:id/watch' => sub ($c) {
 
 # Create a new poll
 $app->post('/polls/create' => async sub ($c) {
-    my $params = await $c->req->form_params;
+    my $params = await $c->req->body_params;
     my $question = $params->{question} // '';
     my $options_str = $params->{options} // '';
 
@@ -129,7 +129,7 @@ $app->post('/polls/:id/vote' => async sub ($c) {
     }
 
     # Get the option from form data
-    my $params = await $c->req->form_params;
+    my $params = await $c->req->body_params;
     my $option = $params->{option};
 
     if ($option && exists $poll->{options}{$option}) {
