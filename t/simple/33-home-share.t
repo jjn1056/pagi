@@ -65,11 +65,14 @@ subtest 'share mounts static files' => sub {
     my $app = PAGI::Simple->new(name => 'Test App');
 
     # share() should return $app for chaining
-    my $result = $app->share('/static/htmx' => 'htmx');
+    my $result = $app->share('htmx');
     is($result, $app, 'share() returns $app for chaining');
 
     # Verify static handler was added (internal check)
     ok(scalar @{$app->{_static_handlers}} > 0, 'static handler was added');
+
+    # Verify has_shared() returns true
+    ok($app->has_shared('htmx'), 'has_shared(htmx) returns true after share()');
 };
 
 # Test 6: share() chaining
@@ -77,12 +80,33 @@ subtest 'share chaining' => sub {
     my $app = PAGI::Simple->new(name => 'Test App');
 
     # share() should return $app for chaining
-    my $result = $app->share('/static/htmx' => 'htmx');
+    my $result = $app->share('htmx');
     is($result, $app, 'share returns $app');
 
-    # Can chain multiple share calls
-    my $result2 = $app->share('/static/htmx' => 'htmx');
-    is($result2, $app, 'chained share returns $app');
+    # Can chain with other methods
+    my $result2 = $app->share('htmx')->get('/' => sub { });
+    isa_ok($result2, ['PAGI::Simple::RouteHandle'], 'chained get() returns RouteHandle');
+};
+
+# Test 6b: share() dies for unknown asset
+subtest 'share dies for unknown asset' => sub {
+    my $app = PAGI::Simple->new(name => 'Test App');
+
+    my $error;
+    eval { $app->share('nonexistent') };
+    $error = $@;
+
+    ok($error, 'share() dies for unknown asset');
+    like($error, qr/Unknown shared asset 'nonexistent'/, 'error mentions asset name');
+    like($error, qr/Available:.*htmx/, 'error lists available assets');
+};
+
+# Test 6c: has_shared() returns false before share()
+subtest 'has_shared returns false before share' => sub {
+    my $app = PAGI::Simple->new(name => 'Test App');
+
+    ok(!$app->has_shared('htmx'), 'has_shared(htmx) returns false before share()');
+    ok(!$app->has_shared('nonexistent'), 'has_shared() returns false for unknown asset');
 };
 
 # Test 7: share_dir returns absolute path

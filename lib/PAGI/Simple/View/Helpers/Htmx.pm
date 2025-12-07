@@ -46,13 +46,19 @@ The helpers are automatically available in templates when using PAGI::Simple::Vi
 Returns a hashref of all htmx helper functions for use in templates.
 This is called internally by PAGI::Simple::View.
 
+B<Note:> The C<htmx()>, C<htmx_ws()>, and C<htmx_sse()> helpers require
+C<< $app->share('htmx') >> to be called first. This ensures the htmx
+JavaScript files are available at the paths the helpers expect.
+
 =cut
 
 sub get_helpers ($view = undef) {
+    # Note: These helpers use $_current_view at render time (not the captured $view)
+    # because templates may be cached and rendered with different view instances.
     return {
-        htmx     => \&htmx,
-        htmx_ws  => \&htmx_ws,
-        htmx_sse => \&htmx_sse,
+        htmx     => \&_htmx_script,
+        htmx_ws  => \&_htmx_ws_script,
+        htmx_sse => \&_htmx_sse_script,
         hx_get    => \&hx_get,
         hx_post   => \&hx_post,
         hx_put    => \&hx_put,
@@ -63,15 +69,38 @@ sub get_helpers ($view = undef) {
     };
 }
 
+# Internal: Get current view from PAGI::Simple::View during rendering
+sub _get_current_view {
+    return $PAGI::Simple::View::_current_view;
+}
+
+# Internal: Check if htmx has been shared, die with helpful message if not
+sub _require_htmx_shared ($helper_name) {
+    my $view = _get_current_view();
+    return unless $view;  # Skip check if no view (standalone testing)
+
+    my $app = $view->{_app};
+    return unless $app;  # Skip check if no app
+
+    unless ($app->has_shared('htmx')) {
+        # Use Carp::croak for proper error location reporting
+        require Carp;
+        Carp::croak("$helper_name() requires \$app->share('htmx') to be called first");
+    }
+}
+
 =head2 htmx
 
     <%= htmx() %>
 
 Returns a script tag to include the htmx library.
 
+B<Requires:> C<< $app->share('htmx') >> must be called first.
+
 =cut
 
-sub htmx () {
+sub _htmx_script () {
+    _require_htmx_shared('htmx');
     return raw('<script src="/static/htmx/htmx.min.js"></script>');
 }
 
@@ -81,9 +110,12 @@ sub htmx () {
 
 Returns a script tag to include the htmx WebSocket extension.
 
+B<Requires:> C<< $app->share('htmx') >> must be called first.
+
 =cut
 
-sub htmx_ws () {
+sub _htmx_ws_script () {
+    _require_htmx_shared('htmx_ws');
     return raw('<script src="/static/htmx/ext/ws.js"></script>');
 }
 
@@ -93,9 +125,12 @@ sub htmx_ws () {
 
 Returns a script tag to include the htmx SSE extension.
 
+B<Requires:> C<< $app->share('htmx') >> must be called first.
+
 =cut
 
-sub htmx_sse () {
+sub _htmx_sse_script () {
+    _require_htmx_shared('htmx_sse');
     return raw('<script src="/static/htmx/ext/sse.js"></script>');
 }
 

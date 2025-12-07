@@ -360,4 +360,97 @@ subtest 'hx_* helpers return safe strings' => sub {
     like($html, qr/hx-get="\/test"/, 'proper attribute format');
 };
 
+# =============================================================================
+# Test 19: htmx() requires $app->share('htmx')
+# =============================================================================
+subtest 'htmx() requires $app->share(htmx) when app is present' => sub {
+    use PAGI::Simple;
+
+    # Create app without share('htmx')
+    my $app = PAGI::Simple->new(
+        name  => 'Test App',
+        views => "$tmpdir/templates",
+    );
+
+    # Get the view from the app
+    my $view = $app->view;
+    ok($view, 'got view from app');
+
+    # htmx() should die without share('htmx')
+    my $error;
+    eval { $view->render_string('<%= htmx() %>') };
+    $error = $@;
+
+    ok($error, 'htmx() dies without share(htmx)');
+    like($error, qr/htmx\(\) requires.*share\('htmx'\)/i, 'error message mentions share(htmx)');
+};
+
+# =============================================================================
+# Test 20: htmx() works after $app->share('htmx')
+# =============================================================================
+subtest 'htmx() works after $app->share(htmx)' => sub {
+    use PAGI::Simple;
+
+    # Create app with share('htmx')
+    my $app = PAGI::Simple->new(
+        name  => 'Test App',
+        views => "$tmpdir/templates",
+    );
+    $app->share('htmx');
+
+    # Get the view from the app
+    my $view = $app->view;
+
+    # htmx() should work now
+    my $html = $view->render_string('<%= htmx() %>');
+
+    like($html, qr/<script\s+src="[^"]*htmx\.min\.js"/, 'htmx() works after share(htmx)');
+};
+
+# =============================================================================
+# Test 21: htmx_sse() requires $app->share('htmx')
+# =============================================================================
+subtest 'htmx_sse() requires $app->share(htmx) when app is present' => sub {
+    use PAGI::Simple;
+
+    # Create app without share('htmx')
+    my $app = PAGI::Simple->new(
+        name  => 'Test App',
+        views => "$tmpdir/templates",
+    );
+
+    my $view = $app->view;
+
+    # htmx_sse() should die without share('htmx')
+    my $error;
+    eval { $view->render_string('<%= htmx_sse() %>') };
+    $error = $@;
+
+    ok($error, 'htmx_sse() dies without share(htmx)');
+    like($error, qr/htmx_sse\(\) requires.*share\('htmx'\)/i, 'error message mentions share(htmx)');
+};
+
+# =============================================================================
+# Test 22: htmx_ws() requires $app->share('htmx')
+# =============================================================================
+subtest 'htmx_ws() requires $app->share(htmx) when app is present' => sub {
+    use PAGI::Simple;
+
+    # Create app without share('htmx')
+    my $app = PAGI::Simple->new(
+        name  => 'Test App',
+        views => "$tmpdir/templates",
+    );
+
+    my $view = $app->view;
+
+    # htmx_ws() should die without share('htmx')
+    my $error;
+    eval { $view->render_string('<%= htmx_ws() %>') };
+    $error = $@;
+
+    ok($error, 'htmx_ws() dies without share(htmx)');
+    like($error, qr/htmx_ws\(\) requires.*share\('htmx'\)/i, 'error message mentions share(htmx)');
+};
+
 done_testing();

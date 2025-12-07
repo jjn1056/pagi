@@ -711,7 +711,7 @@ assets as static files, use C<share()> instead which is more convenient.
     my $path = $app->share_dir('htmx');
 
     # Or use share() for static mounting (preferred)
-    $app->share('/static/htmx' => 'htmx');
+    $app->share('htmx');
 
 =cut
 
@@ -745,45 +745,85 @@ sub share_dir ($self, $name) {
 
 =head2 share
 
-    $app->share('/static/htmx' => 'htmx');
+    $app->share('htmx');
 
-Mount PAGI's bundled assets as static files. This is a convenience method
-that combines C<share_dir()> and C<static()>.
+Mount PAGI's bundled assets as static files. Each asset is mounted at its
+predefined URL path to ensure compatibility with PAGI's template helpers.
 
-    # Mount htmx at /static/htmx
-    $app->share('/static/htmx' => 'htmx');
+    # Mount htmx at /static/htmx (required for htmx() helper)
+    $app->share('htmx');
 
-    # Equivalent to:
-    $app->static('/static/htmx' => $app->share_dir('htmx'));
+    # Mount multiple assets at once
+    $app->share('htmx', 'alpine');  # future example
 
 Returns C<$app> for chaining:
 
-    $app->share('/static/htmx' => 'htmx')
+    $app->share('htmx')
         ->get('/' => sub ($c) { ... });
 
 B<Available bundled assets:>
 
 =over 4
 
-=item * C<htmx> - htmx library (2.0.8) with SSE and WebSocket extensions
+=item * C<htmx> - htmx library (2.0.8) with SSE and WebSocket extensions, mounted at C</static/htmx>
 
 =back
 
 B<Example with htmx helpers:>
 
     my $app = PAGI::Simple->new(name => 'My App', views => 'templates');
-    $app->share('/static/htmx' => 'htmx');
+    $app->share('htmx');  # Required before using htmx() helper
 
-    # In templates, use the htmx() helper which references /static/htmx/
+    # In templates, use the htmx() helper
     # <%= htmx() %>
     # <%= htmx_sse() %>
 
+B<Note:> The C<htmx()> and C<htmx_sse()> template helpers require
+C<< $app->share('htmx') >> to be called first. This ensures the htmx
+JavaScript files are available at the paths the helpers expect.
+
 =cut
 
-sub share ($self, $prefix, $name) {
-    my $dir = $self->share_dir($name);
-    $self->static($prefix => $dir);
+# MAINTAINER NOTE: To add a new bundled asset:
+# 1. Add the asset files to share/$name/
+# 2. Add entry to %SHARE_ASSETS below: 'name' => '/mount/path'
+# 3. Update POD above to document the new asset
+# 4. If the asset has template helpers, gate them with has_shared() check
+#    (see PAGI::Simple::View htmx() for example)
+
+my %SHARE_ASSETS = (
+    htmx => '/static/htmx',
+);
+
+sub share ($self, @names) {
+    for my $name (@names) {
+        unless (exists $SHARE_ASSETS{$name}) {
+            my $available = join ', ', sort keys %SHARE_ASSETS;
+            die "Unknown shared asset '$name'. Available: $available";
+        }
+
+        my $prefix = $SHARE_ASSETS{$name};
+        my $dir = $self->share_dir($name);
+        $self->static($prefix => $dir);
+
+        # Track that this asset has been shared
+        $self->{_shared_assets}{$name} = 1;
+    }
     return $self;
+}
+
+=head2 has_shared
+
+    if ($app->has_shared('htmx')) { ... }
+
+Returns true if the specified asset has been mounted via C<share()>.
+This is used internally by template helpers to ensure required assets
+are available.
+
+=cut
+
+sub has_shared ($self, $name) {
+    return $self->{_shared_assets}{$name} ? 1 : 0;
 }
 
 =head2 to_app

@@ -63,8 +63,8 @@ my $app = PAGI::Simple->new(
     views => 'templates',
 );
 
-# Mount PAGI's bundled htmx library
-$app->share('/static/htmx' => 'htmx');
+# Mount PAGI's bundled htmx library (required for htmx() helper)
+$app->share('htmx');
 
 # ============================================================================
 # Routes
