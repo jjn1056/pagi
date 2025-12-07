@@ -1,0 +1,5 @@
+<div class="card" style="border-left: 4px solid #dc2626; text-align: center; padding: 32px 16px;">
+    <h2 style="margin: 0 0 12px 0; color: #dc2626;">Poll Deleted</h2>
+    <p style="color: #666; margin: 0 0 16px 0;">This poll has been deleted by another user.</p>
+    <a href="/" class="btn btn-primary">Back to All Polls</a>
+</div>

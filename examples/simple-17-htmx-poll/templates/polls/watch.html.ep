@@ -7,12 +7,14 @@
     <a href="/" class="btn btn-primary">Back to All Polls</a>
 </p>
 
-<div class="card watching">
-    <p class="status">Watching live updates via SSE...</p>
-</div>
-
-<!-- SSE-connected container that swaps in vote updates -->
+<!-- SSE-connected container -->
 <div <%= hx_sse("/polls/$id/live", swap => 'innerHTML') %>>
+    <!-- Status message (shown while watching) -->
+    <div class="card watching" sse-swap="deleted">
+        <p class="status">Watching live updates via SSE...</p>
+    </div>
+
+    <!-- Poll card (updated on votes, replaced on delete) -->
     <div sse-swap="vote">
         <%= include('polls/_card', poll => $poll, show_vote => 0, show_delete => 0) %>
     </div>

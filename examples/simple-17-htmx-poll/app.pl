@@ -149,6 +149,10 @@ $app->delete('/polls/:id' => sub ($c) {
     my $id = $c->path_params->{id};
 
     if (_delete_poll($id)) {
+        # Notify any watchers that the poll was deleted
+        my $pubsub = PAGI::Simple::PubSub->instance;
+        $pubsub->publish("poll:$id", { action => 'deleted' });
+
         # Return empty response - htmx will remove the element
         $c->html('');
     } else {
@@ -169,15 +173,25 @@ $app->sse('/polls/:id/live' => sub ($sse) {
         data  => { poll_id => $id },
     );
 
-    # Subscribe to this poll's channel with a callback for vote updates
+    # Subscribe to this poll's channel with a callback for updates
     $sse->subscribe("poll:$id", sub ($msg) {
+        my $view = $sse->app->view;
+
+        # Check if this is a deletion notification
+        if (ref $msg eq 'HASH' && $msg->{action} eq 'deleted') {
+            my $html = $view->render('polls/_deleted');
+            $sse->send_event(
+                event => 'deleted',
+                data  => $html,
+            );
+            return;
+        }
+
+        # Otherwise it's a vote update
         my $poll = _get_poll($id);
         return unless $poll;
 
-        # Render the updated poll card
-        my $view = $sse->app->view;
         my $html = $view->render('polls/_card', poll => $poll, show_vote => 0);
-
         $sse->send_event(
             event => 'vote',
             data  => $html,
