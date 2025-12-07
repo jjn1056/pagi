@@ -163,21 +163,18 @@ $app->sse('/polls/:id/live' => sub ($sse) {
 
     return unless $poll;
 
-    # Subscribe to this poll's channel
-    $sse->subscribe("poll:$id");
-
     # Send initial connection event
     $sse->send_event(
         event => 'connected',
         data  => { poll_id => $id },
     );
 
-    # When a vote comes in, send the updated poll HTML
-    $sse->on(message => sub ($msg) {
+    # Subscribe to this poll's channel with a callback for vote updates
+    $sse->subscribe("poll:$id", sub ($msg) {
         my $poll = _get_poll($id);
         return unless $poll;
 
-        # Create a view instance to render the partial
+        # Render the updated poll card
         my $view = $sse->app->view;
         my $html = $view->render('polls/_card', poll => $poll, show_vote => 0);
 
