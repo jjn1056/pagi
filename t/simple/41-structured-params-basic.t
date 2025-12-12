@@ -120,13 +120,13 @@ subtest 'Chain with to_hash at end' => sub {
 };
 
 # ============================================================================
-# TO_HASH PLACEHOLDER TEST
+# TO_HASH BASIC TEST
 # ============================================================================
 
-subtest 'to_hash() returns empty hashref (placeholder)' => sub {
+subtest 'to_hash() parses simple data' => sub {
     my $sp = PAGI::Simple::StructuredParams->new(params => { name => 'John' });
     my $result = $sp->to_hash;
-    is $result, {}, 'to_hash() returns empty hashref (Step 2 will implement)';
+    is $result, { name => 'John' }, 'to_hash() returns parsed data';
 };
 
 done_testing;
