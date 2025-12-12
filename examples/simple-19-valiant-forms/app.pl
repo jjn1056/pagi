@@ -9,6 +9,8 @@
 # - htmx for dynamic form submission
 # - htmx for adding/removing line items without page reload
 # - Inline validation with htmx
+# - Service layer for data operations
+# - Structured params for Rails-style parameter handling
 #
 # Run with: pagi-server --app examples/simple-19-valiant-forms/app.pl
 # =============================================================================
@@ -38,29 +40,13 @@ $app->views('./templates', {
 # Share htmx for script tags
 $app->share('htmx');
 
-# In-memory "database"
-my @orders;
-my $next_order_id = 1;
-
-# Helper to find order by ID
-sub _find_order ($id) {
-    for my $order (@orders) {
-        return $order if $order->id == $id;
-    }
-    return undef;
-}
-
-# Helper to delete order by ID
-sub _delete_order ($id) {
-    @orders = grep { $_->id != $id } @orders;
-}
-
 # -----------------------------------------------------------------------------
 # Routes
 # -----------------------------------------------------------------------------
 
 # Home - list orders
 $app->get('/' => sub ($c) {
+    my @orders = $c->service('Order')->all;
     $c->render('orders/index', orders => \@orders);
 });
 
@@ -84,26 +70,9 @@ $app->post('/orders' => async sub ($c) {
         ->skip('_destroy')
         ->to_hash;
 
-    my $order = MyApp::Model::Order->new(
-        customer_name  => $data->{customer_name} // '',
-        customer_email => $data->{customer_email} // '',
-        notes          => $data->{notes} // '',
-    );
+    my $order = $c->service('Order')->create($data);
 
-    # Add line items from structured data
-    for my $item_data (@{$data->{line_items} // []}) {
-        next unless $item_data && keys %$item_data;
-        $order->add_line_item(
-            product    => $item_data->{product} // '',
-            quantity   => $item_data->{quantity} // 1,
-            unit_price => $item_data->{unit_price} // 0,
-        );
-    }
-
-    if ($order->validate->valid) {
-        $order->id($next_order_id++);
-        push @orders, $order;
-
+    if ($order) {
         # htmx request - return success message
         if ($c->req->is_htmx) {
             $c->html(qq{
@@ -116,12 +85,23 @@ $app->post('/orders' => async sub ($c) {
             $c->redirect('/');
         }
     } else {
+        # Validation failed - recreate order for form re-render
+        my $invalid_order = MyApp::Model::Order->new(
+            customer_name  => $data->{customer_name} // '',
+            customer_email => $data->{customer_email} // '',
+            notes          => $data->{notes} // '',
+        );
+        for my $item_data (@{$data->{line_items} // []}) {
+            next unless $item_data && keys %$item_data;
+            $invalid_order->add_line_item(%$item_data);
+        }
+        $invalid_order->validate;
+
         # Re-render form with errors
         if ($c->req->is_htmx) {
-            # htmx - render just the form partial (no layout/wrapper divs)
-            $c->render('orders/_form', order => $order);
+            $c->render('orders/_form', order => $invalid_order);
         } else {
-            $c->render('orders/new', order => $order);
+            $c->render('orders/new', order => $invalid_order);
         }
     }
 });
@@ -129,7 +109,7 @@ $app->post('/orders' => async sub ($c) {
 # Edit order form
 $app->get('/orders/:id/edit' => sub ($c) {
     my $id = $c->path_params->{id};
-    my $order = _find_order($id);
+    my $order = $c->service('Order')->find($id);
 
     unless ($order) {
         $c->status(404);
@@ -146,7 +126,8 @@ $app->get('/orders/:id/edit' => sub ($c) {
 # Update order
 $app->post('/orders/:id' => async sub ($c) {
     my $id = $c->path_params->{id};
-    my $order = _find_order($id);
+    my $orders = $c->service('Order');
+    my $order = $orders->find($id);
 
     unless ($order) {
         $c->status(404);
@@ -164,22 +145,9 @@ $app->post('/orders/:id' => async sub ($c) {
         ->skip('_destroy')
         ->to_hash;
 
-    $order->customer_name($data->{customer_name} // '');
-    $order->customer_email($data->{customer_email} // '');
-    $order->notes($data->{notes} // '');
+    my $updated = $orders->update($id, $data);
 
-    # Clear and re-add line items from structured data
-    $order->line_items([]);
-    for my $item_data (@{$data->{line_items} // []}) {
-        next unless $item_data && keys %$item_data;
-        $order->add_line_item(
-            product    => $item_data->{product} // '',
-            quantity   => $item_data->{quantity} // 1,
-            unit_price => $item_data->{unit_price} // 0,
-        );
-    }
-
-    if ($order->validate->valid) {
+    if ($updated) {
         # htmx request - return success message
         if ($c->req->is_htmx) {
             $c->html(qq{
@@ -192,7 +160,7 @@ $app->post('/orders/:id' => async sub ($c) {
             $c->redirect('/');
         }
     } else {
-        # Re-render form with errors
+        # Re-render form with errors (order already has validation errors)
         if ($c->req->is_htmx) {
             $c->render('orders/_form', order => $order);
         } else {
@@ -204,7 +172,8 @@ $app->post('/orders/:id' => async sub ($c) {
 # Delete order
 $app->delete('/orders/:id' => sub ($c) {
     my $id = $c->path_params->{id};
-    my $order = _find_order($id);
+    my $orders = $c->service('Order');
+    my $order = $orders->find($id);
 
     unless ($order) {
         $c->status(404);
@@ -212,13 +181,13 @@ $app->delete('/orders/:id' => sub ($c) {
         return;
     }
 
-    _delete_order($id);
+    $orders->delete($id);
 
     if ($c->req->is_htmx) {
         $c->hx_trigger('orderDeleted', message => "Order #$id deleted");
 
         # If no orders left, return empty state with OOB swap
-        if (@orders == 0) {
+        if ($orders->count == 0) {
             $c->html(qq{
                 <div id="orders-list-area" hx-swap-oob="true">
                     <div class="alert alert-info">
