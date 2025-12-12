@@ -11,6 +11,7 @@
 
 use strict;
 use warnings;
+use experimental 'signatures';
 use lib 'lib';
 use lib 'examples/simple-18-async-services/lib';
 
