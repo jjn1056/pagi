@@ -14,6 +14,7 @@ use Carp qw(croak);
 use PAGI::Simple::Request;
 use PAGI::Simple::Response;
 use PAGI::Simple::CookieUtil;
+use PAGI::Simple::StructuredParams;
 use PAGI::Simple::Negotiate;
 use PAGI::Simple::StreamWriter;
 use PAGI::Util::AsyncFile;
@@ -412,6 +413,77 @@ async sub params ($self) {
     }
 
     return Hash::MultiValue->new(@pairs);
+}
+
+=head2 structured_body
+
+    my $sp = await $c->structured_body;
+    my $data = $sp->namespace('order')->permitted('name', 'email')->to_hash;
+
+Returns a L<PAGI::Simple::StructuredParams> object for the request body.
+This is an async method because it needs to read the body.
+
+The StructuredParams object provides Rails-style strong parameters:
+
+    my $data = (await $c->structured_body)
+        ->namespace('my_app_model_order')
+        ->permitted('customer_name', 'email', +{line_items => ['product', 'qty']})
+        ->skip('_destroy')
+        ->to_hash;
+
+=cut
+
+async sub structured_body ($self) {
+    my $body = await $self->req->body_params;
+    return PAGI::Simple::StructuredParams->new(
+        source_type => 'body',
+        multi_value => $body,
+        context     => $self,
+    );
+}
+
+=head2 structured_query
+
+    my $sp = $c->structured_query;
+    my $data = $sp->permitted('page', 'per_page')->to_hash;
+
+Returns a L<PAGI::Simple::StructuredParams> object for query string parameters.
+This is a synchronous method (query params are available immediately).
+
+=cut
+
+sub structured_query ($self) {
+    return PAGI::Simple::StructuredParams->new(
+        source_type => 'query',
+        multi_value => $self->req->query,
+        context     => $self,
+    );
+}
+
+=head2 structured_data
+
+    my $sp = await $c->structured_data;
+    my $data = $sp->namespace('form')->permitted('name')->to_hash;
+
+Returns a L<PAGI::Simple::StructuredParams> object for merged body + query params.
+Body parameters take precedence over query parameters.
+This is an async method because it needs to read the body.
+
+=cut
+
+async sub structured_data ($self) {
+    my $body = await $self->req->body_params;
+    my $query = $self->req->query;
+
+    # Merge: query first, then body (body takes precedence)
+    my @pairs = ($query->flatten, $body->flatten);
+    my $merged = Hash::MultiValue->new(@pairs);
+
+    return PAGI::Simple::StructuredParams->new(
+        source_type => 'data',
+        multi_value => $merged,
+        context     => $self,
+    );
 }
 
 =head2 req
