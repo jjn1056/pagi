@@ -7,7 +7,72 @@ use experimental 'signatures';
 use Hash::MultiValue;
 use PAGI::Simple::Exception;
 
-# Step 1: Core class with chainable API foundation
+=head1 NAME
+
+PAGI::Simple::StructuredParams - Rails-style strong parameters for PAGI::Simple
+
+=head1 SYNOPSIS
+
+    # In a route handler:
+    $app->post('/orders' => async sub ($c) {
+        # Parse and filter form data
+        my $data = (await $c->structured_body)
+            ->namespace('my_app_model_order')
+            ->permitted(
+                'customer_name', 'customer_email', 'notes',
+                +{line_items => ['product', 'qty', 'unit_price', '_destroy']}
+            )
+            ->skip('_destroy')
+            ->required('customer_name', 'customer_email')
+            ->to_hash;
+
+        # $data is now a clean hashref ready for your model
+        my $order = Order->new(%$data);
+    });
+
+    # Query parameters (synchronous)
+    $app->get('/search' => sub ($c) {
+        my $data = $c->structured_query
+            ->permitted('q', 'page', 'per_page')
+            ->to_hash;
+    });
+
+=head1 DESCRIPTION
+
+PAGI::Simple::StructuredParams provides Rails-style "strong parameters" for
+PAGI::Simple applications. It parses flat form data (with dot and bracket
+notation) into nested Perl data structures, then applies whitelisting,
+filtering, and validation.
+
+This is especially useful with Valiant forms where field names are namespaced
+(e.g., C<my_app_model_order.customer_name>) and nested forms create array
+notation (e.g., C<line_items[0].product>).
+
+=head2 Key Features
+
+=over 4
+
+=item * B<Dot notation parsing>: C<person.name> becomes C<< {person => {name => ...}} >>
+
+=item * B<Bracket notation>: C<items[0].name> becomes C<< {items => [{name => ...}]} >>
+
+=item * B<Namespace filtering>: Strip prefixes like C<my_app_model_order.>
+
+=item * B<Whitelisting>: Only permit specific fields (security)
+
+=item * B<Skip filtering>: Remove array items marked for deletion (C<_destroy> pattern)
+
+=item * B<Required validation>: Ensure required fields are present
+
+=item * B<Chainable API>: All methods return C<$self> for fluent chaining
+
+=back
+
+=head1 METHODS
+
+=cut
+
+# Core class with chainable API foundation
 
 sub new ($class, %args) {
     # Accept Hash::MultiValue object for D1 duplicate handling
@@ -32,6 +97,20 @@ sub new ($class, %args) {
     return $self;
 }
 
+=head2 namespace
+
+    $sp->namespace('my_app_model_order');
+
+Filters parameters to only those with the given prefix, then strips the prefix.
+For example, C<my_app_model_order.name> becomes C<name>.
+
+This is commonly used with Valiant forms which namespace all fields with the
+model class name.
+
+Returns C<$self> for chaining.
+
+=cut
+
 sub namespace ($self, $ns = undef) {
     if (defined $ns) {
         $self->{_namespace} = $ns;
@@ -40,20 +119,116 @@ sub namespace ($self, $ns = undef) {
     return $self->{_namespace};
 }
 
+=head2 permitted
+
+    # Simple scalar fields
+    $sp->permitted('name', 'email');
+
+    # Nested hash
+    $sp->permitted('address', ['street', 'city', 'zip']);
+
+    # Array of scalars (preserves duplicate keys)
+    $sp->permitted(+{tags => []});
+
+    # Array of hashes
+    $sp->permitted(+{line_items => ['product', 'qty', 'price']});
+
+Whitelist which fields are allowed through. Only specified fields will be
+included in the final C<to_hash()> output.
+
+B<Rule formats:>
+
+=over 4
+
+=item * C<'field'> - Allow a scalar field
+
+=item * C<'field', ['a', 'b']> - Allow a nested hash with specified sub-fields
+
+=item * C<< +{field => []} >> - Allow array of scalars (multi-value form fields)
+
+=item * C<< +{field => ['a', 'b']} >> - Allow array of hashes with specified fields
+
+=back
+
+If C<permitted()> is never called, all fields pass through (no filtering).
+
+Returns C<$self> for chaining.
+
+=cut
+
 sub permitted ($self, @rules) {
     push @{$self->{_permitted_rules}}, @rules;
     return $self;
 }
+
+=head2 skip
+
+    $sp->skip('_destroy');
+    $sp->skip('_destroy', '_remove');
+
+Removes array items where the specified field has a truthy value. Also removes
+the skip field itself from surviving items.
+
+This implements the Rails "accepts_nested_attributes_for" C<_destroy> pattern,
+where form fields include a checkbox to mark items for deletion.
+
+Example:
+
+    # Input: line_items[0]._destroy=0, line_items[1]._destroy=1
+    # After skip('_destroy'): only line_items[0] remains, without _destroy field
+
+Returns C<$self> for chaining.
+
+=cut
 
 sub skip ($self, @fields) {
     $self->{_skip_fields}{$_} = 1 for @fields;
     return $self;
 }
 
+=head2 required
+
+    $sp->required('name', 'email');
+
+Specifies fields that must be present in the final output. If any required
+field is missing, undefined, or empty string, C<to_hash()> will throw a
+L<PAGI::Simple::Exception> with HTTP status 400.
+
+Note: Validation happens B<after> all filtering (namespace, permitted, skip).
+If a field is required, it should also be permitted.
+
+Returns C<$self> for chaining.
+
+=cut
+
 sub required ($self, @fields) {
     push @{$self->{_required_fields}}, @fields;
     return $self;
 }
+
+=head2 to_hash
+
+    my $data = $sp->to_hash;
+
+Applies all configured transformations and returns the final hashref:
+
+=over 4
+
+=item 1. Apply namespace filter (strip prefix)
+
+=item 2. Parse dot/bracket notation into nested structure
+
+=item 3. Apply permitted rules (whitelist)
+
+=item 4. Apply skip filtering (remove marked items)
+
+=item 5. Validate required fields (throw on missing)
+
+=back
+
+Throws L<PAGI::Simple::Exception> if required fields are missing.
+
+=cut
 
 sub to_hash ($self) {
     my $filtered_mv = $self->_apply_namespace();  # Returns Hash::MultiValue
@@ -378,5 +553,75 @@ sub _validate_required ($self, $data) {
         );
     }
 }
+
+=head1 SYNTAX REFERENCE
+
+=head2 Input Format
+
+    person.name             -> {person => {name => ...}}
+    person.address.city     -> {person => {address => {city => ...}}}
+    items[0]                -> {items => [...]}
+    items[0].name           -> {items => [{name => ...}]}
+    items[]                 -> auto-index (append to array)
+
+=head2 Duplicate Key Handling
+
+When the same key appears multiple times:
+
+    # For scalar fields: last value wins
+    name=John&name=Jane  -> {name => 'Jane'}
+
+    # For array fields (+{field => []}): all values preserved
+    tags=perl&tags=web   -> {tags => ['perl', 'web']}
+
+=head1 EXAMPLES
+
+=head2 Basic Form Parsing
+
+    my $data = (await $c->structured_body)
+        ->permitted('name', 'email')
+        ->to_hash;
+    # {name => 'John', email => 'john@example.com'}
+
+=head2 Nested Forms (Valiant)
+
+    my $data = (await $c->structured_body)
+        ->namespace('my_app_model_order')
+        ->permitted(
+            'customer_name',
+            +{line_items => ['product', 'qty']}
+        )
+        ->to_hash;
+    # {
+    #     customer_name => 'John',
+    #     line_items => [
+    #         {product => 'Widget', qty => 5},
+    #         {product => 'Gadget', qty => 3},
+    #     ]
+    # }
+
+=head2 With Deletion Support
+
+    my $data = (await $c->structured_body)
+        ->namespace('order')
+        ->permitted(+{items => ['name', '_destroy']})
+        ->skip('_destroy')
+        ->to_hash;
+    # Items with _destroy=1 are removed
+    # _destroy field removed from remaining items
+
+=head1 SEE ALSO
+
+=over 4
+
+=item * L<Catalyst::Utils::StructuredParameters> - The inspiration for this module
+
+=item * L<PAGI::Simple::Context> - Provides C<structured_body>, C<structured_query>, C<structured_data>
+
+=item * L<PAGI::Simple::Exception> - Exception class thrown on validation errors
+
+=back
+
+=cut
 
 1;
