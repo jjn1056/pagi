@@ -48,3 +48,8 @@ local/
 
 # Perl local::lib
 perl5/
+
+# AI
+.claude
+CLAUDE.md
+AGENTS.md
