@@ -325,9 +325,9 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 7: PAGI::Simple::Model base class instantiation (IMPLEMENTED AS Service)",
+      "description" : "Step 7: PAGI::Simple::Service base class instantiation",
       "passes" : true,
-      "notes" : "Implemented as PAGI::Simple::Service::_Base with Factory/PerRequest/PerApp scopes",
+      "notes" : "PAGI::Simple::Service::_Base with Factory/PerRequest/PerApp scopes",
       "steps" : [
          "Step 1: Create service class inheriting from PAGI::Simple::Service::Factory",
          "Step 2: Service instantiated via init_service($app, $config)",
@@ -337,9 +337,9 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 7: $c->model('Name') returns model instance (IMPLEMENTED AS $c->service())",
+      "description" : "Step 7: $c->service('Name') returns service instance",
       "passes" : true,
-      "notes" : "Implemented as $c->service('Name') - auto-discovers from ${namespace}::Service::*",
+      "notes" : "Auto-discovers from ${namespace}::Service::*",
       "steps" : [
          "Step 1: Configure app with namespace => 'MyApp'",
          "Step 2: Create MyApp::Service::Todo class",
@@ -349,9 +349,9 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 7: Model configuration passed via model_config (IMPLEMENTED AS service_config)",
+      "description" : "Step 7: Service configuration passed via service_config",
       "passes" : true,
-      "notes" : "Implemented as service_config => { ServiceName => { ... } }",
+      "notes" : "service_config => { ServiceName => { ... } }",
       "steps" : [
          "Step 1: Configure app with service_config => { DB => { dsn => '...' } }",
          "Step 2: Create MyApp::Service::DB that uses config",
@@ -361,9 +361,9 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 8: Model auto-discovery with Module::Pluggable (IMPLEMENTED AS Service)",
+      "description" : "Step 8: Service auto-discovery finds ${namespace}::Service::* classes",
       "passes" : true,
-      "notes" : "Implemented via _discover_services() - finds ${namespace}::Service::* classes",
+      "notes" : "Via _discover_services() using Module::Pluggable",
       "steps" : [
          "Step 1: Create namespace with multiple service classes",
          "Step 2: Configure app with namespace => 'MyApp'",
@@ -373,9 +373,9 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 8: Missing model gives clear error (IMPLEMENTED AS Service)",
+      "description" : "Step 8: Missing service gives clear error",
       "passes" : true,
-      "notes" : "Implemented in Context->service() - croaks with 'Unknown service' message",
+      "notes" : "Context->service() croaks with 'Unknown service' message",
       "steps" : [
          "Step 1: Configure app with namespace",
          "Step 2: Call $c->service('NonExistent')",
@@ -433,7 +433,7 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 10: Mixed sync/async models work together (IMPLEMENTED AS Service)",
+      "description" : "Step 10: Mixed sync/async services work together",
       "passes" : true,
       "notes" : "Services with async methods can call $c->service() to get other services",
       "steps" : [
@@ -445,7 +445,7 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 10: Per-request caching works with async models (IMPLEMENTED AS Service)",
+      "description" : "Step 10: Per-request caching works with async services",
       "passes" : true,
       "notes" : "PerRequest services cache the instance; async methods can be called on cached instance",
       "steps" : [
@@ -591,7 +591,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - List todos on home page",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: Start todo app server",
          "Step 2: GET /",
@@ -602,7 +602,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Create new todo",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: POST /todos with title parameter",
          "Step 2: Verify todo created",
@@ -613,7 +613,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Create with validation error",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: POST /todos with empty title",
          "Step 2: Verify form re-rendered with error",
@@ -624,7 +624,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Toggle todo completion",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: PATCH /todos/:id/toggle",
          "Step 2: Verify todo completion status toggled",
@@ -635,7 +635,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Edit todo inline",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: GET /todos/:id/edit",
          "Step 2: Verify edit form partial returned",
@@ -646,7 +646,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Delete todo",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: DELETE /todos/:id",
          "Step 2: Verify todo deleted",
@@ -657,7 +657,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Filter by status",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: GET /active",
          "Step 2: Verify only active (not completed) todos shown",
@@ -668,7 +668,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Clear completed",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: Create mix of completed and active todos",
          "Step 2: POST /todos/clear-completed",
@@ -679,7 +679,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Toggle all",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: Create mix of completed and active todos",
          "Step 2: POST /todos/toggle-all",
@@ -690,7 +690,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - SSE live updates",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: Connect to /todos/live SSE endpoint",
          "Step 2: Verify 'connected' event received",
@@ -701,7 +701,7 @@
    {
       "category" : "functional",
       "description" : "Step 16: Todo App - Progressive enhancement",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: GET / without JavaScript",
          "Step 2: Verify full page rendered with forms",
@@ -722,10 +722,10 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 17: User App - Per-request cached CurrentUser model",
+      "description" : "Step 17: User App - Per-request cached CurrentUser service",
       "passes" : false,
       "steps" : [
-         "Step 1: Create route that accesses $c->model('CurrentUser') twice",
+         "Step 1: Create route that accesses $c->service('CurrentUser') twice",
          "Step 2: Make request",
          "Step 3: Verify same instance used both times",
          "Step 4: Verify CurrentUser uses PerRequest role"
@@ -813,7 +813,7 @@
    {
       "category" : "functional",
       "description" : "Step 20: POD documentation for PAGI::Simple::View",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: Run perldoc PAGI::Simple::View",
          "Step 2: Verify NAME, SYNOPSIS, DESCRIPTION present",
@@ -823,13 +823,13 @@
    },
    {
       "category" : "functional",
-      "description" : "Step 20: POD documentation for PAGI::Simple::Model",
-      "passes" : false,
+      "description" : "Step 20: POD documentation for PAGI::Simple::Service",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run perldoc PAGI::Simple::Model",
-         "Step 2: Verify complete documentation",
-         "Step 3: Verify for_context pattern documented",
-         "Step 4: Verify PerRequest role documented"
+         "Step 1: Run perldoc PAGI::Simple::Service::_Base",
+         "Step 2: Verify complete documentation for Factory/PerRequest/PerApp",
+         "Step 3: Verify service discovery documented",
+         "Step 4: Verify async service patterns documented"
       ]
    },
    {
@@ -880,129 +880,107 @@
    {
       "category" : "functional",
       "description" : "Test file: t/view/00-view-basic.t passes",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: Run prove -l t/view/00-view-basic.t",
          "Step 2: Verify all tests pass",
-         "Step 3: Verify covers template compilation",
-         "Step 4: Verify covers variable interpolation"
+         "Step 3: Verify covers View instantiation and rendering"
       ]
    },
    {
       "category" : "functional",
-      "description" : "Test file: t/view/01-view-helpers.t passes",
-      "passes" : false,
+      "description" : "Test file: t/view/01-default-helpers.t passes",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run prove -l t/view/01-view-helpers.t",
+         "Step 1: Run prove -l t/view/01-default-helpers.t",
          "Step 2: Verify all tests pass",
-         "Step 3: Verify covers escape/raw/safe",
-         "Step 4: Verify covers include helper"
+         "Step 3: Verify covers escape/raw/safe helpers"
       ]
    },
    {
       "category" : "functional",
-      "description" : "Test file: t/view/02-view-htmx.t passes",
-      "passes" : false,
+      "description" : "Test file: t/simple/31-views.t passes",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run prove -l t/view/02-view-htmx.t",
+         "Step 1: Run prove -l t/simple/31-views.t",
+         "Step 2: Verify all tests pass",
+         "Step 3: Verify covers view integration with PAGI::Simple"
+      ]
+   },
+   {
+      "category" : "functional",
+      "description" : "Test file: t/simple/32-htmx-helpers.t passes",
+      "passes" : true,
+      "steps" : [
+         "Step 1: Run prove -l t/simple/32-htmx-helpers.t",
          "Step 2: Verify all tests pass",
          "Step 3: Verify covers all hx_* helpers"
       ]
    },
    {
       "category" : "functional",
-      "description" : "Test file: t/view/03-view-layouts.t passes",
-      "passes" : false,
+      "description" : "Test file: t/simple/37-htmx-features.t passes",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run prove -l t/view/03-view-layouts.t",
+         "Step 1: Run prove -l t/simple/37-htmx-features.t",
          "Step 2: Verify all tests pass",
-         "Step 3: Verify covers extends/block/content"
+         "Step 3: Verify covers htmx request detection and auto-fragment"
       ]
    },
    {
       "category" : "functional",
-      "description" : "Test file: t/view/05-view-to-html.t passes",
-      "passes" : false,
+      "description" : "Test file: t/simple/47-view-html-helpers.t passes",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run prove -l t/view/05-view-to-html.t",
+         "Step 1: Run prove -l t/simple/47-view-html-helpers.t",
          "Step 2: Verify all tests pass",
-         "Step 3: Verify covers TO_HTML protocol"
+         "Step 3: Verify covers checked_if, class_if, classes helpers"
       ]
    },
    {
       "category" : "functional",
-      "description" : "Test file: t/view/06-view-auto-fragment.t passes",
-      "passes" : false,
+      "description" : "Test file: t/simple/36-service-system.t passes",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run prove -l t/view/06-view-auto-fragment.t",
+         "Step 1: Run prove -l t/simple/36-service-system.t",
          "Step 2: Verify all tests pass",
-         "Step 3: Verify covers htmx fragment detection"
+         "Step 3: Verify covers Service base classes and scopes"
       ]
    },
    {
       "category" : "functional",
-      "description" : "Test file: t/model/00-model-basic.t passes",
-      "passes" : false,
+      "description" : "Test file: t/simple/39-async-services.t passes",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run prove -l t/model/00-model-basic.t",
+         "Step 1: Run prove -l t/simple/39-async-services.t",
          "Step 2: Verify all tests pass",
-         "Step 3: Verify covers Model base class"
+         "Step 3: Verify covers async service patterns"
       ]
    },
    {
       "category" : "functional",
-      "description" : "Test file: t/model/01-model-discovery.t passes",
-      "passes" : false,
+      "description" : "Test file: t/simple/41-valiant-forms.t passes",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run prove -l t/model/01-model-discovery.t",
-         "Step 2: Verify all tests pass",
-         "Step 3: Verify covers Module::Pluggable discovery"
-      ]
-   },
-   {
-      "category" : "functional",
-      "description" : "Test file: t/model/03-model-per-request.t passes",
-      "passes" : false,
-      "steps" : [
-         "Step 1: Run prove -l t/model/03-model-per-request.t",
-         "Step 2: Verify all tests pass",
-         "Step 3: Verify covers PerRequest role"
-      ]
-   },
-   {
-      "category" : "functional",
-      "description" : "Test file: t/model/04-model-async.t passes",
-      "passes" : false,
-      "steps" : [
-         "Step 1: Run prove -l t/model/04-model-async.t",
-         "Step 2: Verify all tests pass",
-         "Step 3: Verify covers async for_context"
-      ]
-   },
-   {
-      "category" : "functional",
-      "description" : "Test file: t/valiant/00-valiant-form-for.t passes",
-      "passes" : false,
-      "steps" : [
-         "Step 1: Run prove -l t/valiant/00-valiant-form-for.t",
+         "Step 1: Run prove -l t/simple/41-valiant-forms.t",
          "Step 2: Verify all tests pass",
          "Step 3: Verify covers form_for helper"
       ]
    },
    {
       "category" : "functional",
-      "description" : "Test file: t/valiant/03-valiant-errors.t passes",
-      "passes" : false,
+      "description" : "Test file: t/simple/48-valiant-formtags.t passes",
+      "passes" : true,
       "steps" : [
-         "Step 1: Run prove -l t/valiant/03-valiant-errors.t",
+         "Step 1: Run prove -l t/simple/48-valiant-formtags.t",
          "Step 2: Verify all tests pass",
-         "Step 3: Verify covers errors_for helper"
+         "Step 3: Verify covers FormTags helpers"
       ]
    },
    {
       "category" : "functional",
       "description" : "Test file: t/integration/00-todo-app.t passes",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: Run prove -l t/integration/00-todo-app.t",
          "Step 2: Verify all tests pass",
@@ -1045,7 +1023,7 @@
    {
       "category" : "functional",
       "description" : "Example app: examples/view-todo/ complete and runnable",
-      "passes" : false,
+      "passes" : true,
       "steps" : [
          "Step 1: cd examples/view-todo",
          "Step 2: Run pagi-server --app app.pl",

@@ -14,6 +14,8 @@ use PAGI::Simple::View::Helpers;
 use PAGI::Simple::View::Vars;
 use PAGI::Simple::View::RenderContext;
 
+=encoding UTF-8
+
 =head1 NAME
 
 PAGI::Simple::View - Template rendering engine for PAGI::Simple
