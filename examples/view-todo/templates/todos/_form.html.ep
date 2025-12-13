@@ -1,0 +1,30 @@
+<%
+  my $todo = $v->{todo};
+  my $action = route('todos_create');
+  my $val_action = route('validate_field', field => 'title');
+%>
+<%= form_for($todo, {
+    action => $action,
+    html => {
+        'hx-post' => $action,
+        'hx-target' => 'this',
+        'hx-swap' => 'outerHTML',
+    }
+}, sub ($view, $fb, $model) { %>
+
+  <div class="field <%= class_if('has-error', $fb->attribute_has_errors('title')) %>">
+    <%= $fb->input('title', {
+        class => 'new-todo',
+        placeholder => 'What needs to be done?',
+        autofocus => 1,
+        'hx-post' => $val_action,
+        'hx-trigger' => 'blur changed delay:300ms',
+        'hx-target' => 'next .validation-msg',
+        'hx-swap' => 'innerHTML',
+    }) %>
+    <span class="validation-msg">
+    <%= $fb->errors_for('title', { class => 'error' }) %>
+    </span>
+  </div>
+
+<% }) %>

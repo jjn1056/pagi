@@ -14,6 +14,7 @@ use Carp qw(croak);
 use PAGI::Simple::Request;
 use PAGI::Simple::Response;
 use PAGI::Simple::CookieUtil;
+use PAGI::Simple::StructuredParams;
 use PAGI::Simple::Negotiate;
 use PAGI::Simple::StreamWriter;
 use PAGI::Util::AsyncFile;
@@ -335,6 +336,88 @@ sub service ($self, $name, %args) {
     return $entry;
 }
 
+=head2 run_blocking
+
+    my $result = await $c->run_blocking(sub {
+        # Blocking code here (no arguments)
+        return $computed_value;
+    });
+
+    # With arguments (recommended for passing request data)
+    my $result = await $c->run_blocking(sub {
+        my ($id, $query) = @_;  # Use @_, not signatures
+        my $dbh = DBI->connect(...);
+        return $dbh->selectrow_hashref(
+            "SELECT * FROM users WHERE id = ? AND name LIKE ?",
+            {}, $id, "%$query%"
+        );
+    }, $id, $query);
+
+Execute blocking code in a worker process without blocking the event loop.
+Returns a Future that resolves with the return value of the code block.
+
+B<Arguments>: You can pass arguments after the code block. These are serialized
+and passed to the code block via C<@_>. This is the recommended way to pass
+request data to workers:
+
+    my $user_id = $c->path_params->{id};
+    my $filters = { status => 'active', limit => 10 };
+
+    my $result = await $c->run_blocking(sub {
+        my ($id, $opts) = @_;
+        my $dbh = DBI->connect($ENV{DB_DSN});
+        return $dbh->selectall_arrayref(
+            "SELECT * FROM orders WHERE user_id = ? AND status = ? LIMIT ?",
+            { Slice => {} },
+            $id, $opts->{status}, $opts->{limit}
+        );
+    }, $user_id, $filters);
+
+B<Note>: Due to a B::Deparse limitation, subroutine signatures (C<sub ($a, $b)>)
+do not work correctly. Use traditional C<my (...) = @_> argument handling.
+
+B<IMPORTANT>: The code block runs in a separate process. It cannot access:
+
+=over 4
+
+=item * Lexical variables from the enclosing scope (pass them as arguments)
+
+=item * The event loop or async features
+
+=item * Open filehandles or database connections (create them inside the block)
+
+=back
+
+Arguments must be serializable (scalars, arrays, hashes). Complex objects,
+coderefs, and filehandles cannot be passed.
+
+Requires C<workers> configuration in PAGI::Simple->new():
+
+    my $app = PAGI::Simple->new(
+        workers => { max_workers => 4 },
+    );
+
+Throws an exception if workers are not configured.
+
+=cut
+
+sub run_blocking ($self, $code, @args) {
+    my $app = $self->{app};
+    my $pool = $app->worker_pool;
+
+    unless ($pool) {
+        croak "run_blocking() requires worker configuration. " .
+              "Add 'workers => { max_workers => N }' to PAGI::Simple->new()";
+    }
+
+    # Serialize the coderef using B::Deparse since IO::Async::Channel
+    # uses Sereal which doesn't support coderefs
+    my $code_string = $app->_serialize_code_for_worker($code);
+
+    # Pass arguments as an arrayref - these are serialized by Sereal
+    return $pool->call(args => [$code_string, \@args]);
+}
+
 =head2 param
 
     my $id = await $c->param('id');
@@ -412,6 +495,77 @@ async sub params ($self) {
     }
 
     return Hash::MultiValue->new(@pairs);
+}
+
+=head2 structured_body
+
+    my $sp = await $c->structured_body;
+    my $data = $sp->namespace('order')->permitted('name', 'email')->to_hash;
+
+Returns a L<PAGI::Simple::StructuredParams> object for the request body.
+This is an async method because it needs to read the body.
+
+The StructuredParams object provides Rails-style strong parameters:
+
+    my $data = (await $c->structured_body)
+        ->namespace('my_app_model_order')
+        ->permitted('customer_name', 'email', +{line_items => ['product', 'quantity']})
+        ->skip('_destroy')
+        ->to_hash;
+
+=cut
+
+async sub structured_body ($self) {
+    my $body = await $self->req->body_params;
+    return PAGI::Simple::StructuredParams->new(
+        source_type => 'body',
+        multi_value => $body,
+        context     => $self,
+    );
+}
+
+=head2 structured_query
+
+    my $sp = $c->structured_query;
+    my $data = $sp->permitted('page', 'per_page')->to_hash;
+
+Returns a L<PAGI::Simple::StructuredParams> object for query string parameters.
+This is a synchronous method (query params are available immediately).
+
+=cut
+
+sub structured_query ($self) {
+    return PAGI::Simple::StructuredParams->new(
+        source_type => 'query',
+        multi_value => $self->req->query,
+        context     => $self,
+    );
+}
+
+=head2 structured_data
+
+    my $sp = await $c->structured_data;
+    my $data = $sp->namespace('form')->permitted('name')->to_hash;
+
+Returns a L<PAGI::Simple::StructuredParams> object for merged body + query params.
+Body parameters take precedence over query parameters.
+This is an async method because it needs to read the body.
+
+=cut
+
+async sub structured_data ($self) {
+    my $body = await $self->req->body_params;
+    my $query = $self->req->query;
+
+    # Merge: query first, then body (body takes precedence)
+    my @pairs = ($query->flatten, $body->flatten);
+    my $merged = Hash::MultiValue->new(@pairs);
+
+    return PAGI::Simple::StructuredParams->new(
+        source_type => 'data',
+        multi_value => $merged,
+        context     => $self,
+    );
 }
 
 =head2 req

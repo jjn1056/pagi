@@ -1,0 +1,28 @@
+<%
+  # New order form with nested line items
+  layout 'default';
+  my $order = $v->order;
+%>
+
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div id="form-container">
+            <%= include('orders/_form', order => $order) %>
+        </div>
+    </div>
+</div>
+
+<% content_for('scripts', q{
+<script>
+    // Calculate line totals dynamically
+    document.body.addEventListener('input', function(evt) {
+        if (evt.target.matches('.line-qty, .line-price')) {
+            const row = evt.target.closest('.line-item-row');
+            const qty = parseFloat(row.querySelector('.line-qty').value) || 0;
+            const price = parseFloat(row.querySelector('.line-price').value) || 0;
+            const total = qty * price;
+            row.querySelector('.line-total').textContent = '$' + total.toFixed(2);
+        }
+    });
+</script>
+}); %>

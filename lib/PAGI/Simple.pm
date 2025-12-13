@@ -14,6 +14,8 @@ use PAGI::Simple::WebSocket;
 use PAGI::Simple::SSE;
 use PAGI::App::Directory;
 
+=encoding UTF-8
+
 =head1 NAME
 
 PAGI::Simple - A micro web framework built on PAGI
@@ -322,6 +324,94 @@ Each WebSocket and SSE connection holds resources. For high-concurrency:
 
 =back
 
+=head1 BLOCKING OPERATIONS
+
+PAGI::Simple runs on an async event loop. Blocking operations (DBI queries,
+file I/O, CPU-intensive code) will freeze all concurrent requests. Use
+C<run_blocking()> to offload blocking work to worker processes.
+
+=head2 Enabling Workers
+
+    my $app = PAGI::Simple->new(
+        name    => 'My App',
+        workers => { max_workers => 4 },
+    );
+
+=head2 Using run_blocking
+
+    $app->get('/search' => async sub ($c) {
+        my $query = $c->query_params->{q};
+        my $limit = 100;
+
+        # Pass arguments after the coderef
+        my $results = await $c->run_blocking(sub {
+            my ($search, $max) = @_;  # Receive via @_
+            my $dbh = DBI->connect($ENV{DB_DSN}, $ENV{DB_USER}, $ENV{DB_PASS});
+            return $dbh->selectall_arrayref(
+                "SELECT * FROM items WHERE name LIKE ? LIMIT ?",
+                { Slice => {} },
+                "%$search%", $max
+            );
+        }, $query, $limit);
+
+        $c->json({ results => $results });
+    });
+
+=head2 Passing Arguments
+
+Pass data to workers as arguments after the coderef. Arguments are serialized
+and available via C<@_> in the worker:
+
+    my $id = $c->path_params->{id};
+    my $opts = { status => 'active', limit => 10 };
+
+    my $result = await $c->run_blocking(sub {
+        my ($user_id, $options) = @_;
+        # Use $user_id and $options here
+    }, $id, $opts);
+
+B<Note>: Due to a B::Deparse limitation, subroutine signatures (C<sub ($a, $b)>)
+do not work. Use traditional C<my (...) = @_> argument handling.
+
+=head2 Error Handling
+
+Exceptions in workers propagate back as Future failures:
+
+    my $result = eval {
+        await $c->run_blocking(sub {
+            die "Something went wrong" if $error;
+            return compute_result();
+        });
+    };
+
+    if ($@) {
+        $c->status(500)->json({ error => "$@" });
+        return;
+    }
+
+    $c->json($result);
+
+=head2 When to Use
+
+Use C<run_blocking> for:
+
+=over 4
+
+=item * Database queries (DBI is blocking)
+
+=item * File I/O (especially large files)
+
+=item * CPU-intensive computations
+
+=item * Legacy libraries without async support
+
+=item * External command execution
+
+=back
+
+Do NOT use for operations that already support async (HTTP::Tiny::Async,
+async database drivers, etc.) - using workers adds IPC overhead.
+
 =head1 METHODS
 
 =cut
@@ -366,6 +456,19 @@ that creates the PAGI::Simple app. See L</views> for available options.
 This is equivalent to calling C<< $app->share(...) >> after construction.
 See L</share> for available assets and details.
 
+=item * C<workers> - Configure worker pool for blocking operations (optional).
+
+If provided, enables C<< $c->run_blocking() >> in route handlers. The pool
+is created lazily on first use, so there's no overhead if not used.
+
+    workers => {
+        max_workers  => 4,     # Maximum worker processes (default: 4)
+        min_workers  => 1,     # Minimum workers to keep alive (default: 1)
+        idle_timeout => 30,    # Kill idle workers after N seconds (default: 30)
+    }
+
+See L</BLOCKING OPERATIONS> for usage examples.
+
 =back
 
 Examples:
@@ -401,6 +504,23 @@ Examples:
 
 =cut
 
+# TODO: Add optional conf.pl support. If a conf.pl file exists in the app directory,
+# load it and merge with constructor args. This would allow:
+#
+#   # conf.pl
+#   {
+#       name      => 'My App',
+#       namespace => 'MyApp',
+#       share     => 'htmx',
+#       views     => { directory => './templates', ... },
+#   }
+#
+#   # app.pl
+#   my $app = PAGI::Simple->new();  # Automatically loads conf.pl
+#
+# Constructor args should override conf.pl values. Could also support conf.pl
+# returning a coderef for dynamic config: sub { my ($caller_dir) = @_; ... }
+
 sub new ($class, %args) {
     # Capture caller's file location for default template directory
     my ($caller_file) = (caller(0))[1];
@@ -414,13 +534,6 @@ sub new ($class, %args) {
     my $namespace;
     if (exists $args{namespace}) {
         $namespace = $args{namespace};
-    }
-    elsif (exists $args{model_namespace}) {
-        # Backwards compatibility: model_namespace is deprecated
-        # Strip ::Model suffix since new namespace adds it automatically
-        warn "[PAGI::Simple] 'model_namespace' is deprecated, use 'namespace' instead\n";
-        $namespace = $args{model_namespace};
-        $namespace =~ s/::Model$//;  # TestApp::Model => TestApp
     }
     else {
         # Generate namespace from app name
@@ -468,12 +581,13 @@ sub new ($class, %args) {
         _view            => undef,        # View instance for template rendering
         _view_config     => undef,        # Deferred view configuration
         _caller_dir      => $caller_dir,  # Directory of the file creating the app
-        _namespace       => $namespace,   # App namespace for models, etc.
+        _namespace       => $namespace,   # App namespace for services, etc.
         _lib_dir         => $lib_dir,     # Lib directory added to @INC
-        model_config     => $args{model_config} // {},  # Per-model configuration (deprecated)
         service_config   => $args{service_config} // {},  # Per-service configuration
         _service_registry => {},          # Initialized services (instance or coderef)
         _pending_services => [],          # Services to init at startup [(class, name), ...]
+        _worker_config   => $args{workers},    # Worker pool config (undef = disabled)
+        _worker_pool     => undef,             # Lazy IO::Async::Function instance
     }, $class;
 
     # Handle views configuration in constructor
@@ -715,6 +829,80 @@ sub loop ($self) {
     return $self->{_loop};
 }
 
+=head2 worker_pool
+
+    my $pool = $app->worker_pool;
+
+Returns the IO::Async::Function worker pool instance, or undef if workers
+are not configured. The pool is created lazily on first access.
+
+This is primarily for internal use. Most users should use
+C<< $c->run_blocking() >> instead.
+
+Requires C<workers> configuration in the constructor:
+
+    my $app = PAGI::Simple->new(
+        workers => { max_workers => 4 },
+    );
+
+=cut
+
+sub worker_pool ($self) {
+    return $self->_get_worker_pool;
+}
+
+# Internal: Lazily create the worker pool
+sub _get_worker_pool ($self) {
+    return $self->{_worker_pool} if $self->{_worker_pool};
+
+    # Feature not enabled
+    return undef unless $self->{_worker_config};
+
+    # Need event loop
+    my $loop = $self->{_loop};
+    die "Worker pool requires event loop (are you running under pagi-server?)"
+        unless $loop;
+
+    require IO::Async::Function;
+
+    my $config = $self->{_worker_config};
+    # Normalize config - accept simple hashref or just 'true'
+    $config = {} if !ref($config);
+
+    # Worker code receives serialized code string and arguments
+    # We use B::Deparse to serialize coderefs since IO::Async::Channel
+    # uses Sereal which doesn't support coderefs. Arguments are serialized
+    # normally by Sereal and passed to the reconstructed coderef.
+    my $pool = IO::Async::Function->new(
+        code => sub {
+            my ($code_string, $args) = @_;
+            # Reconstruct the coderef from its deparsed string
+            # We need to enable signatures since B::Deparse preserves them
+            my $coderef = eval "use experimental 'signatures'; $code_string";
+            die "Failed to reconstruct code: $@" if $@;
+            # Execute with the provided arguments
+            return $coderef->(@$args);
+        },
+        max_workers   => $config->{max_workers}   // 4,
+        min_workers   => $config->{min_workers}   // 1,
+        idle_timeout  => $config->{idle_timeout}  // 30,
+    );
+
+    $loop->add($pool);
+    $self->{_worker_pool} = $pool;
+
+    return $pool;
+}
+
+# Internal: Serialize a coderef for worker execution
+sub _serialize_code_for_worker ($self, $code) {
+    require B::Deparse;
+    my $deparser = B::Deparse->new('-p', '-sC');
+    my $code_string = $deparser->coderef2text($code);
+    # Wrap in sub to make it a valid coderef when evaled
+    return "sub $code_string";
+}
+
 =head2 pubsub
 
     my $pubsub = $app->pubsub;
@@ -795,8 +983,8 @@ sub home ($self) {
 
     my $ns = $app->namespace;  # e.g., 'LivePoll'
 
-Returns the application's namespace. This is used for resolving model classes:
-C<< $c->model('Poll') >> becomes C<< ${namespace}::Model::Poll >>.
+Returns the application's namespace. This is used for resolving service classes:
+C<< $c->service('Poll') >> becomes C<< ${namespace}::Service::Poll >>.
 
 The namespace is either:
 
@@ -1227,6 +1415,16 @@ async sub _handle_lifespan ($self, $scope, $receive, $send) {
                 }
             }
 
+            # Show view template directory
+            if ($self->{_view}) {
+                my $tpl_dir = $self->{_view}->template_dir;
+                if (-d $tpl_dir) {
+                    warn "[PAGI::Simple]   Templates:  $tpl_dir\n";
+                } else {
+                    warn "[PAGI::Simple]   Templates:  $tpl_dir (not found)\n";
+                }
+            }
+
             # Initialize services before startup hooks
             eval {
                 $self->_init_services();
@@ -1259,6 +1457,14 @@ async sub _handle_lifespan ($self, $scope, $receive, $send) {
                     $hook->($self);
                 }
             };
+            # Clean up worker pool if it was created
+            if ($self->{_worker_pool}) {
+                eval {
+                    $self->{_worker_pool}->stop->get;
+                    $self->{_loop}->remove($self->{_worker_pool}) if $self->{_loop};
+                };
+                $self->{_worker_pool} = undef;
+            }
             await $send->({ type => 'lifespan.shutdown.complete' });
             return;
         }
@@ -2300,6 +2506,19 @@ sub mount ($self, $prefix, $sub_app, @args) {
 
 # Internal: Check if a path matches any mounted app and dispatch to it
 # Returns 1 if dispatched, 0 if no mount matched
+#
+# TODO: Consider adding 404 pass-through option. Currently, if a mounted app
+# returns 404, the parent app's routes are NOT tried. A future enhancement
+# could add a pass_through option: $app->mount('/api' => $sub_app, { pass_through => 1 })
+# This would let parent routes handle 404s from mounted apps. Use case: fallback
+# routes or catch-all handlers in the parent app.
+#
+# TODO: Consider sharing services/stash between parent and mounted apps via $scope.
+# Currently, mounted apps are isolated. To enable sharing, we could add parent
+# app's service_registry and stash to $scope (e.g., $scope->{pagi.services},
+# $scope->{pagi.stash}). Mounted apps could then access parent services or share
+# request-scoped data. This follows the PSGI convention of using the scope hash
+# for framework-specific data.
 async sub _dispatch_to_mounted ($self, $scope, $receive, $send) {
     my $path = $scope->{path} // '/';
     my $type = $scope->{type} // '';

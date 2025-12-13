@@ -83,26 +83,7 @@ subtest 'Explicit namespace overrides generated' => sub {
 };
 
 # =============================================================================
-# Test 6: Backwards compatibility - model_namespace with warning
-# =============================================================================
-subtest 'model_namespace is deprecated' => sub {
-    my @warnings;
-    local $SIG{__WARN__} = sub { push @warnings, @_ };
-
-    my $app = PAGI::Simple->new(
-        name => 'Test',
-        model_namespace => 'Old::Style::Model',
-        lib => undef,
-    );
-
-    is(scalar @warnings, 1, 'one warning issued');
-    like($warnings[0], qr/deprecated/, 'warning mentions deprecated');
-    # ::Model suffix is stripped for new resolution pattern
-    is($app->namespace, 'Old::Style', 'model_namespace value converted');
-};
-
-# =============================================================================
-# Test 7: lib_dir accessor
+# Test 6: lib_dir accessor
 # =============================================================================
 subtest 'lib_dir accessor' => sub {
     # With explicit lib
@@ -115,7 +96,7 @@ subtest 'lib_dir accessor' => sub {
 };
 
 # =============================================================================
-# Test 8: Default lib is relative to home
+# Test 7: Default lib is relative to home
 # =============================================================================
 subtest 'Default lib relative to home' => sub {
     my $app = PAGI::Simple->new(name => 'Test');
@@ -128,7 +109,7 @@ subtest 'Default lib relative to home' => sub {
 };
 
 # =============================================================================
-# Test 9: lib added to @INC
+# Test 8: lib added to @INC
 # =============================================================================
 subtest 'lib added to @INC' => sub {
     # Create app with a unique lib path to test
@@ -143,7 +124,7 @@ subtest 'lib added to @INC' => sub {
 };
 
 # =============================================================================
-# Test 10: lib => undef doesn't modify @INC
+# Test 9: lib => undef doesn't modify @INC
 # =============================================================================
 subtest 'lib => undef skips @INC modification' => sub {
     my $before_count = scalar @INC;

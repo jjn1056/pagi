@@ -1,0 +1,11 @@
+<% extends 'layouts/default', title => 'Todo App' %>
+
+<section class="todoapp" hx-ext="sse" sse-connect="/todos/live" hx-trigger="sse:refresh" hx-get="/" hx-target=".todoapp" hx-select=".todoapp" hx-swap="outerHTML">
+
+  <header>
+    <h1>todos</h1>
+    <%= include('todos/_form', todo => $v->{new_todo}) %>
+  </header>
+
+  <%= include('todos/_list', todos => $v->{todos}, active => $v->{active}, filter => $v->{filter}) %>
+</section>

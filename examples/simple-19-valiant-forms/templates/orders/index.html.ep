@@ -1,0 +1,59 @@
+<%
+  # List of orders
+  layout 'default';
+  my $orders = $v->orders;
+%>
+
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1>Orders</h1>
+            <a href="/orders/new" class="btn btn-primary" hx-boost="true">New Order</a>
+        </div>
+
+        <div id="orders-list-area">
+            <% if (@$orders) { %>
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Customer</th>
+                            <th>Email</th>
+                            <th>Items</th>
+                            <th>Total</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orders-table-body">
+                        <% for my $order (@$orders) { %>
+                            <tr id="order-row-<%= $order->id %>">
+                                <td><%= $order->id %></td>
+                                <td><%= $order->customer_name %></td>
+                                <td><%= $order->customer_email %></td>
+                                <td><%= scalar @{$order->line_items} %></td>
+                                <td>$<%= sprintf('%.2f', $order->total) %></td>
+                                <td>
+                                    <a href="/orders/<%= $order->id %>/edit"
+                                       class="btn btn-sm btn-outline-primary"
+                                       hx-boost="true">Edit</a>
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-danger"
+                                            hx-delete="/orders/<%= $order->id %>"
+                                            hx-target="#order-row-<%= $order->id %>"
+                                            hx-swap="outerHTML"
+                                            hx-confirm="Are you sure you want to delete Order #<%= $order->id %>?">
+                                        Delete
+                                    </button>
+                                </td>
+                            </tr>
+                        <% } %>
+                    </tbody>
+                </table>
+            <% } else { %>
+                <div class="alert alert-info">
+                    No orders yet. <a href="/orders/new" hx-boost="true">Create your first order</a>!
+                </div>
+            <% } %>
+        </div>
+    </div>
+</div>

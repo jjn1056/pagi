@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Valiant Forms Demo</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .line-item-row { transition: all 0.3s ease; }
+        .line-item-row.removing { opacity: 0; transform: translateX(-20px); }
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline-block; }
+        .htmx-request.htmx-indicator { display: inline-block; }
+    </style>
+    <%= content('styles') %>
+</head>
+<body>
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container">
+            <a class="navbar-brand" href="/" hx-boost="true">Valiant Forms Demo</a>
+        </div>
+    </nav>
+
+    <main class="container">
+        <%= content() %>
+    </main>
+
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script>
+        // Handle line item removal with animation
+        document.body.addEventListener('htmx:beforeSwap', function(evt) {
+            if (evt.detail.target.classList.contains('line-item-row')) {
+                evt.detail.target.classList.add('removing');
+            }
+        });
+
+        // Update input validation classes after inline validation swap
+        document.body.addEventListener('htmx:afterSwap', function(evt) {
+            if (evt.detail.target.classList.contains('validation-feedback')) {
+                // Find the input that's a previous sibling of the feedback div
+                const input = evt.detail.target.previousElementSibling;
+                if (input && (input.tagName === 'INPUT' || input.tagName === 'TEXTAREA' || input.tagName === 'SELECT')) {
+                    // Check if the feedback contains valid or invalid message
+                    const hasError = evt.detail.target.querySelector('.invalid-feedback');
+                    const hasValid = evt.detail.target.querySelector('.valid-feedback');
+
+                    if (hasError) {
+                        input.classList.add('is-invalid');
+                        input.classList.remove('is-valid');
+                    } else if (hasValid) {
+                        input.classList.remove('is-invalid');
+                        input.classList.add('is-valid');
+                    }
+                }
+            }
+        });
+    </script>
+    <%= content('scripts') %>
+</body>
+</html>

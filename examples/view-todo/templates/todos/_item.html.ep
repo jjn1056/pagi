@@ -1,0 +1,16 @@
+<%
+  my $todo = $v->{todo};
+  my $todo_id = $todo->id;
+  my $target = '#todo-' . $todo_id;
+  my $toggle_url = route('todo_toggle', id => $todo_id);
+  my $edit_url = route('todo_edit', id => $todo_id);
+  my $delete_url = route('todo_delete', id => $todo_id);
+%>
+<li class="todo-item <%= class_if('completed', $todo->completed) %>" id="todo-<%= $todo_id %>">
+
+  <input type="checkbox" <%= checked_if($todo->completed) %> hx-patch="<%= $toggle_url %>" hx-target="<%= $target %>" hx-swap="outerHTML">
+
+  <label hx-get="<%= $edit_url %>" hx-trigger="dblclick" hx-target="<%= $target %>" hx-swap="outerHTML"><%= $todo->title %></label>
+
+  <button class="destroy" hx-delete="<%= $delete_url %>" hx-target="<%= $target %>" hx-swap="outerHTML" hx-confirm="Delete this todo?">x</button>
+</li>

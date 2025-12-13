@@ -1,0 +1,22 @@
+<%
+  my $active = $v->{active} // 0;
+  my $has_completed = $v->{has_completed};
+  my $filter = $v->{filter} // 'home';
+  my $items_word = $active == 1 ? 'item' : 'items';
+  my $clear_url = route('todos_clear');
+%>
+<footer class="footer">
+  <span>
+    <strong><%= $active %></strong> <%= $items_word %> left
+  </span>
+
+  <div class="filters">
+    <a href="<%= route('home') %>" class="<%= active_class($filter, 'home') %>" hx-boost="true">All</a>
+    <a href="<%= route('active') %>" class="<%= active_class($filter, 'active') %>" hx-boost="true">Active</a>
+    <a href="<%= route('completed') %>" class="<%= active_class($filter, 'completed') %>" hx-boost="true">Completed</a>
+  </div>
+
+  <% if ($has_completed) { %>
+    <button class="clear-completed" hx-post="<%= $clear_url %>" hx-target="closest main" hx-swap="outerHTML">Clear completed</button>
+  <% } %>
+</footer>

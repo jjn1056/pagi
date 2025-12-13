@@ -69,17 +69,17 @@ sub get_helpers ($view = undef) {
     };
 }
 
-# Internal: Get current view from PAGI::Simple::View during rendering
-sub _get_current_view {
-    return $PAGI::Simple::View::_current_view;
+# Internal: Get current render context from PAGI::Simple::View during rendering
+sub _get_current_render_context {
+    return $PAGI::Simple::View::_current_render_context;
 }
 
 # Internal: Check if htmx has been shared, die with helpful message if not
 sub _require_htmx_shared ($helper_name) {
-    my $view = _get_current_view();
-    return unless $view;  # Skip check if no view (standalone testing)
+    my $ctx = _get_current_render_context();
+    return unless $ctx;  # Skip check if no context (standalone testing)
 
-    my $app = $view->{_app};
+    my $app = $ctx->app;
     return unless $app;  # Skip check if no app
 
     unless ($app->has_shared('htmx')) {

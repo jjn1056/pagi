@@ -1,0 +1,103 @@
+<%
+  # Order form partial - used by new.html.ep, edit.html.ep, and for htmx re-renders
+  my $order = $v->order;
+  my $is_edit = $order->persisted;
+  my $action = $is_edit ? '/orders/' . $order->id : '/orders';
+  my $title = $is_edit ? 'Edit Order #' . $order->id : 'New Order';
+  my $submit_label = $is_edit ? 'Update Order' : 'Create Order';
+%>
+
+<h1><%= $title %></h1>
+
+<%= form_for($order, {
+    action => $action,
+    method => 'post',
+    html => {
+        id => 'order-form',
+        'hx-post' => $action,
+        'hx-target' => '#form-container',
+        'hx-swap' => 'innerHTML',
+        class => 'needs-validation',
+    }
+}, sub ($view, $fb, $model) { %>
+
+    <%= $fb->model_errors({ class => 'alert alert-danger mb-3' }) %>
+
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5 class="mb-0">Customer Information</h5>
+        </div>
+        <div class="card-body">
+            <div class="mb-3">
+                <%= $fb->label('customer_name', 'Name', { class => 'form-label' }) %>
+                <%= $fb->input('customer_name', {
+                    class => 'form-control',
+                    errors_classes => 'is-invalid',
+                    placeholder => 'Enter customer name',
+                    'hx-post' => '/validate/order/customer_name',
+                    'hx-trigger' => 'blur',
+                    'hx-target' => 'next .validation-feedback',
+                    'hx-swap' => 'innerHTML',
+                }) %>
+                <div class="validation-feedback">
+                    <%= $fb->errors_for('customer_name', { class => 'invalid-feedback d-block' }) %>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <%= $fb->label('customer_email', 'Email', { class => 'form-label' }) %>
+                <%= $fb->input('customer_email', {
+                    type => 'email',
+                    class => 'form-control',
+                    errors_classes => 'is-invalid',
+                    placeholder => 'customer@example.com',
+                    'hx-post' => '/validate/order/customer_email',
+                    'hx-trigger' => 'blur',
+                    'hx-target' => 'next .validation-feedback',
+                    'hx-swap' => 'innerHTML',
+                }) %>
+                <div class="validation-feedback">
+                    <%= $fb->errors_for('customer_email', { class => 'invalid-feedback d-block' }) %>
+                </div>
+            </div>
+
+            <div class="mb-3">
+                <%= $fb->label('notes', 'Notes', { class => 'form-label' }) %>
+                <%= $fb->text_area('notes', {
+                    class => 'form-control',
+                    rows => 3,
+                    placeholder => 'Optional notes...',
+                }) %>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">Line Items</h5>
+            <button type="button"
+                    class="btn btn-sm btn-outline-primary"
+                    hx-get="/orders/line_item"
+                    hx-vals='js:{"index": document.querySelectorAll(".line-item-row").length}'
+                    hx-target="#line-items-container"
+                    hx-swap="beforeend">
+                <span class="htmx-indicator spinner-border spinner-border-sm me-1"></span>
+                Add Item
+            </button>
+        </div>
+        <div class="card-body">
+            <div id="line-items-container">
+                <% my $idx = 0; for my $item (@{$order->line_items}) { %>
+                    <%= include('orders/_line_item_fields', item => $item, index => $idx) %>
+                <% $idx++; } %>
+            </div>
+            <%= $fb->errors_for('line_items', { class => 'text-danger mt-2' }) %>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2">
+        <%= $fb->submit($submit_label, { class => 'btn btn-primary' }) %>
+        <a href="/" class="btn btn-outline-secondary" hx-boost="true" hx-target="body" hx-swap="innerHTML" hx-push-url="true">Cancel</a>
+    </div>
+
+<% }) %>

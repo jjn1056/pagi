@@ -130,7 +130,7 @@ subtest 'Missing template error' => sub {
 
     like(
         dies { $view->render('nonexistent') },
-        qr/Template not found: nonexistent/,
+        qr/Template not found: 'nonexistent'/,
         'Clear error for missing template'
     );
 };

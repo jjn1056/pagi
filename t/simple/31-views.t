@@ -492,4 +492,50 @@ TEMPLATE
     like($output, qr/<main>Content<\/main>/, 'Main content rendered');
 };
 
+#-------------------------------------------------------------------------
+# Test: Mojolicious-style layout helper (auto-prepends layouts/)
+#-------------------------------------------------------------------------
+subtest 'layout() helper auto-prepends layouts/' => sub {
+    # Create template using layout() helper instead of extends()
+    open my $fh, '>', "$tmpdir/templates/with_layout_helper.html.ep" or die $!;
+    print $fh <<'TEMPLATE';
+<% layout 'default', title => 'Layout Helper Test'; %>
+<main>
+<h1>Hello from layout helper!</h1>
+</main>
+TEMPLATE
+    close $fh;
+
+    my $app = PAGI::Simple->new;
+    $app->views("$tmpdir/templates", { cache => 0 });
+
+    my $output = $app->view->render('with_layout_helper');
+
+    like($output, qr/<!DOCTYPE html>/, 'Layout rendered via layout() helper');
+    like($output, qr/<title>Layout Helper Test<\/title>/, 'Title passed through');
+    like($output, qr/<h1>Hello from layout helper!<\/h1>/, 'Content rendered');
+};
+
+#-------------------------------------------------------------------------
+# Test: layout helper with full path still works
+#-------------------------------------------------------------------------
+subtest 'layout() helper works with full layouts/ path' => sub {
+    # Create template using layout() with full path
+    open my $fh, '>', "$tmpdir/templates/with_layout_fullpath.html.ep" or die $!;
+    print $fh <<'TEMPLATE';
+<% layout 'layouts/default', title => 'Full Path'; %>
+<main>Full path works!</main>
+TEMPLATE
+    close $fh;
+
+    my $app = PAGI::Simple->new;
+    $app->views("$tmpdir/templates", { cache => 0 });
+
+    my $output = $app->view->render('with_layout_fullpath');
+
+    like($output, qr/<!DOCTYPE html>/, 'Layout rendered with full path');
+    like($output, qr/<title>Full Path<\/title>/, 'Title correct');
+    like($output, qr/Full path works!/, 'Content rendered');
+};
+
 done_testing;

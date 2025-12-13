@@ -1,0 +1,26 @@
+<%
+  my $todo = $v->{todo};
+  my $todo_id = $todo->id;
+  my $target = '#todo-' . $todo_id;
+  my $action = route('todo_update', id => $todo_id);
+%>
+<li class="todo-item editing" id="todo-<%= $todo_id %>">
+  <%= form_for($todo, {
+      action => $action,
+      method => 'PATCH',
+      html => {
+          style => 'display: contents',
+          'hx-patch' => $action,
+          'hx-target' => $target,
+          'hx-swap' => 'outerHTML',
+      }
+  }, sub ($view, $fb, $model) { %>
+
+    <input type="checkbox" disabled <%= checked_if($todo->completed) %>>
+
+    <%= $fb->input('title', { class => 'edit-input', autofocus => 1 }) %>
+
+    <%= $fb->errors_for('title', { class => 'error' }) %>
+
+  <% }) %>
+</li>

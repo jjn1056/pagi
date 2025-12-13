@@ -1,0 +1,27 @@
+<%
+  my $todos = $v->{todos} // [];
+  my $active = $v->{active} // 0;
+  my $filter = $v->{filter} // 'home';
+  my $has_completed = scalar(grep { $_->completed } @$todos) > 0;
+  my $toggle_all_url = route('todos_toggle_all');
+%>
+<main>
+  <% if (@$todos) { %>
+    <div class="toggle-all-container">
+      <label>
+        <input type="checkbox" <%= checked_if($active == 0) %> hx-post="<%= $toggle_all_url %>" hx-target="closest main" hx-swap="outerHTML">
+        Mark all as complete
+      </label>
+    </div>
+  <% } %>
+
+  <ul class="todo-list">
+    <% for my $todo (@$todos) { %>
+      <%= include('todos/_item', todo => $todo) %>
+    <% } %>
+  </ul>
+
+  <% if (@$todos || $filter ne 'home') { %>
+    <%= include('todos/_footer', active => $active, has_completed => $has_completed, filter => $filter) %>
+  <% } %>
+</main>

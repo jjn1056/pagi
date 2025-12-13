@@ -504,6 +504,20 @@ sub is_htmx ($self) {
     return defined($hx) && $hx eq 'true';
 }
 
+=head2 is_boosted
+
+    if ($req->is_boosted) { ... }
+
+Returns true if the request is a boosted htmx request (HX-Boosted header is present).
+Boosted requests (from hx-boost links) expect full page responses with layout.
+
+=cut
+
+sub is_boosted ($self) {
+    my $hx = $self->header('hx-boosted');
+    return defined($hx) && $hx eq 'true';
+}
+
 =head2 htmx_target
 
     my $target = $req->htmx_target;  # e.g., "#todo-list"

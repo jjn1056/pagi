@@ -1,0 +1,70 @@
+<%
+  # Line item fields partial - used for both initial render and htmx add
+  my $item = $v->item;
+  my $index = $v->index;
+  my $prefix = "line_items[$index]";
+
+  # Safely get errors (item may not be validated yet)
+  my $get_errors = sub ($field) {
+      return [] unless $item->can('errors') && $item->errors;
+      return $item->errors->messages_for($field) || [];
+  };
+%>
+
+<div class="line-item-row border rounded p-3 mb-2" id="line-item-<%= $index %>">
+    <div class="row g-2 align-items-end">
+        <div class="col-md-4">
+            <label class="form-label small">Product</label>
+            <input type="text"
+                   name="<%= $prefix %>.product"
+                   value="<%= $item->product %>"
+                   class="form-control<%= @{$get_errors->('product')} ? ' is-invalid' : '' %>"
+                   placeholder="Product name"
+                   required>
+            <% if (my @errs = @{$get_errors->('product')}) { %>
+                <div class="invalid-feedback d-block"><%= join(', ', @errs) %></div>
+            <% } %>
+        </div>
+
+        <div class="col-md-2">
+            <label class="form-label small">Quantity</label>
+            <input type="number"
+                   name="<%= $prefix %>.quantity"
+                   value="<%= $item->quantity %>"
+                   class="form-control line-qty<%= @{$get_errors->('quantity')} ? ' is-invalid' : '' %>"
+                   min="1"
+                   required>
+            <% if (my @errs = @{$get_errors->('quantity')}) { %>
+                <div class="invalid-feedback d-block"><%= join(', ', @errs) %></div>
+            <% } %>
+        </div>
+
+        <div class="col-md-2">
+            <label class="form-label small">Unit Price</label>
+            <input type="number"
+                   name="<%= $prefix %>.unit_price"
+                   value="<%= $item->unit_price %>"
+                   class="form-control line-price<%= @{$get_errors->('unit_price')} ? ' is-invalid' : '' %>"
+                   step="0.01"
+                   min="0"
+                   required>
+            <% if (my @errs = @{$get_errors->('unit_price')}) { %>
+                <div class="invalid-feedback d-block"><%= join(', ', @errs) %></div>
+            <% } %>
+        </div>
+
+        <div class="col-md-2 text-end">
+            <label class="form-label small d-block">Total</label>
+            <span class="line-total fw-bold">$<%= sprintf('%.2f', $item->total) %></span>
+        </div>
+
+        <div class="col-md-2 text-end">
+            <button type="button"
+                    class="btn btn-outline-danger btn-sm"
+                    onclick="this.closest('.line-item-row').remove()">
+                Remove
+            </button>
+            <input type="hidden" name="<%= $prefix %>._destroy" value="0">
+        </div>
+    </div>
+</div>
