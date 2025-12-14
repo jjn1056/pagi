@@ -8,6 +8,31 @@ use Encode qw(decode);
 
 our $VERSION = '0.001';
 
+# =============================================================================
+# Header Validation (CRLF Injection Prevention)
+# =============================================================================
+# RFC 7230 Section 3.2.6: Field values MUST NOT contain CR or LF
+# Additionally, null bytes are rejected as they can cause truncation attacks
+
+sub _validate_header_name ($name) {
+    if ($name =~ /[\r\n\0]/) {
+        die "Invalid header name: contains CR, LF, or null byte\n";
+    }
+    # RFC 7230: token = 1*tchar
+    # For simplicity, we just reject control characters and delimiters
+    if ($name =~ /[[:cntrl:]]/) {
+        die "Invalid header name: contains control characters\n";
+    }
+    return $name;
+}
+
+sub _validate_header_value ($value) {
+    if ($value =~ /[\r\n\0]/) {
+        die "Invalid header value: contains CR, LF, or null byte\n";
+    }
+    return $value;
+}
+
 =head1 NAME
 
 PAGI::Server::Protocol::HTTP1 - HTTP/1.1 protocol handler
@@ -223,9 +248,11 @@ sub serialize_response_start ($self, $status, $headers, $chunked = 0, $http_vers
     my $phrase = $STATUS_PHRASES{$status} // 'Unknown';
     my $response = "HTTP/$http_version $status $phrase\r\n";
 
-    # Add headers
+    # Add headers (with CRLF injection validation)
     for my $header (@$headers) {
         my ($name, $value) = @$header;
+        $name = _validate_header_name($name);
+        $value = _validate_header_value($value);
         $response .= "$name: $value\r\n";
     }
 
@@ -268,6 +295,8 @@ sub serialize_trailers ($self, $headers) {
     my $trailers = '';
     for my $header (@$headers) {
         my ($name, $value) = @$header;
+        $name = _validate_header_name($name);
+        $value = _validate_header_value($value);
         $trailers .= "$name: $value\r\n";
     }
     $trailers .= "\r\n";

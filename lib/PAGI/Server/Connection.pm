@@ -14,6 +14,40 @@ use Time::HiRes qw(gettimeofday tv_interval);
 
 our $VERSION = '0.001';
 
+# =============================================================================
+# Header Validation (CRLF Injection Prevention)
+# =============================================================================
+# RFC 7230 Section 3.2.6: Field values MUST NOT contain CR or LF
+
+sub _validate_header_value ($value) {
+    if ($value =~ /[\r\n\0]/) {
+        die "Invalid header value: contains CR, LF, or null byte\n";
+    }
+    return $value;
+}
+
+sub _validate_header_name ($name) {
+    if ($name =~ /[\r\n\0]/) {
+        die "Invalid header name: contains CR, LF, or null byte\n";
+    }
+    if ($name =~ /[[:cntrl:]]/) {
+        die "Invalid header name: contains control characters\n";
+    }
+    return $name;
+}
+
+# RFC 6455 Section 11.3.4: Subprotocol must be a token (no whitespace, separators)
+sub _validate_subprotocol ($value) {
+    if ($value =~ /[\r\n\0\s]/) {
+        die "Invalid subprotocol: contains CR, LF, null, or whitespace\n";
+    }
+    # Token characters only (roughly)
+    if ($value !~ /^[\w\-\.]+$/) {
+        die "Invalid subprotocol: must be alphanumeric, dash, underscore, or dot\n";
+    }
+    return $value;
+}
+
 =head1 NAME
 
 PAGI::Server::Connection - Per-connection state machine
@@ -782,6 +816,25 @@ sub _handle_disconnect ($self) {
     }
 }
 
+# Send a WebSocket close frame with status code and optional reason
+# Per RFC 6455 Section 7.4, common codes:
+#   1000 - Normal closure
+#   1007 - Invalid frame payload data (e.g., invalid UTF-8)
+#   1009 - Message too big
+#   1011 - Unexpected condition
+sub _send_close_frame ($self, $code, $reason = '') {
+    return unless $self->{stream};
+    return if $self->{close_sent};
+
+    my $frame = Protocol::WebSocket::Frame->new(
+        type   => 'close',
+        buffer => pack('n', $code) . $reason,
+    );
+
+    $self->{stream}->write($frame->to_bytes);
+    $self->{close_sent} = 1;
+}
+
 sub _close ($self) {
     return if $self->{closed};
     $self->{closed} = 1;
@@ -1367,15 +1420,18 @@ sub _create_websocket_send ($self, $request) {
                 "Sec-WebSocket-Accept: $accept_key\r\n",
             );
 
-            # Add subprotocol if specified
+            # Add subprotocol if specified (with validation)
             if (my $subprotocol = $event->{subprotocol}) {
+                $subprotocol = _validate_subprotocol($subprotocol);
                 push @headers, "Sec-WebSocket-Protocol: $subprotocol\r\n";
             }
 
-            # Add custom headers if specified
+            # Add custom headers if specified (with CRLF injection validation)
             if (my $extra_headers = $event->{headers}) {
                 for my $h (@$extra_headers) {
                     my ($name, $value) = @$h;
+                    $name = _validate_header_name($name);
+                    $value = _validate_header_value($value);
                     push @headers, "$name: $value\r\n";
                 }
             }
