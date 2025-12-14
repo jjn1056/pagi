@@ -267,16 +267,15 @@ subtest 'Single-worker mode graceful shutdown' => sub {
     SKIP: {
         skip "Cannot connect to server", 1 unless $sock;
 
-        # Send request
-        $sock->blocking(1);
-        print $sock "GET / HTTP/1.1\r\n";
-        print $sock "Host: localhost\r\n";
-        print $sock "Connection: close\r\n";
-        print $sock "\r\n";
+        # Send request using syswrite to avoid buffering issues
+        $sock->autoflush(1);
+        my $req = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+        syswrite($sock, $req);
         $sock->blocking(0);
 
-        # Let request start processing
-        $loop->loop_once(0.2);
+        # Let request start processing - run loop multiple times to ensure
+        # the request is received, parsed, and handling has started
+        $loop->loop_once(0.1) for 1..5;
 
         # Now trigger shutdown while request is in progress
         # In current code, this should abort the request

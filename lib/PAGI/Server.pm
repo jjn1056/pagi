@@ -720,7 +720,14 @@ async sub _drain_connections ($self) {
     my $start = time();
     my $loop = $self->loop;
 
-    # Poll until connections are drained or timeout
+    # First, close all idle connections immediately (not processing a request)
+    # Keep-alive connections waiting for next request should be closed
+    my @idle = grep { !$_->{handling_request} } @{$self->{connections}};
+    for my $conn (@idle) {
+        $conn->_close if $conn && $conn->can('_close');
+    }
+
+    # Now wait only for connections with active requests
     while (@{$self->{connections}} > 0) {
         my $elapsed = time() - $start;
         if ($elapsed >= $timeout) {
