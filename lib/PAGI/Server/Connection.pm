@@ -334,6 +334,10 @@ async sub _handle_request ($self, $request) {
         }
         # Write access log before closing
         $self->_write_access_log;
+        # Notify server that request completed (for max_requests tracking)
+        if ($self->{server} && $self->{server}->can('_on_request_complete')) {
+            $self->{server}->_on_request_complete;
+        }
         # Always close connection after exception (3.2) - don't try keep-alive
         $self->_close;
         return;
@@ -341,6 +345,11 @@ async sub _handle_request ($self, $request) {
 
     # Write access log entry
     $self->_write_access_log;
+
+    # Notify server that request completed (for max_requests tracking)
+    if ($self->{server} && $self->{server}->can('_on_request_complete')) {
+        $self->{server}->_on_request_complete;
+    }
 
     # Determine if we should keep the connection alive
     my $keep_alive = $self->_should_keep_alive($request);
