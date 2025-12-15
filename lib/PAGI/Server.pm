@@ -249,6 +249,34 @@ handles IO::Async's C<$ONE_TRUE_LOOP> singleton
 
 =back
 
+=item max_requests => $count
+
+Maximum number of requests a worker process will handle before restarting.
+After serving this many requests, the worker gracefully shuts down and the
+parent spawns a replacement.
+
+B<Default:> 0 (disabled - workers run indefinitely)
+
+B<When to use:>
+
+=over 4
+
+=item * Long-running deployments where gradual memory growth is a concern
+
+=item * Applications with known memory leaks that can't be easily fixed
+
+=item * Defense against slow memory growth (~6.5 bytes/request observed in PAGI)
+
+=back
+
+B<Note:> Only applies in multi-worker mode (C<workers> > 0). In single-worker
+mode, this setting is ignored.
+
+B<CLI:> C<--max-requests 10000>
+
+Example: With 4 workers and max_requests=10000, total capacity before any
+restart is 40,000 requests. Workers restart individually without downtime.
+
 =back
 
 =head1 METHODS
@@ -318,6 +346,7 @@ sub _init ($self, $params) {
     $self->{max_header_count} = delete $params->{max_header_count} // 100;  # Max number of headers
     $self->{max_body_size}    = delete $params->{max_body_size};  # Max body size in bytes (undef = unlimited)
     $self->{workers}          = delete $params->{workers} // 0;   # Number of worker processes (0 = single process)
+    $self->{max_requests}     = delete $params->{max_requests} // 0;  # 0 = unlimited
     $self->{listener_backlog} = delete $params->{listener_backlog} // 2048;   # Listener queue size
     $self->{shutdown_timeout}  = delete $params->{shutdown_timeout} // 30;  # Graceful shutdown timeout (seconds)
     $self->{reuseport}         = delete $params->{reuseport} // 0;  # SO_REUSEPORT mode for multi-worker
@@ -387,6 +416,9 @@ sub configure ($self, %params) {
     }
     if (exists $params{workers}) {
         $self->{workers} = delete $params{workers};
+    }
+    if (exists $params{max_requests}) {
+        $self->{max_requests} = delete $params{max_requests};
     }
     if (exists $params{listener_backlog}) {
         $self->{listener_backlog} = delete $params{listener_backlog};
