@@ -715,14 +715,17 @@ sub _run_as_worker ($self, $listen_socket, $worker_num) {
         extensions      => $self->{extensions},
         on_error        => $self->{on_error},
         access_log      => $self->{access_log},
+        log_level       => $self->{log_level},
         quiet           => 1,  # Workers should be quiet
         timeout         => $self->{timeout},
         max_header_size  => $self->{max_header_size},
         max_header_count => $self->{max_header_count},
         max_body_size    => $self->{max_body_size},
+        max_requests     => $self->{max_requests},
         workers          => 0,  # Single-worker mode in worker process
     );
     $worker_server->{is_worker} = 1;
+    $worker_server->{_request_count} = 0;  # Track requests handled
     $worker_server->{bound_port} = $listen_socket->sockport;
 
     $loop->add($worker_server);
