@@ -227,8 +227,22 @@ sub parse_request ($self, $buffer_ref) {
         push @headers, ['content-type', $env{CONTENT_TYPE}];
     }
     if (defined $env{CONTENT_LENGTH}) {
-        push @headers, ['content-length', $env{CONTENT_LENGTH}];
-        $content_length = $env{CONTENT_LENGTH} + 0;
+        my $cl_value = $env{CONTENT_LENGTH};
+
+        # RFC 7230 Section 3.3.2: Content-Length = 1*DIGIT
+        # Must be only digits, no whitespace, no negative sign
+        if ($cl_value !~ /^\d+$/) {
+            return ({ error => 400, message => 'Bad Request' }, $header_end + 4);
+        }
+
+        # Check for unreasonably large values (>2GB indicates potential DoS)
+        # Using string length check to avoid Perl's numeric conversion issues
+        if (length($cl_value) > 10 || $cl_value > 2_147_483_647) {
+            return ({ error => 413, message => 'Payload Too Large' }, $header_end + 4);
+        }
+
+        push @headers, ['content-length', $cl_value];
+        $content_length = $cl_value + 0;
     }
 
     # Determine HTTP version (optimized: substr instead of regex)

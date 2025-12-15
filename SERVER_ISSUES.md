@@ -5,8 +5,8 @@ This document contains a comprehensive audit of PAGI::Server identifying issues 
 **Audit Date:** 2024-12-14
 **Files Audited:** `lib/PAGI/Server.pm`, `lib/PAGI/Server/*.pm`
 **Total Issues Found:** 29 (5 Critical, 3 High, 17 Medium, 4 Low)
-**Issues Fixed:** 19 (1.1-1.5, 2.1, 2.3, 2.4, 2.5, 3.3, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.16, 4.2, 4.4)
-**Issues Removed:** 3 (1.6, 2.2, 3.4 - not real issues)
+**Issues Fixed:** 21 (1.1-1.5, 2.1, 2.3, 2.4, 2.5, 3.3, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10, 3.12, 3.15, 3.16, 4.2, 4.4)
+**Issues Removed:** 4 (1.6, 2.2, 3.4, 4.3 - not real issues)
 
 ---
 
@@ -713,25 +713,35 @@ if (length($self->{buffer}) > $MAX_WEBSOCKET_FRAME) {
 
 ### 3.12 Content-Length Integer Overflow
 
-**Status:** NOT FIXED
+**Status:** FIXED (2024-12-15)
 **File:** `lib/PAGI/Server/Protocol/HTTP1.pm`
-**Line:** 198
+**Lines:** 229-245
 
 **Problem:**
-Content-Length converted without overflow check.
+Content-Length converted without validation; negative, non-numeric, and overflow values silently accepted.
 
-**Current Code:**
+**Fix Applied:**
 ```perl
-$content_length = $env{CONTENT_LENGTH} + 0;
-```
+if (defined $env{CONTENT_LENGTH}) {
+    my $cl_value = $env{CONTENT_LENGTH};
 
-**Recommended Fix:**
-```perl
-if ($env{CONTENT_LENGTH} !~ /^\d+$/ || $env{CONTENT_LENGTH} > 2**31) {
-    return { error => 400, message => "Invalid Content-Length" };
+    # RFC 7230 Section 3.3.2: Content-Length = 1*DIGIT
+    # Must be only digits, no whitespace, no negative sign
+    if ($cl_value !~ /^\d+$/) {
+        return ({ error => 400, message => 'Bad Request' }, $header_end + 4);
+    }
+
+    # Check for unreasonably large values (>2GB indicates potential DoS)
+    if (length($cl_value) > 10 || $cl_value > 2_147_483_647) {
+        return ({ error => 413, message => 'Payload Too Large' }, $header_end + 4);
+    }
+
+    push @headers, ['content-length', $cl_value];
+    $content_length = $cl_value + 0;
 }
-$content_length = $env{CONTENT_LENGTH} + 0;
 ```
+
+**Test:** `t/22-content-length-keepalive.t`
 
 ---
 
@@ -779,20 +789,41 @@ See graceful shutdown fix in 2.4 - includes waiting for workers.
 
 ### 3.15 HTTP/1.0 Keep-Alive Not Advertised
 
-**Status:** NOT FIXED
+**Status:** FIXED (2024-12-15)
 **File:** `lib/PAGI/Server/Connection.pm`
-**Lines:** 328-332
+**Lines:** 631-640, 677-686
 
 **Problem:**
-Server accepts HTTP/1.0 keep-alive but doesn't send header back.
+Server accepts HTTP/1.0 keep-alive but doesn't send `Connection: keep-alive` header back.
+Per HTTP/1.0 spec, keep-alive is not default; clients won't reuse the connection without
+explicit acknowledgment.
 
-**Recommended Fix:**
+**Fix Applied:**
 ```perl
-# When preparing response for HTTP/1.0 with keep-alive:
-if ($http_version eq '1.0' && $keep_alive) {
-    push @final_headers, ['connection', 'keep-alive'];
+# In _create_send(), check if HTTP/1.0 client requested keep-alive
+my $client_wants_keepalive = 0;
+if ($is_http10) {
+    for my $h (@{$request->{headers}}) {
+        if ($h->[0] eq 'connection' && lc($h->[1]) =~ /keep-alive/) {
+            $client_wants_keepalive = 1;
+            last;
+        }
+    }
+}
+
+# When building response headers:
+if ($is_http10) {
+    if (!$has_content_length) {
+        # No Content-Length means we can't do keep-alive
+        push @final_headers, ['connection', 'close'];
+    } elsif ($client_wants_keepalive) {
+        # HTTP/1.0 client requested keep-alive and we can honor it
+        push @final_headers, ['connection', 'keep-alive'];
+    }
 }
 ```
+
+**Test:** `t/22-content-length-keepalive.t`
 
 ---
 
@@ -905,23 +936,32 @@ Applications can override by providing their own Server header.
 
 ---
 
-### 4.3 Inefficient Header Concatenation
+### 4.3 ~~Inefficient Header Concatenation~~
 
-**Status:** NOT FIXED
+**Status:** NOT AN ISSUE (Verified 2024-12-15)
 **File:** `lib/PAGI/Server/Protocol/HTTP1.pm`
-**Lines:** 224-238
+**Lines:** 274-279
 
-**Problem:**
-String concatenation in loop; minor performance impact.
+**Original Concern:**
+String concatenation in loop claimed to have minor performance impact.
 
-**Recommended Fix:**
-```perl
-my @header_lines;
-for my $header (@$headers) {
-    push @header_lines, "$header->[0]: $header->[1]";
-}
-my $response = $status_line . join("\r\n", @header_lines) . "\r\n\r\n";
-```
+**Why It's Not An Issue:**
+Perl strings are mutable and Perl over-allocates memory to amortize the cost of
+concatenation. Unlike languages with immutable strings (Java, Python), repeated
+`.=` operations in Perl don't create new string objects each time.
+
+For typical HTTP responses:
+- Headers count: <20 items
+- Total header size: <2KB
+- This runs once per response, not in a hot loop
+
+The alternative (push to array + join) would have similar or worse overhead due to:
+1. Array push operations
+2. Final join() traversing the array
+3. Additional temporary string allocation for join result
+
+**Conclusion:** This is premature optimization. The current code is clear and performs
+fine for typical HTTP responses. No fix required.
 
 ---
 
@@ -1012,16 +1052,16 @@ Validates cert_file, key_file, and ca_file existence and readability in construc
 | 3.9 | MEDIUM | Security | Client cert not enforced |
 | 3.10 | MEDIUM | Perf | O(N²) connection cleanup |
 | 3.11 | MEDIUM | DoS | Large WebSocket frames |
-| 3.12 | MEDIUM | Security | Content-Length overflow |
+| 3.12 | MEDIUM | Security | ~~Content-Length overflow~~ FIXED |
 | 3.13 | MEDIUM | Resource | Worker FD leak |
 | 3.14 | MEDIUM | Resource | Zombie workers |
-| 3.15 | MEDIUM | Compat | HTTP/1.0 keep-alive |
-| 3.16 | MEDIUM | DoS | No request line limit |
+| 3.15 | MEDIUM | Compat | ~~HTTP/1.0 keep-alive~~ FIXED |
+| 3.16 | MEDIUM | DoS | ~~No request line limit~~ FIXED |
 | 3.17 | MEDIUM | Stability | Error after response start |
 | 4.1 | LOW | Memory | TLS cert data storage |
-| 4.2 | LOW | Compat | Missing Server header |
-| 4.3 | LOW | Perf | String concatenation |
-| 4.4 | LOW | UX | Deferred cert validation |
+| 4.2 | LOW | Compat | ~~Missing Server header~~ FIXED |
+| 4.3 | LOW | Perf | ~~String concatenation~~ NOT AN ISSUE |
+| 4.4 | LOW | UX | ~~Deferred cert validation~~ FIXED |
 
 ---
 

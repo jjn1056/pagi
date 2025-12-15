@@ -628,6 +628,17 @@ sub _create_send ($self, $request) {
     my $http_version = $request->{http_version} // '1.1';
     my $is_http10 = ($http_version eq '1.0');
 
+    # Check if HTTP/1.0 client requested keep-alive
+    my $client_wants_keepalive = 0;
+    if ($is_http10) {
+        for my $h (@{$request->{headers}}) {
+            if ($h->[0] eq 'connection' && lc($h->[1]) =~ /keep-alive/) {
+                $client_wants_keepalive = 1;
+                last;
+            }
+        }
+    }
+
     weaken(my $weak_self = $self);
 
     return async sub ($event) {
@@ -663,9 +674,15 @@ sub _create_send ($self, $request) {
             # For HTTP/1.0, don't use chunked encoding - use Connection: close instead
             if ($is_head_request || $is_http10) {
                 $chunked = 0;
-                # For HTTP/1.0 streaming without Content-Length, add Connection: close
-                if ($is_http10 && !$has_content_length) {
-                    push @final_headers, ['connection', 'close'];
+                if ($is_http10) {
+                    if (!$has_content_length) {
+                        # No Content-Length means we can't do keep-alive
+                        push @final_headers, ['connection', 'close'];
+                    } elsif ($client_wants_keepalive) {
+                        # HTTP/1.0 client requested keep-alive and we can honor it
+                        # Must explicitly acknowledge with Connection: keep-alive
+                        push @final_headers, ['connection', 'keep-alive'];
+                    }
                 }
             } else {
                 $chunked = !$has_content_length;
