@@ -19,9 +19,8 @@ sub routes ($class, $app, $r) {
     $r->patch('/todos/:id'         => '#load' => '#update')->name('todo_update');
     $r->delete('/todos/:id'        => '#load' => '#destroy')->name('todo_delete');
 
-    # Bulk operations
-    $r->post('/todos/toggle-all'   => '#toggle_all')->name('todos_toggle_all');
-    $r->post('/todos/clear'        => '#clear_completed')->name('todos_clear');
+    # Bulk operations (nested handler)
+    $r->mount('/todos' => '::Todos::Bulk');
 
     # SSE for live updates
     $r->sse('/todos/live' => '#live')->name('todos_live');
@@ -139,29 +138,6 @@ async sub destroy ($self, $c) {
     $c->service('Todo')->delete($todo->{id});
     $c->hx_trigger('todoDeleted');
     await $c->empty_or_redirect('/');
-}
-
-# Bulk operations
-async sub toggle_all ($self, $c) {
-    my $todos = $c->service('Todo');
-    $todos->toggle_all;
-    $c->hx_trigger('todosChanged');
-    $c->render('todos/_main',
-        todos  => [$todos->all],
-        active => $todos->active_count,
-        filter => 'home',
-    );
-}
-
-async sub clear_completed ($self, $c) {
-    my $todos = $c->service('Todo');
-    $todos->clear_completed;
-    $c->hx_trigger('todosChanged');
-    $c->render('todos/_main',
-        todos  => [$todos->all],
-        active => $todos->active_count,
-        filter => 'home',
-    );
 }
 
 # Field validation
