@@ -1330,13 +1330,33 @@ subtest 'Too many headers returns 431' => sub {
 
         my $port = $server->port;
 
-        # Send request with many headers using raw socket
+        # Send request with many headers using non-blocking socket with async I/O
         my $socket = IO::Socket::INET->new(
             PeerAddr => '127.0.0.1',
             PeerPort => $port,
             Proto    => 'tcp',
-            Timeout  => 5,
+            Blocking => 0,
         ) or die "Cannot connect: $!";
+
+        my $response = '';
+        my $done = $loop->new_future;
+
+        my $stream = IO::Async::Stream->new(
+            handle => $socket,
+            on_read => sub ($s, $buffref, $eof) {
+                $response .= $$buffref;
+                $$buffref = '';
+                if ($eof || $response =~ /\r\n\r\n/) {
+                    $done->done unless $done->is_ready;
+                }
+                return 0;
+            },
+            on_closed => sub {
+                $done->done unless $done->is_ready;
+            },
+        );
+
+        $loop->add($stream);
 
         # Build request with 10 headers (exceeds limit of 5)
         my $request = "GET / HTTP/1.1\r\nHost: localhost\r\n";
@@ -1345,13 +1365,15 @@ subtest 'Too many headers returns 431' => sub {
         }
         $request .= "\r\n";
 
-        $socket->print($request);
-        $socket->shutdown(1);  # Done writing
+        $stream->write($request);
 
-        # Read response
-        local $/;
-        my $response = <$socket>;
-        $socket->close;
+        # Wait for response with timeout
+        await Future->wait_any(
+            $done,
+            $loop->timeout_future(after => 5)->else(sub { die "Timeout waiting for response" }),
+        );
+
+        $loop->remove($stream);
 
         like($response, qr{HTTP/1\.1 431}, 'Response is 431 Request Header Fields Too Large');
 
