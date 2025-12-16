@@ -68,4 +68,69 @@ subtest 'sse #method syntax resolves handler method' => sub {
     ok($TestApp::Events::live_sse_ref->isa('PAGI::Simple::SSE'), 'context is SSE object');
 };
 
+# Helper to simulate WebSocket connection
+sub simulate_websocket ($app, %opts) {
+    my $path = $opts{path} // '/ws';
+    my $messages = $opts{messages} // [];
+    my @sent;
+
+    my $scope = { type => 'websocket', path => $path };
+
+    my @events = ({ type => 'websocket.connect' });
+    push @events, { type => 'websocket.receive', text => $_ } for @$messages;
+    push @events, { type => 'websocket.disconnect' };
+
+    my $event_index = 0;
+
+    my $receive = sub {
+        return Future->done($events[$event_index++] // { type => 'websocket.disconnect' });
+    };
+
+    my $send = sub ($event) {
+        push @sent, $event;
+        return Future->done;
+    };
+
+    my $pagi_app = $app->to_app;
+    $pagi_app->($scope, $receive, $send)->get;
+
+    return { sent => \@sent };
+}
+
+# WebSocket test handler
+{
+    package TestApp::Chat;
+    use parent 'PAGI::Simple::Handler';
+    use experimental 'signatures';
+
+    our $chat_called = 0;
+    our $chat_ws_ref;
+
+    sub routes ($class, $app, $r) {
+        $r->websocket('/room' => '#room');
+    }
+
+    sub room ($self, $ws) {
+        $chat_called = 1;
+        $chat_ws_ref = $ws;
+    }
+
+    $INC{'TestApp/Chat.pm'} = 1;
+}
+
+# Test 2: WebSocket #method syntax works
+subtest 'websocket #method syntax resolves handler method' => sub {
+    $TestApp::Chat::chat_called = 0;
+    $TestApp::Chat::chat_ws_ref = undef;
+
+    my $app = PAGI::Simple->new;
+    $app->mount('/chat' => 'TestApp::Chat');
+
+    my $result = simulate_websocket($app, path => '/chat/room');
+
+    ok($TestApp::Chat::chat_called, 'handler method was called');
+    ok($TestApp::Chat::chat_ws_ref, 'received WebSocket context');
+    ok($TestApp::Chat::chat_ws_ref->isa('PAGI::Simple::WebSocket'), 'context is WebSocket object');
+};
+
 done_testing;

@@ -409,7 +409,22 @@ sub sse ($self, $path, @args) {
 sub websocket ($self, $path, @args) {
     my $full_path = $self->{prefix} . $path;
     $full_path =~ s{^//+}{/};
-    $self->{app}->websocket($full_path, @args);
+
+    # Resolve #method syntax
+    my @resolved_args;
+    for my $arg (@args) {
+        if (!ref($arg) && $arg =~ /^#(\w+)$/) {
+            my $method = $1;
+            my $instance = $self->{handler_instance};
+            push @resolved_args, sub ($ws) {
+                $instance->$method($ws);
+            };
+        } else {
+            push @resolved_args, $arg;
+        }
+    }
+
+    $self->{app}->websocket($full_path, @resolved_args);
 }
 
 sub _add_route ($self, $method, $path, @args) {
