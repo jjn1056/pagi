@@ -2484,6 +2484,14 @@ sub group ($self, $prefix, @args) {
     # Mount a raw PAGI application (coderef)
     $app->mount('/legacy' => $legacy_pagi_app);
 
+    # Mount by class name (auto-requires and instantiates)
+    $app->mount('/api' => 'MyApp::API');
+
+    # Mount by relative class name (prepends current package)
+    package MyApp;
+    $app->mount('/todos' => '::Todos');    # loads MyApp::Todos
+    $app->mount('/users' => '::Users');    # loads MyApp::Users
+
 Mount a sub-application under a path prefix. The mounted app receives
 requests with the prefix stripped from the path. All HTTP methods,
 WebSocket connections, and SSE streams are properly routed.
@@ -2494,7 +2502,9 @@ Options:
 
 =item * C<$prefix> - The path prefix to mount under (e.g., '/api/v1')
 
-=item * C<$sub_app> - A PAGI::Simple instance or PAGI app coderef
+=item * C<$sub_app> - A PAGI::Simple instance, class name string, or PAGI app coderef.
+If a string is provided, the class is auto-required and instantiated via C<< ->new >>.
+If the string starts with C<::>, the current package name is prepended.
 
 =item * C<@middleware> - Optional arrayref of middleware names to apply
 
@@ -2522,6 +2532,25 @@ sub mount ($self, $prefix, $sub_app, @args) {
     $prefix =~ s{/$}{};  # Remove trailing slash
     $prefix = "/$prefix" unless $prefix =~ m{^/};
 
+    # Handle string class names
+    if (!ref($sub_app) && $sub_app =~ /^[A-Za-z_:]/) {
+        my $class = $sub_app;
+
+        # Relative namespace - prepend caller's package
+        if ($class =~ /^::/) {
+            $class = ref($self) . $class;
+        }
+
+        # Require and instantiate the class
+        eval "require $class" or die "mount(): Can't load $class: $@";
+
+        if (!$class->can('new')) {
+            die "mount(): $class has no new() method";
+        }
+
+        $sub_app = $class->new;
+    }
+
     # Get the PAGI app from the sub-application
     my $app;
     if (blessed($sub_app) && $sub_app->can('to_app')) {
@@ -2533,7 +2562,7 @@ sub mount ($self, $prefix, $sub_app, @args) {
         $app = $sub_app;
     }
     else {
-        die 'mount() requires a PAGI::Simple app or a PAGI app coderef';
+        die 'mount() requires a PAGI::Simple app, class name, or PAGI app coderef';
     }
 
     # Store the mounted app
