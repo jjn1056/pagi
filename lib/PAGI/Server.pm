@@ -847,7 +847,6 @@ async sub _run_lifespan_startup ($self) {
         pagi => {
             version      => '0.1',
             spec_version => '0.1',
-            loop         => $self->loop,  # IO::Async::Loop for worker pools, etc.
             is_worker    => $self->{is_worker} // 0,
             worker_num   => $self->{worker_num},  # undef for single-worker, 1-N for multi-worker
         },

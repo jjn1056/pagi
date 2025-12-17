@@ -616,7 +616,6 @@ sub new ($class, %args) {
         _mounted_apps    => [],           # Mounted sub-applications [(prefix, app, middleware), ...]
         _prefix          => '',           # Current route group prefix
         _group_middleware => [],          # Current group middleware stack
-        _loop            => undef,        # Event loop (set when server starts)
         _view            => undef,        # View instance for template rendering
         _view_config     => undef,        # Deferred view configuration
         _caller_dir      => $caller_dir,  # Directory of the file creating the app
@@ -859,8 +858,8 @@ sub view ($self) {
 
     my $loop = $app->loop;
 
-Returns the IO::Async::Loop instance when running under a PAGI server.
-Returns undef if not yet running or if the server doesn't provide a loop.
+Returns the IO::Async::Loop instance. IO::Async::Loop->new returns a singleton,
+so this always returns the same loop instance that the PAGI server is using.
 
 This is useful for advanced async operations like timers, custom IO::Async
 notifiers, or direct use of PAGI::Util::AsyncFile.
@@ -871,13 +870,14 @@ notifiers, or direct use of PAGI::Util::AsyncFile.
         $loop->add(IO::Async::Timer::Periodic->new(
             interval => 60,
             on_tick => sub { cleanup_stale_sessions() },
-        )->start) if $loop;
+        )->start);
     });
 
 =cut
 
 sub loop ($self) {
-    return $self->{_loop};
+    require IO::Async::Loop;
+    return IO::Async::Loop->new;
 }
 
 =head2 worker_pool
@@ -1429,11 +1429,6 @@ sub to_app ($self) {
 # Internal: Main request dispatcher
 async sub _handle_request ($self, $scope, $receive, $send) {
     my $type = $scope->{type} // '';
-
-    # Capture the event loop from the scope (provided by PAGI server)
-    if (my $loop = $scope->{pagi}{loop}) {
-        $self->{_loop} //= $loop;
-    }
 
     if ($type eq 'lifespan') {
         await $self->_handle_lifespan($scope, $receive, $send);
