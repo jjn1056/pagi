@@ -598,6 +598,8 @@ sub _listen_multiworker ($self) {
     my $loop = $self->loop;
     $loop->watch_signal(TERM => sub { $self->_initiate_multiworker_shutdown });
     $loop->watch_signal(INT  => sub { $self->_initiate_multiworker_shutdown });
+    # HUP = graceful restart (replace all workers)
+    $loop->watch_signal(HUP => sub { $self->_graceful_restart });
 
     # Fork the workers
     for my $i (1 .. $workers) {
@@ -634,6 +636,19 @@ sub _initiate_multiworker_shutdown ($self) {
         $self->loop->stop;
     }
     # Otherwise, watch_process callbacks will stop the loop when all workers exit
+}
+
+# Graceful restart: replace all workers one by one
+sub _graceful_restart ($self) {
+    return if $self->{shutting_down};
+
+    $self->_log(info => "Received HUP, performing graceful restart");
+
+    # Signal all current workers to shutdown
+    # watch_process callbacks will respawn them
+    for my $pid (keys %{$self->{worker_pids}}) {
+        kill 'TERM', $pid;
+    }
 }
 
 sub _spawn_worker ($self, $listen_socket, $worker_num) {

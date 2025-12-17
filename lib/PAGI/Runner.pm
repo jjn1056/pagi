@@ -551,6 +551,15 @@ sub run ($self, @args) {
         });
     }
 
+    # HUP handling for single-worker: log and ignore (no graceful restart in single mode)
+    # Multi-worker mode handles HUP in Server.pm
+    if (!$self->{workers} || $self->{workers} <= 1) {
+        $loop->watch_signal(HUP => sub {
+            warn "Received HUP signal (graceful restart only works in multi-worker mode)\n"
+                unless $self->{quiet};
+        });
+    }
+
     # Run the event loop
     $loop->run;
 }
