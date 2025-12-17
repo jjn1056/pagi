@@ -531,6 +531,21 @@ sub run ($self, @args) {
         $self->_daemonize;
     }
 
+    # Write PID file (after daemonizing so we record the daemon's PID)
+    if ($self->{pid_file}) {
+        $self->_write_pid_file($self->{pid_file});
+    }
+
+    # Set up PID file cleanup on exit
+    if ($self->{_pid_file_path}) {
+        $loop->watch_signal(TERM => sub {
+            $self->_remove_pid_file;
+        });
+        $loop->watch_signal(INT => sub {
+            $self->_remove_pid_file;
+        });
+    }
+
     # Run the event loop
     $loop->run;
 }
@@ -691,6 +706,21 @@ sub _daemonize ($self) {
     open(STDERR, '>', '/dev/null') or die "Cannot redirect STDERR: $!";
 
     return $$;  # Return daemon PID
+}
+
+sub _write_pid_file ($self, $pid_file) {
+    open(my $fh, '>', $pid_file)
+        or die "Cannot write PID file $pid_file: $!\n";
+    print $fh "$$\n";
+    close($fh);
+
+    # Store for cleanup
+    $self->{_pid_file_path} = $pid_file;
+}
+
+sub _remove_pid_file ($self) {
+    return unless $self->{_pid_file_path};
+    unlink($self->{_pid_file_path});
 }
 
 1;
