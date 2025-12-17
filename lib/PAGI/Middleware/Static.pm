@@ -8,6 +8,7 @@ use Future::AsyncAwait;
 use File::Spec;
 use Digest::MD5 'md5_hex';
 use Fcntl ':mode';
+use IO::Async::Loop;
 use PAGI::Util::AsyncFile;
 
 =head1 NAME
@@ -256,12 +257,12 @@ sub wrap ($self, $app) {
             return;
         }
 
-        # Read and send file content
+        # Read and send file content using async I/O via IO::Async::Loop singleton
         my $chunk_size = 64 * 1024;  # 64KB chunks
-        my $loop = $scope->{pagi}{loop};
+        my $loop = IO::Async::Loop->new;
 
-        if ($loop && !$is_range) {
-            # Use non-blocking async file I/O for full file reads
+        if (!$is_range) {
+            # Use non-blocking async file I/O for full file reads (chunked)
             my $bytes_sent = 0;
             eval {
                 await PAGI::Util::AsyncFile->read_file_chunked(
@@ -283,7 +284,7 @@ sub wrap ($self, $app) {
                 return;
             }
         }
-        elsif ($loop && $is_range) {
+        else {
             # For range requests, read full file async and slice
             eval {
                 my $full_content = await PAGI::Util::AsyncFile->read_file($loop, $file_path);
@@ -298,39 +299,6 @@ sub wrap ($self, $app) {
                 await $self->_send_error($send, 500, 'Cannot read file');
                 return;
             }
-        }
-        else {
-            # Fallback to blocking I/O if no loop available (e.g., in tests)
-            open my $fh, '<:raw', $file_path or do {
-                await $self->_send_error($send, 500, 'Cannot read file');
-                return;
-            };
-
-            if ($is_range) {
-                seek $fh, $start, 0;
-            }
-
-            my $remaining = $body_size;
-
-            while ($remaining > 0) {
-                my $to_read = $remaining > $chunk_size ? $chunk_size : $remaining;
-                my $buffer;
-                my $bytes_read = read($fh, $buffer, $to_read);
-
-                if (!defined $bytes_read || $bytes_read == 0) {
-                    last;
-                }
-
-                $remaining -= $bytes_read;
-
-                await $send->({
-                    type => 'http.response.body',
-                    body => $buffer,
-                    more => ($remaining > 0 ? 1 : 0),
-                });
-            }
-
-            close $fh;
         }
     };
 }

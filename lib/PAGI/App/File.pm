@@ -5,6 +5,7 @@ use warnings;
 use experimental 'signatures';
 use Future::AsyncAwait;
 use Digest::MD5 qw(md5_hex);
+use IO::Async::Loop;
 use PAGI::Util::AsyncFile;
 
 =head1 NAME
@@ -137,28 +138,15 @@ sub to_app ($self) {
             my $content = '';
 
             if ($method ne 'HEAD') {
-                # Get event loop for async I/O
-                my $loop = $scope->{pagi}{loop};
-                if ($loop) {
-                    # Use non-blocking async file I/O - read full file and slice
-                    eval {
-                        my $full_content = await PAGI::Util::AsyncFile->read_file($loop, $file_path);
-                        $content = substr($full_content, $start, $length);
-                    };
-                    if ($@) {
-                        await $self->_send_error($send, 500, 'Internal Server Error');
-                        return;
-                    }
-                }
-                else {
-                    # Fallback to blocking I/O with seek for efficiency
-                    open my $fh, '<:raw', $file_path or do {
-                        await $self->_send_error($send, 500, 'Internal Server Error');
-                        return;
-                    };
-                    seek($fh, $start, 0);
-                    read($fh, $content, $length);
-                    close $fh;
+                # Use non-blocking async file I/O via IO::Async::Loop singleton
+                my $loop = IO::Async::Loop->new;
+                eval {
+                    my $full_content = await PAGI::Util::AsyncFile->read_file($loop, $file_path);
+                    $content = substr($full_content, $start, $length);
+                };
+                if ($@) {
+                    await $self->_send_error($send, 500, 'Internal Server Error');
+                    return;
                 }
             }
 
@@ -181,27 +169,14 @@ sub to_app ($self) {
         # Full file response
         my $content = '';
         if ($method ne 'HEAD') {
-            # Get event loop for async I/O
-            my $loop = $scope->{pagi}{loop};
-            if ($loop) {
-                # Use non-blocking async file I/O
-                eval {
-                    $content = await PAGI::Util::AsyncFile->read_file($loop, $file_path);
-                };
-                if ($@) {
-                    await $self->_send_error($send, 500, 'Internal Server Error');
-                    return;
-                }
-            }
-            else {
-                # Fallback to blocking I/O if no loop available (e.g., in tests)
-                open my $fh, '<:raw', $file_path or do {
-                    await $self->_send_error($send, 500, 'Internal Server Error');
-                    return;
-                };
-                local $/;
-                $content = <$fh>;
-                close $fh;
+            # Use non-blocking async file I/O via IO::Async::Loop singleton
+            my $loop = IO::Async::Loop->new;
+            eval {
+                $content = await PAGI::Util::AsyncFile->read_file($loop, $file_path);
+            };
+            if ($@) {
+                await $self->_send_error($send, 500, 'Internal Server Error');
+                return;
             }
         }
 
