@@ -51,4 +51,25 @@ subtest 'max_connections option is accepted' => sub {
     is($server->{max_connections}, 100, 'max_connections stored');
 };
 
+subtest 'auto-detects max_connections from ulimit' => sub {
+    my $server = bless {
+        connections => {},
+        max_connections => 0,  # auto-detect
+    }, 'PAGI::Server';
+
+    # Should have auto-detected a reasonable limit
+    my $effective = $server->effective_max_connections;
+    ok($effective > 0, "auto-detected limit: $effective");
+    ok($effective >= 10, "limit is at least minimum (10)");
+};
+
+subtest 'explicit max_connections overrides auto-detect' => sub {
+    my $server = bless {
+        connections => {},
+        max_connections => 200,
+    }, 'PAGI::Server';
+
+    is($server->effective_max_connections, 200, 'uses explicit value');
+};
+
 done_testing;

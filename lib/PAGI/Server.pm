@@ -11,6 +11,7 @@ use IO::Socket::INET;
 use Future;
 use Future::AsyncAwait;
 use Scalar::Util qw(weaken refaddr);
+use POSIX ();
 
 use PAGI::Server::Connection;
 use PAGI::Server::Protocol::HTTP1;
@@ -556,7 +557,8 @@ async sub _listen_singleworker ($self) {
     my $scheme = $self->{tls_enabled} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class)");
+    my $max_conn = $self->effective_max_connections;
+    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn)");
 
     return $self;
 }
@@ -602,7 +604,8 @@ sub _listen_multiworker ($self) {
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
     my $mode = $reuseport ? 'reuseport' : 'shared-socket';
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class)");
+    my $max_conn = $self->effective_max_connections;
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker)");
 
     # Set up signal handlers using IO::Async's watch_signal (replaces _setup_parent_signals)
     my $loop = $self->loop;
@@ -1129,6 +1132,23 @@ sub is_running ($self) {
 
 sub connection_count ($self) {
     return scalar keys %{$self->{connections}};
+}
+
+sub effective_max_connections ($self) {
+    # If explicitly set, use that
+    return $self->{max_connections} if $self->{max_connections} && $self->{max_connections} > 0;
+
+    # Auto-detect from ulimit
+    my $ulimit = eval { POSIX::sysconf(POSIX::_SC_OPEN_MAX()) } // 1024;
+
+    # Reserve 50 FDs for: logging, static files, DB connections, etc.
+    my $headroom = 50;
+
+    # Each connection uses 1 FD (or 2 if proxying)
+    my $safe_limit = $ulimit - $headroom;
+
+    # Minimum of 10 connections
+    return $safe_limit > 10 ? $safe_limit : 10;
 }
 
 1;
