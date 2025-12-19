@@ -241,3 +241,117 @@ my $app = async sub ($scope, $receive, $send) {
 
 $app;
 ```
+
+## WebSocket Protocol
+
+### WebSocket Scope
+
+When `$scope->{type}` is `"websocket"`:
+
+```perl
+{
+    type         => 'websocket',
+    http_version => '1.1',
+    scheme       => 'ws',              # or 'wss'
+    path         => '/ws/chat',
+    query_string => 'room=general',
+    headers      => [...],             # Handshake headers
+    subprotocols => ['chat', 'json'],  # From Sec-WebSocket-Protocol
+    client       => ['192.168.1.1', 54321],
+    server       => ['0.0.0.0', 5000],
+}
+```
+
+### WebSocket Event Flow
+
+1. Receive `websocket.connect`
+2. Send `websocket.accept` (or `websocket.close` to reject)
+3. Loop: receive messages, send responses
+4. Handle `websocket.disconnect` to clean up
+
+### WebSocket Events
+
+**Receive events:**
+- `websocket.connect` - Client wants to connect
+- `websocket.receive` - Message from client (`text` or `bytes`)
+- `websocket.disconnect` - Client disconnected (`code`, `reason`)
+
+**Send events:**
+- `websocket.accept` - Accept connection (optional: `subprotocol`, `headers`)
+- `websocket.send` - Send message (`text` or `bytes`)
+- `websocket.close` - Close connection (`code`, `reason`)
+
+### Complete WebSocket Echo Example
+
+```perl
+use strict;
+use warnings;
+use Future::AsyncAwait;
+use experimental 'signatures';
+
+async sub app ($scope, $receive, $send) {
+    die "Unsupported scope type: $scope->{type}"
+        if $scope->{type} ne 'websocket';
+
+    # Wait for connection request
+    my $event = await $receive->();
+    die "Expected websocket.connect"
+        if $event->{type} ne 'websocket.connect';
+
+    # Accept the connection
+    await $send->({ type => 'websocket.accept' });
+
+    # Message loop
+    while (1) {
+        my $msg = await $receive->();
+
+        if ($msg->{type} eq 'websocket.receive') {
+            # Echo back
+            if (defined $msg->{text}) {
+                await $send->({
+                    type => 'websocket.send',
+                    text => "Echo: $msg->{text}",
+                });
+            }
+            elsif (defined $msg->{bytes}) {
+                await $send->({
+                    type  => 'websocket.send',
+                    bytes => $msg->{bytes},
+                });
+            }
+        }
+        elsif ($msg->{type} eq 'websocket.disconnect') {
+            last;  # Client disconnected
+        }
+    }
+}
+
+$app;
+```
+
+### Rejecting WebSocket Connections
+
+```perl
+# Check auth before accepting
+my $event = await $receive->();  # websocket.connect
+
+my $token = _get_header($scope, 'authorization');
+unless (valid_token($token)) {
+    await $send->({
+        type   => 'websocket.close',
+        code   => 4001,
+        reason => 'Unauthorized',
+    });
+    return;
+}
+
+await $send->({ type => 'websocket.accept' });
+```
+
+### Common Close Codes
+
+- `1000` - Normal closure
+- `1001` - Going away (server shutdown)
+- `1008` - Policy violation
+- `1011` - Server error
+- `4000-4999` - Application-specific codes
