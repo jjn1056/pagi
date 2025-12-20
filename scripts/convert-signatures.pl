@@ -24,7 +24,7 @@ for my $path (@paths) {
         process_file($path);
     } elsif (-d $path) {
         find(sub {
-            return unless -f $_ && /\.p[lm]$/;
+            return unless -f $_ && /\.(pm|pl|t)$/;
             process_file($File::Find::name);
         }, $path);
     } else {
@@ -41,14 +41,18 @@ print "  Mode: " . ($dry_run ? "DRY RUN (no changes written)" : "LIVE") . "\n";
 sub process_file {
     my ($file) = @_;
 
-    my $content = read_file($file, { binmode => ':utf8' });
+    my $content = eval { read_file($file, { binmode => ':utf8' }) };
+    if ($@) {
+        warn "Error reading file $file: $@";
+        return;
+    }
     my $original = $content;
     my $file_subs_converted = 0;
 
     # Pattern 1-4: Named subs with signatures (including async)
     # Match: sub name (...) { or async sub name (...) {
     $content =~ s{
-        ^([ \t]*)(async[ \t]+)?sub[ \t]+(\w+)[ \t]*\(([^)]+)\)[ \t]*\{
+        ^([ \t]*)(async[ \t]+)?sub[ \t]+(\w+)[ \t]*\(([^)]*)\)[ \t]*\{
     }{
         my $indent = $1;
         my $async = $2 || '';
@@ -69,7 +73,7 @@ sub process_file {
     # Pattern 5: Anonymous async subs (return async sub (...) {)
     # This pattern needs special handling for indentation
     $content =~ s{
-        (return[ \t]+async[ \t]+sub[ \t]*)\(([^)]+)\)([ \t]*\{)
+        (return[ \t]+async[ \t]+sub[ \t]*)\(([^)]*)\)([ \t]*\{)
     }{
         my $prefix = $1;
         my $params = $2;
@@ -94,7 +98,7 @@ sub process_file {
     # Additional pattern: Other anonymous async subs not in return statements
     # Match: = async sub (...) { or other contexts
     $content =~ s{
-        (=[ \t]+async[ \t]+sub[ \t]*)\(([^)]+)\)([ \t]*\{)
+        (=[ \t]+async[ \t]+sub[ \t]*)\(([^)]*)\)([ \t]*\{)
     }{
         my $prefix = $1;
         my $params = $2;
@@ -112,7 +116,7 @@ sub process_file {
 
     # Pattern: intercept_send style - my $wrapped_send = $self->intercept_send($send, async sub ($event) {
     $content =~ s{
-        (,[ \t]+async[ \t]+sub[ \t]*)\(([^)]+)\)([ \t]*\{)
+        (,[ \t]+async[ \t]+sub[ \t]*)\(([^)]*)\)([ \t]*\{)
     }{
         my $prefix = $1;
         my $params = $2;
@@ -141,7 +145,11 @@ sub process_file {
             print ", removed 'use experimental'" if $experimental_removed;
             print ")\n";
         } else {
-            write_file($file, { binmode => ':utf8' }, $content);
+            eval { write_file($file, { binmode => ':utf8' }, $content) };
+            if ($@) {
+                warn "Error writing file $file: $@";
+                return;
+            }
             print "Modified: $file ($file_subs_converted subs";
             print ", removed 'use experimental'" if $experimental_removed;
             print ")\n";
