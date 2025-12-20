@@ -14,15 +14,121 @@ This skill teaches how to write raw PAGI (Perl Asynchronous Gateway Interface) a
 - Debugging PAGI protocol issues
 - Converting PSGI apps to PAGI
 
-## Core Application Interface
+## Environment Setup (Run on Skill Activation)
 
-Every PAGI application is an async coderef with this signature:
+**When this skill activates, perform these checks:**
+
+### 1. Check Perl Version
+
+```bash
+perl -v
+```
+
+Extract the version number. PAGI requires Perl 5.16+ (for Future::AsyncAwait).
+
+### 2. Ask User Target Perl Version
+
+Ask the user which Perl version they're targeting:
+
+**Question:** "Which Perl version are you targeting for this PAGI application?"
+
+| Option | When to Choose |
+|--------|----------------|
+| **5.36+** (Recommended) | Modern systems, new projects. Cleanest syntax with built-in signatures. |
+| **5.20 - 5.35** | Older systems with experimental signatures support. |
+| **5.16 - 5.19** | Legacy systems. No signatures, use traditional `my (...) = @_;` syntax. |
+
+**Impact on generated code:**
+
+- **5.36+**: Uses `use 5.36;` which enables strict, warnings, and stable signatures
+- **5.20-5.35**: Uses `use strict; use warnings; use experimental 'signatures';`
+- **5.16-5.19**: Uses `use strict; use warnings;` with `my ($scope, $receive, $send) = @_;`
+
+Store the user's choice and apply to ALL generated code examples.
+
+### 3. Check Dependencies
+
+Check if PAGI and required modules are installed:
+
+```bash
+perl -MPAGI::Server -e 'print "PAGI::Server $PAGI::Server::VERSION\n"' 2>/dev/null || echo "NOT INSTALLED"
+perl -MFuture::AsyncAwait -e 'print "Future::AsyncAwait $Future::AsyncAwait::VERSION\n"' 2>/dev/null || echo "NOT INSTALLED"
+perl -MIO::Async -e 'print "IO::Async $IO::Async::VERSION\n"' 2>/dev/null || echo "NOT INSTALLED"
+```
+
+### 4. Offer Installation if Missing
+
+If dependencies are missing, ask the user:
+
+**"PAGI::Server is not installed. Without it, PAGI applications cannot run locally. Would you like to:"**
+
+| Option | Action |
+|--------|--------|
+| **Install now** | Run `cpanm PAGI` (installs PAGI::Server and dependencies) |
+| **Add to cpanfile** | Add `requires 'PAGI';` to project cpanfile for later installation |
+| **Skip** | Continue without installing (code will be generated but won't run) |
+
+If user has a cpanfile, offer to add missing deps there. If not, offer to create one.
+
+---
+
+## Perl Version Syntax Reference
+
+All examples in this skill use **5.36+ syntax** as the canonical form. Adapt based on user's target version:
+
+### 5.36+ (Recommended)
+
+```perl
+use 5.36;
+use Future::AsyncAwait;
+
+my $app = async sub ($scope, $receive, $send) {
+    die "Unsupported" if $scope->{type} ne 'http';
+    # ...
+};
+
+$app;
+```
+
+### 5.20 - 5.35 (Experimental Signatures)
+
+```perl
+use 5.36;
+use Future::AsyncAwait;
+
+my $app = async sub ($scope, $receive, $send) {
+    die "Unsupported" if $scope->{type} ne 'http';
+    # ...
+};
+
+$app;
+```
+
+### 5.16 - 5.19 (No Signatures)
 
 ```perl
 use strict;
 use warnings;
 use Future::AsyncAwait;
-use experimental 'signatures';
+
+my $app = async sub {
+    my ($scope, $receive, $send) = @_;
+    die "Unsupported" if $scope->{type} ne 'http';
+    # ...
+};
+
+$app;
+```
+
+---
+
+## Core Application Interface
+
+Every PAGI application is an async coderef with this signature:
+
+```perl
+use 5.36;
+use Future::AsyncAwait;
 
 async sub app ($scope, $receive, $send) {
     # $scope   - HashRef with connection metadata
@@ -67,10 +173,8 @@ PAGI apps are typically loaded via `do`:
 
 ```perl
 # app.pl
-use strict;
-use warnings;
+use 5.36;
 use Future::AsyncAwait;
-use experimental 'signatures';
 
 my $app = async sub ($scope, $receive, $send) {
     # ... implementation
@@ -196,10 +300,8 @@ await $send->({
 ### Complete HTTP Example
 
 ```perl
-use strict;
-use warnings;
+use 5.36;
 use Future::AsyncAwait;
-use experimental 'signatures';
 use JSON::PP;
 
 my $app = async sub ($scope, $receive, $send) {
@@ -284,10 +386,8 @@ When `$scope->{type}` is `"websocket"`:
 ### Complete WebSocket Echo Example
 
 ```perl
-use strict;
-use warnings;
+use 5.36;
 use Future::AsyncAwait;
-use experimental 'signatures';
 
 async sub app ($scope, $receive, $send) {
     die "Unsupported scope type: $scope->{type}"
@@ -396,10 +496,8 @@ When `$scope->{type}` is `"sse"`:
 ### Complete SSE Example
 
 ```perl
-use strict;
-use warnings;
+use 5.36;
 use Future::AsyncAwait;
-use experimental 'signatures';
 
 async sub app ($scope, $receive, $send) {
     die "Unsupported scope type: $scope->{type}"
@@ -502,10 +600,8 @@ When `$scope->{type}` is `"lifespan"`:
 ### Complete Lifespan Example
 
 ```perl
-use strict;
-use warnings;
+use 5.36;
 use Future::AsyncAwait;
-use experimental 'signatures';
 
 async sub app ($scope, $receive, $send) {
     if ($scope->{type} eq 'lifespan') {
@@ -585,10 +681,8 @@ Real applications often handle multiple protocols in one app.
 ### Dispatcher Pattern
 
 ```perl
-use strict;
-use warnings;
+use 5.36;
 use Future::AsyncAwait;
-use experimental 'signatures';
 
 async sub app ($scope, $receive, $send) {
     my $type = $scope->{type};
@@ -867,10 +961,8 @@ await $send->({ type => 'websocket.accept' });
 ### Static File Serving
 
 ```perl
-use strict;
-use warnings;
+use 5.36;
 use Future::AsyncAwait;
-use experimental 'signatures';
 use File::Spec;
 use Cwd 'abs_path';
 
