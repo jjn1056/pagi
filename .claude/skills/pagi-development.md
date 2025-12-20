@@ -711,3 +711,153 @@ pagi-server ./app.pl \
 - `SIGHUP` - Graceful restart (reload app)
 - `SIGTTIN` - Increase workers by 1
 - `SIGTTOU` - Decrease workers by 1
+
+## Common Patterns
+
+### Helper: Get Header Value
+
+```perl
+sub get_header ($scope, $name) {
+    $name = lc($name);
+    for my $h (@{$scope->{headers} // []}) {
+        return $h->[1] if lc($h->[0]) eq $name;
+    }
+    return;
+}
+
+# Usage
+my $content_type = get_header($scope, 'Content-Type');
+my $auth = get_header($scope, 'Authorization');
+```
+
+### Helper: Parse Query String
+
+```perl
+sub parse_query ($query_string) {
+    my %params;
+    for my $pair (split /&/, $query_string // '') {
+        my ($key, $value) = split /=/, $pair, 2;
+        $key   = URI::Escape::uri_unescape($key   // '');
+        $value = URI::Escape::uri_unescape($value // '');
+        $params{$key} = $value;
+    }
+    return \%params;
+}
+
+# Usage
+my $params = parse_query($scope->{query_string});
+```
+
+### JSON Response Helper
+
+```perl
+use JSON::PP;
+
+async sub json_response ($send, $data, $status = 200) {
+    my $json = encode_json($data);
+
+    await $send->({
+        type    => 'http.response.start',
+        status  => $status,
+        headers => [
+            ['content-type', 'application/json'],
+            ['content-length', length($json)],
+        ],
+    });
+
+    await $send->({
+        type => 'http.response.body',
+        body => $json,
+    });
+}
+```
+
+## Common Pitfalls
+
+### 1. Forgetting to Check Scope Type
+
+**Wrong:**
+```perl
+async sub app ($scope, $receive, $send) {
+    await $send->({ type => 'http.response.start', ... });  # Crash on WebSocket!
+}
+```
+
+**Right:**
+```perl
+async sub app ($scope, $receive, $send) {
+    die "Unsupported" if $scope->{type} ne 'http';
+    await $send->({ type => 'http.response.start', ... });
+}
+```
+
+### 2. Not Handling http.disconnect
+
+**Wrong:**
+```perl
+my $body = '';
+while (1) {
+    my $event = await $receive->();
+    $body .= $event->{body};
+    last unless $event->{more};  # Never handles disconnect
+}
+```
+
+**Right:**
+```perl
+my $body = '';
+while (1) {
+    my $event = await $receive->();
+    if ($event->{type} eq 'http.disconnect') {
+        return;  # Client gone
+    }
+    $body .= $event->{body} // '';
+    last unless $event->{more};
+}
+```
+
+### 3. Blocking the Event Loop
+
+**Wrong:**
+```perl
+my $result = `curl http://slow-api.com`;  # Blocks everything!
+```
+
+**Right:**
+```perl
+# For blocking I/O, use a worker pool or run_blocking:
+my $result = await $loop->run_child(
+    command => ['curl', '-s', 'http://slow-api.com'],
+)->get;
+
+# Or with IO::Async::HTTP (if available):
+# my $result = await $http->do_request(uri => 'http://slow-api.com');
+```
+
+### 4. Forgetting UTF-8 Encoding
+
+**Wrong:**
+```perl
+body => "Привет"  # Raw Unicode - will corrupt
+```
+
+**Right:**
+```perl
+use Encode;
+
+body => encode_utf8("Привет")  # Properly encoded bytes
+```
+
+### 5. WebSocket: Not Waiting for connect Event
+
+**Wrong:**
+```perl
+await $send->({ type => 'websocket.accept' });  # No connect received!
+```
+
+**Right:**
+```perl
+my $event = await $receive->();
+die "Expected connect" if $event->{type} ne 'websocket.connect';
+await $send->({ type => 'websocket.accept' });
+```
