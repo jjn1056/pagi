@@ -4,12 +4,19 @@ Complete or upcoming implementations of PAGI-compatible components — servers, 
 
 ## Servers
 
-    *Example entry*: `MyPAGIServer` — IO::Async-based HTTP/WebSocket server (protocols: http, websocket, lifespan). Status: prototype.
+- **PAGI::Server** — Reference IO::Async-based server with HTTP/1.1, WebSocket, SSE, and TLS support. Features multi-worker pre-fork mode, sendfile optimization, graceful shutdown, and signal-based worker scaling. Protocols: `http`, `websocket`, `sse`, `lifespan`. Status: **stable**. [GitHub](https://github.com/jnapiorkowski/PAGI)
 
 ## Application Frameworks
 
-    *Example entry*: `PAGI::Tiny` — lightweight DSL for building PAGI apps. Status: planning.
+- **PAGI::Simple** — Express/Sinatra-inspired micro-framework built on PAGI. Features routing with path parameters, middleware, views/templating with layouts, WebSocket and SSE contexts, PubSub, services, form handling, and file uploads. Status: **stable**. [GitHub](https://github.com/jnapiorkowski/PAGI-Simple)
+
+## Middleware & Apps
+
+Bundled with PAGI::Server:
+
+- **PAGI::Middleware::*** — 37 middleware components including GZip, CORS, CSRF, Session, RateLimit, Auth (Basic/Bearer), and more.
+- **PAGI::App::*** — 17 reusable apps including File (static serving), Directory (listings), Proxy, URLMap, WrapPSGI, and WebSocket/SSE utilities.
 
 ## Tools / Utilities
 
-    *Example entry*: `pagi-test-harness` — command-line harness for replaying PAGI event sequences. Status: idea.
+- **pagi-server** — CLI for running PAGI applications. Supports daemonization, PID files, privilege dropping, SSL, multi-worker mode, and graceful restarts via signals. Bundled with PAGI::Server.

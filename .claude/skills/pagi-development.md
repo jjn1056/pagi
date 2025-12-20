@@ -279,7 +279,7 @@ await $send->({
 });
 ```
 
-**File response:**
+**File response (path):**
 
 ```perl
 await $send->({
@@ -290,12 +290,77 @@ await $send->({
 
 await $send->({
     type   => 'http.response.body',
-    file   => '/path/to/file.bin',  # Server streams efficiently
-    # offset => 0,                   # Optional: start offset
+    file   => '/path/to/file.bin',  # Server opens, streams, closes
+    # offset => 0,                   # Optional: start offset for range requests
     # length => 1000,                # Optional: byte count
 });
-# Note: 'more' is ignored for file/fh - implicitly complete
+# Note: 'more' is ignored for file - response is implicitly complete
 ```
+
+**Filehandle response (already open):**
+
+```perl
+open my $fh, '<:raw', '/tmp/generated.csv' or die $!;
+
+await $send->({
+    type    => 'http.response.start',
+    status  => 200,
+    headers => [['content-type', 'text/csv']],
+});
+
+await $send->({
+    type => 'http.response.body',
+    fh   => $fh,  # Application-owned filehandle
+});
+
+close $fh;  # Application MUST close after send completes
+```
+
+**File/Filehandle Notes:**
+- `body`, `file`, and `fh` are mutually exclusive - use exactly one
+- `file`: Server opens, streams, and closes the file
+- `fh`: Application owns the handle and MUST close it after `$send` completes
+- `more` is ignored for both - response is implicitly complete
+- Use `offset` and `length` for HTTP range requests (206 Partial Content)
+- Servers should use `sendfile()` or equivalent for efficiency
+
+**Response with Trailers:**
+
+HTTP trailers are headers sent after the response body. Useful for checksums, signatures, or metadata computed during streaming.
+
+```perl
+# Signal trailers will be sent
+await $send->({
+    type     => 'http.response.start',
+    status   => 200,
+    headers  => [
+        ['content-type', 'application/octet-stream'],
+        ['trailer', 'x-checksum'],  # Announce trailer
+    ],
+    trailers => 1,  # Enable trailers
+});
+
+# Send body
+await $send->({
+    type => 'http.response.body',
+    body => $data,
+    more => 0,
+});
+
+# Send trailers after body is complete
+await $send->({
+    type    => 'http.response.trailers',
+    headers => [
+        ['x-checksum', $computed_checksum],
+    ],
+});
+```
+
+**Trailer Requirements:**
+- Set `trailers => 1` in `http.response.start`
+- Announce trailer names in `Trailer` header (recommended)
+- Send `http.response.trailers` after body is complete
+- Check `$scope->{pagi}{features}{supports_trailers}` for compatibility
 
 ### Complete HTTP Example
 
@@ -806,6 +871,195 @@ pagi-server ./app.pl \
 - `SIGTTIN` - Increase workers by 1
 - `SIGTTOU` - Decrease workers by 1
 
+## TLS Extension
+
+When running over HTTPS/WSS, the server provides TLS connection details via `$scope->{extensions}{tls}`. This extension is **only present for TLS connections** - check for its existence to determine if the connection is encrypted.
+
+### Checking for TLS
+
+```perl
+if (exists $scope->{extensions}{tls}) {
+    # Connection is over TLS
+    my $tls = $scope->{extensions}{tls};
+    # Access TLS details...
+}
+else {
+    # Cleartext connection
+}
+```
+
+### TLS Extension Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `server_cert` | String/undef | PEM-encoded server certificate |
+| `client_cert_chain` | ArrayRef | Client certificates (leaf to root), empty if none |
+| `client_cert_name` | String/undef | Client certificate Distinguished Name (RFC4514) |
+| `client_cert_error` | String/undef | Verification error message, undef if valid |
+| `tls_version` | Int/undef | TLS version (0x0303 = TLS 1.2, 0x0304 = TLS 1.3) |
+| `cipher_suite` | Int/undef | Negotiated cipher as 16-bit integer |
+
+### TLS Introspection Example
+
+```perl
+use 5.36;
+use Future::AsyncAwait;
+use JSON::PP;
+
+my $app = async sub ($scope, $receive, $send) {
+    die "Unsupported" if $scope->{type} ne 'http';
+
+    my $tls = $scope->{extensions}{tls};
+    my $body;
+
+    if ($tls) {
+        $body = encode_json({
+            encrypted    => \1,
+            tls_version  => $tls->{tls_version}
+                ? sprintf('0x%04x', $tls->{tls_version})
+                : undef,
+            cipher_suite => $tls->{cipher_suite}
+                ? sprintf('0x%04x', $tls->{cipher_suite})
+                : undef,
+            client_cert  => $tls->{client_cert_name},
+        });
+    }
+    else {
+        $body = encode_json({ encrypted => \0 });
+    }
+
+    await $send->({
+        type    => 'http.response.start',
+        status  => 200,
+        headers => [['content-type', 'application/json']],
+    });
+    await $send->({ type => 'http.response.body', body => $body });
+};
+
+$app;
+```
+
+### Common TLS Version Values
+
+| Value | Version |
+|-------|---------|
+| `0x0301` | TLS 1.0 |
+| `0x0302` | TLS 1.1 |
+| `0x0303` | TLS 1.2 |
+| `0x0304` | TLS 1.3 |
+
+## Server Extensions
+
+Servers may advertise optional capabilities via `$scope->{extensions}`. Always check for extension support before using extension-specific events.
+
+### Checking for Extensions
+
+```perl
+# Check if server supports an extension
+if (exists $scope->{extensions}{fullflush}) {
+    # Extension is available
+}
+```
+
+### The fullflush Extension
+
+The `fullflush` extension forces immediate TCP buffer flush during streaming responses. Useful for SSE or real-time streaming where latency matters.
+
+```perl
+use 5.36;
+use Future::AsyncAwait;
+
+my $app = async sub ($scope, $receive, $send) {
+    die "Unsupported" if $scope->{type} ne 'http';
+
+    my $supports_flush = exists $scope->{extensions}{fullflush};
+
+    await $send->({
+        type    => 'http.response.start',
+        status  => 200,
+        headers => [['content-type', 'text/plain']],
+    });
+
+    for my $i (1..5) {
+        await $send->({
+            type => 'http.response.body',
+            body => "Line $i\n",
+            more => ($i < 5) ? 1 : 0,
+        });
+
+        # Flush after each chunk if supported (except last)
+        if ($supports_flush && $i < 5) {
+            await $send->({ type => 'http.fullflush' });
+        }
+    }
+};
+
+$app;
+```
+
+### Extension Guidelines
+
+- Extensions are server-specific features, not part of core PAGI spec
+- Always check `exists $scope->{extensions}{name}` before use
+- Gracefully degrade when extensions are unavailable
+- Custom extensions should use namespaced names to avoid conflicts
+
+## Server Features
+
+Servers may report their capabilities via `$scope->{pagi}{features}`. This hashref contains server-specific limits and supported features.
+
+### Available Features
+
+| Feature | Type | Description |
+|---------|------|-------------|
+| `supports_streaming` | Int (0/1) | Whether streaming responses are supported |
+| `max_request_body_size` | Int | Maximum request body size in bytes |
+| `max_concurrent_streams` | Int | Maximum HTTP/2 streams per connection |
+| `supports_trailers` | Int (0/1) | Whether HTTP trailers are supported |
+
+### Checking Features
+
+```perl
+my $features = $scope->{pagi}{features} // {};
+
+# Check streaming support
+if ($features->{supports_streaming}) {
+    # Can use chunked streaming
+}
+
+# Check body size limit
+my $max_body = $features->{max_request_body_size} // 10_000_000;
+if ($content_length > $max_body) {
+    # Reject with 413 Payload Too Large
+}
+
+# Check trailer support before using
+if ($features->{supports_trailers}) {
+    # Can use http.response.trailers
+}
+```
+
+### Graceful Degradation
+
+Always provide fallbacks when features are unavailable:
+
+```perl
+my $features = $scope->{pagi}{features} // {};
+
+if ($features->{supports_streaming}) {
+    # Stream response in chunks
+    for my $chunk (@chunks) {
+        await $send->({ type => 'http.response.body', body => $chunk, more => 1 });
+    }
+    await $send->({ type => 'http.response.body', body => '', more => 0 });
+}
+else {
+    # Buffer and send complete response
+    my $body = join('', @chunks);
+    await $send->({ type => 'http.response.body', body => $body });
+}
+```
+
 ## UTF-8 and Encoding
 
 PAGI follows Perl's bytes-vs-characters distinction strictly. Getting this wrong causes mojibake (garbled text) or "Wide character" warnings.
@@ -1027,6 +1281,119 @@ async sub json_response ($send, $data, $status = 200) {
     });
 }
 ```
+
+### Middleware Pattern
+
+Middleware wraps an application to add cross-cutting functionality. PAGI middleware follows a simple pattern:
+
+```perl
+sub middleware ($app) {
+    return async sub ($scope, $receive, $send) {
+        # MUST shallow clone scope - never mutate original
+        my $modified_scope = { %$scope };
+        $modified_scope->{custom_data} = 'value';
+
+        # Call wrapped app
+        my $result = eval { await $app->($modified_scope, $receive, $send) };
+
+        # Handle errors - MUST propagate, not swallow
+        if (my $error = $@) {
+            warn "Middleware error: $error";
+            die $error;
+        }
+
+        return $result;
+    };
+}
+
+# Usage
+my $app = middleware(\&my_app);
+```
+
+#### Logging Middleware
+
+```perl
+sub with_logging ($app) {
+    return async sub ($scope, $receive, $send) {
+        my $start = time();
+        my $type = $scope->{type};
+        my $path = $scope->{path} // '-';
+        my $method = $scope->{method} // '-';
+
+        # Wrap send to capture response status
+        my $status = '-';
+        my $wrapped_send = async sub ($event) {
+            if ($event->{type} =~ /\.start$/ && defined $event->{status}) {
+                $status = $event->{status};
+            }
+            await $send->($event);
+        };
+
+        eval { await $app->($scope, $receive, $wrapped_send) };
+        my $error = $@;
+
+        my $duration = sprintf("%.3f", time() - $start);
+        say STDERR "[$type] $method $path $status ${duration}s";
+
+        die $error if $error;
+    };
+}
+```
+
+#### Middleware Rules
+
+1. **Clone scope** - Never mutate `$scope` in place; always `{ %$scope }`
+2. **Propagate errors** - Don't silently swallow exceptions
+3. **Wrap send/receive** - Intercept events by wrapping the coderefs
+4. **Compose cleanly** - Middleware should be stackable
+
+## PSGI Compatibility
+
+PAGI supports running legacy PSGI applications through an adapter wrapper.
+
+### Wrapping PSGI Apps
+
+```perl
+use 5.36;
+use PAGI::App::WrapPSGI;
+
+# Your existing PSGI app
+my $psgi_app = sub {
+    my ($env) = @_;
+    my $body = do { local $/; readline $env->{'psgi.input'} } // '';
+    return [
+        200,
+        ['Content-Type' => 'text/plain'],
+        ["Hello from PSGI\n", "Body: $body"]
+    ];
+};
+
+# Wrap for PAGI
+my $wrapper = PAGI::App::WrapPSGI->new(psgi_app => $psgi_app);
+$wrapper->to_app;
+```
+
+### Environment Mapping
+
+PAGI translates scope keys to PSGI environment:
+
+| PSGI Key | PAGI Source |
+|----------|-------------|
+| `REQUEST_METHOD` | `$scope->{method}` |
+| `SCRIPT_NAME` | `$scope->{root_path}` |
+| `PATH_INFO` | `$scope->{path}` minus root |
+| `QUERY_STRING` | `$scope->{query_string}` |
+| `SERVER_NAME/PORT` | `$scope->{server}` |
+| `REMOTE_ADDR/PORT` | `$scope->{client}` |
+| `SERVER_PROTOCOL` | `$scope->{http_version}` |
+| `psgi.url_scheme` | `$scope->{scheme}` |
+| `psgi.input` | Constructed from `http.request` events |
+
+### Limitations
+
+- WebSocket and SSE are not available through PSGI bridge
+- Streaming responses depend on server's PSGI adapter capabilities
+- For new applications, prefer native PAGI interface
 
 ## Common Pitfalls
 
@@ -1387,9 +1754,11 @@ if ($path =~ m{^/api/}) {
 | Event | Direction | Purpose |
 |-------|-----------|---------|
 | `http.request` | receive | Request body chunk |
-| `http.response.start` | send | Status + headers |
-| `http.response.body` | send | Body chunk (or file/fh) |
+| `http.response.start` | send | Status + headers (+ `trailers` flag) |
+| `http.response.body` | send | Body chunk (or `file`/`fh`) |
+| `http.response.trailers` | send | Trailer headers (if enabled) |
 | `http.disconnect` | receive | Client disconnected |
+| `http.fullflush` | send | Force TCP flush (extension) |
 
 ### WebSocket Events
 | Event | Direction | Purpose |
@@ -1417,3 +1786,18 @@ if ($path =~ m{^/api/}) {
 | `lifespan.shutdown` | receive | Server stopping |
 | `lifespan.shutdown.complete` | send | Cleanup done |
 | `lifespan.shutdown.failed` | send | Cleanup error |
+
+### Extensions
+| Extension | Purpose |
+|-----------|---------|
+| `tls` | TLS connection details (cert, version, cipher) |
+| `fullflush` | Immediate TCP buffer flush |
+
+### Scope Keys Reference
+| Key | Type | Description |
+|-----|------|-------------|
+| `$scope->{extensions}` | HashRef | Server-advertised extensions |
+| `$scope->{extensions}{tls}` | HashRef | TLS info (HTTPS only) |
+| `$scope->{pagi}{version}` | String | PAGI spec version |
+| `$scope->{pagi}{features}` | HashRef | Server capabilities |
+| `$scope->{state}` | HashRef | Shared from lifespan |
