@@ -231,6 +231,8 @@ Raw PAGI example with explicit UTF-8 handling:
 
 =item L<PAGI::Simple> - Express-like micro-framework (separate distribution)
 
+=item L<PAGI::Request> - Convenience wrapper for request handling
+
 =item L<PSGI> - The synchronous predecessor to PAGI
 
 =item L<IO::Async> - Event loop used by PAGI::Server
