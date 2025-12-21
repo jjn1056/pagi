@@ -211,7 +211,7 @@ async sub try_send_bytes {
 
     eval {
         await $self->{send}->({
-            type  => 'websocket.send',
+            type => 'websocket.send',
             bytes => $bytes,
         });
     };
