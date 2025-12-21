@@ -1,7 +1,6 @@
 package PAGI::Server::Extensions::TLS;
 use strict;
 use warnings;
-use experimental 'signatures';
 
 our $VERSION = '0.001';
 
@@ -23,11 +22,15 @@ and populates the scope->{extensions}{tls} hashref.
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {}, $class;
 }
 
-sub extract_info ($self, $socket) {
+sub extract_info {
+    my ($self, $socket) = @_;
+
     # TODO: Implement in Step 8
     # Returns hashref with:
     #   server_cert, client_cert_chain, client_cert_name,

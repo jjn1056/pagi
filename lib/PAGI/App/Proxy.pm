@@ -2,7 +2,6 @@ package PAGI::App::Proxy;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 use IO::Socket::INET;
 
@@ -20,7 +19,9 @@ PAGI::App::Proxy - HTTP reverse proxy
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $backend = $args{backend} // 'http://localhost:8080';
     my ($host, $port) = $backend =~ m{://([^:/]+)(?::(\d+))?};
     $port //= 80;
@@ -33,13 +34,16 @@ sub new ($class, %args) {
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $host = $self->{host};
     my $port = $self->{port};
     my $timeout = $self->{timeout};
     my $extra_headers = $self->{headers};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         # Build request

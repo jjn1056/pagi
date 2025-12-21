@@ -2,7 +2,6 @@ package PAGI::App::Cascade;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -20,23 +19,30 @@ PAGI::App::Cascade - Try apps in sequence until success
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         apps  => $args{apps} // [],
         catch => { map { $_ => 1 } @{$args{catch} // [404, 405]} },
     }, $class;
 }
 
-sub add ($self, $app) {
+sub add {
+    my ($self, $app) = @_;
+
     push @{$self->{apps}}, $app;
     return $self;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my @apps = @{$self->{apps}};
     my %catch = %{$self->{catch}};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         for my $i (0 .. $#apps) {
             my $app = $apps[$i];
             my $is_last = ($i == $#apps);
@@ -46,7 +52,8 @@ sub to_app ($self) {
                 my @captured_events;
                 my $captured_status;
 
-                my $capture_send = async sub ($event) {
+                my $capture_send = async sub  {
+        my ($event) = @_;
                     push @captured_events, $event;
                     if ($event->{type} eq 'http.response.start') {
                         $captured_status = $event->{status};

@@ -2,7 +2,6 @@ package PAGI::Middleware::Cookie;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Cookie::Baker ();
@@ -21,7 +20,9 @@ PAGI::Middleware::Cookie - Cookie parsing middleware
     };
 
     # In your app:
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         my $cookies = $scope->{'pagi.cookies'};
         my $session_id = $cookies->{session_id};
     }
@@ -45,12 +46,17 @@ Secret key for signed cookies. Required for C<get_signed>/C<set_signed>.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{secret} = $config->{secret};
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -75,7 +81,8 @@ sub wrap ($self, $app) {
         };
 
         # Wrap send to add Set-Cookie headers
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start' && @response_cookies) {
                 my @headers = @{$event->{headers} // []};
                 for my $cookie (@response_cookies) {
@@ -94,12 +101,16 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _parse_cookies ($self, $header) {
+sub _parse_cookies {
+    my ($self, $header) = @_;
+
     return {} unless defined $header && length $header;
     return Cookie::Baker::crush_cookie($header);
 }
 
-sub _format_set_cookie ($self, $name, $value, %opts) {
+sub _format_set_cookie {
+    my ($self, $name, $value, %opts) = @_;
+
     my %cookie_opts = (
         value => $value,
         path  => $opts{path} // '/',
@@ -113,7 +124,9 @@ sub _format_set_cookie ($self, $name, $value, %opts) {
     return Cookie::Baker::bake_cookie($name, \%cookie_opts);
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -126,20 +139,25 @@ package PAGI::Middleware::Cookie::Jar;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 
-sub new ($class, $cookies_ref, $formatter) {
+sub new {
+    my ($class, $cookies_ref, $formatter) = @_;
+
     return bless {
         cookies   => $cookies_ref,
         formatter => $formatter,
     }, $class;
 }
 
-sub set ($self, $name, $value, %opts) {
+sub set {
+    my ($self, $name, $value, %opts) = @_;
+
     push @{$self->{cookies}}, $self->{formatter}->($name, $value, %opts);
 }
 
-sub delete ($self, $name, %opts) {
+sub delete {
+    my ($self, $name, %opts) = @_;
+
     my %cookie_opts = (
         value   => '',
         expires => 0,  # Epoch 0 = expired

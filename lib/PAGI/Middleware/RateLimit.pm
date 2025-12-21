@@ -2,7 +2,6 @@ package PAGI::Middleware::RateLimit;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -18,7 +17,8 @@ PAGI::Middleware::RateLimit - Request rate limiting middleware
         enable 'RateLimit',
             requests_per_second => 10,
             burst => 20,
-            key_generator => sub ($scope) { $scope->{client}[0] };
+            key_generator => sub  {
+        my ($scope) = @_; $scope->{client}[0] };
         $my_app;
     };
 
@@ -54,17 +54,23 @@ implementing get/set methods.
 
 my %buckets;  # In-memory storage
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{requests_per_second} = $config->{requests_per_second} // 10;
     $self->{burst} = $config->{burst} // 20;
-    $self->{key_generator} = $config->{key_generator} // sub ($scope) {
+    $self->{key_generator} = $config->{key_generator} // sub  {
+        my ($scope) = @_;
         return $scope->{client}[0] // 'unknown';
     };
     $self->{backend} = $config->{backend} // 'memory';
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -79,7 +85,8 @@ sub wrap ($self, $app) {
         }
 
         # Add rate limit headers to response
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 my @headers = @{$event->{headers} // []};
                 push @headers, ['X-RateLimit-Limit', $self->{burst}];
@@ -98,7 +105,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _check_rate_limit ($self, $key) {
+sub _check_rate_limit {
+    my ($self, $key) = @_;
+
     my $now = time();
     my $rate = $self->{requests_per_second};
     my $burst = $self->{burst};
@@ -130,7 +139,9 @@ sub _check_rate_limit ($self, $key) {
     return (0, 0, $reset);  # Not allowed
 }
 
-async sub _send_rate_limited ($self, $send, $remaining, $reset) {
+async sub _send_rate_limited {
+    my ($self, $send, $remaining, $reset) = @_;
+
     my $retry_after = $reset - time();
     $retry_after = 1 if $retry_after < 1;
 

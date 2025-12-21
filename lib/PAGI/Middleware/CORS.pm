@@ -2,7 +2,6 @@ package PAGI::Middleware::CORS;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -62,7 +61,9 @@ Max age for preflight cache in seconds.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{origins}        = $config->{origins} // ['*'];
     $self->{methods}        = $config->{methods} // [qw(GET POST PUT DELETE PATCH OPTIONS)];
     $self->{headers}        = $config->{headers} // [qw(Content-Type Authorization X-Requested-With)];
@@ -71,8 +72,11 @@ sub _init ($self, $config) {
     $self->{max_age}        = $config->{max_age} // 86400;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only handle HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -90,7 +94,8 @@ sub wrap ($self, $app) {
 
         # For actual requests, add CORS headers to response
         if ($origin && $self->_is_origin_allowed($origin)) {
-            my $wrapped_send = async sub ($event) {
+            my $wrapped_send = async sub  {
+        my ($event) = @_;
                 if ($event->{type} eq 'http.response.start') {
                     $self->_add_cors_headers($event->{headers}, $origin);
                 }
@@ -103,7 +108,9 @@ sub wrap ($self, $app) {
     };
 }
 
-async sub _handle_preflight ($self, $scope, $send, $origin) {
+async sub _handle_preflight {
+    my ($self, $scope, $send, $origin) = @_;
+
     my @headers;
 
     if ($self->_is_origin_allowed($origin)) {
@@ -128,7 +135,9 @@ async sub _handle_preflight ($self, $scope, $send, $origin) {
     });
 }
 
-sub _add_cors_headers ($self, $headers, $origin) {
+sub _add_cors_headers {
+    my ($self, $headers, $origin) = @_;
+
     # Determine origin to return
     my $allowed_origin;
     if (grep { $_ eq '*' } @{$self->{origins}}) {
@@ -151,13 +160,17 @@ sub _add_cors_headers ($self, $headers, $origin) {
     push @$headers, ['Vary', 'Origin'];
 }
 
-sub _is_origin_allowed ($self, $origin) {
+sub _is_origin_allowed {
+    my ($self, $origin) = @_;
+
     return 1 if grep { $_ eq '*' } @{$self->{origins}};
     return 1 if grep { $_ eq $origin } @{$self->{origins}};
     return 0;
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;

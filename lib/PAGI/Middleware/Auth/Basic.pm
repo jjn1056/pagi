@@ -2,7 +2,6 @@ package PAGI::Middleware::Auth::Basic;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use MIME::Base64 qw(decode_base64);
@@ -18,14 +17,17 @@ PAGI::Middleware::Auth::Basic - HTTP Basic Authentication middleware
     my $app = builder {
         enable 'Auth::Basic',
             realm => 'Restricted Area',
-            authenticator => sub ($username, $password) {
+            authenticator => sub  {
+        my ($username, $password) = @_;
                 return $username eq 'admin' && $password eq 'secret';
             };
         $my_app;
     };
 
     # In your app:
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         my $auth = $scope->{'pagi.auth'};
         my $username = $auth->{username};
     }
@@ -55,15 +57,20 @@ Arrayref of path patterns to protect. If not specified, all paths are protected.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{authenticator} = $config->{authenticator}
         // die "Auth::Basic requires 'authenticator' option";
     $self->{realm} = $config->{realm} // 'Restricted';
     $self->{paths} = $config->{paths};
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -111,7 +118,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _requires_auth ($self, $path) {
+sub _requires_auth {
+    my ($self, $path) = @_;
+
     return 1 unless $self->{paths};
 
     for my $pattern (@{$self->{paths}}) {
@@ -124,7 +133,9 @@ sub _requires_auth ($self, $path) {
     return 0;
 }
 
-sub _parse_basic_auth ($self, $header) {
+sub _parse_basic_auth {
+    my ($self, $header) = @_;
+
     return unless $header =~ /^Basic\s+(.+)$/i;
 
     my $encoded = $1;
@@ -137,7 +148,9 @@ sub _parse_basic_auth ($self, $header) {
     return ($username, $password // '');
 }
 
-async sub _send_unauthorized ($self, $send) {
+async sub _send_unauthorized {
+    my ($self, $send) = @_;
+
     my $realm_escaped = $self->{realm};
     $realm_escaped =~ s/"/\\"/g;
 
@@ -159,7 +172,9 @@ async sub _send_unauthorized ($self, $send) {
     });
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;

@@ -1,7 +1,6 @@
 package PAGI::Server::WebSocket;
 use strict;
 use warnings;
-use experimental 'signatures';
 
 our $VERSION = '0.001';
 
@@ -24,7 +23,9 @@ for low-level frame handling.
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $self = bless {
         connection => $args{connection},
         # TODO: Add WebSocket state
@@ -32,19 +33,27 @@ sub new ($class, %args) {
     return $self;
 }
 
-sub handle_upgrade ($self, $request) {
+sub handle_upgrade {
+    my ($self, $request) = @_;
+
     # TODO: Implement in Step 4
 }
 
-sub handle_accept ($self, $event) {
+sub handle_accept {
+    my ($self, $event) = @_;
+
     # TODO: Implement in Step 4
 }
 
-sub handle_send ($self, $event) {
+sub handle_send {
+    my ($self, $event) = @_;
+
     # TODO: Implement in Step 4
 }
 
-sub handle_close ($self, $event) {
+sub handle_close {
+    my ($self, $event) = @_;
+
     # TODO: Implement in Step 4
 }
 

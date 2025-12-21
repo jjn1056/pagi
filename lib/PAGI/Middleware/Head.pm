@@ -2,7 +2,6 @@ package PAGI::Middleware::Head;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -35,8 +34,11 @@ No configuration options.
 
 =cut
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Skip for non-HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -55,7 +57,8 @@ sub wrap ($self, $app) {
         my $modified_scope = $self->modify_scope($scope, { method => 'GET' });
 
         # Intercept send to suppress body
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             my $type = $event->{type};
 
             if ($type eq 'http.response.start') {

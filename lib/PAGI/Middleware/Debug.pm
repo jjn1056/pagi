@@ -2,7 +2,6 @@ package PAGI::Middleware::Debug;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Time::HiRes qw(time);
@@ -52,15 +51,20 @@ Show timing breakdown in debug panel.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{enabled} = $config->{enabled} // 0;
     $self->{show_headers} = $config->{show_headers} // 1;
     $self->{show_scope} = $config->{show_scope} // 1;
     $self->{show_timing} = $config->{show_timing} // 1;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Skip if not enabled or not HTTP
         if (!$self->{enabled} || $scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -75,7 +79,8 @@ sub wrap ($self, $app) {
         my $headers_sent = 0;
 
         # Wrap send to capture response and inject panel
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 $response_status = $event->{status};
                 @response_headers = @{$event->{headers} // []};
@@ -145,7 +150,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _build_panel ($self, $scope, $start_time, $status, $response_headers) {
+sub _build_panel {
+    my ($self, $scope, $start_time, $status, $response_headers) = @_;
+
     my $duration = sprintf("%.3f", (time() - $start_time) * 1000);
 
     my $html = qq{

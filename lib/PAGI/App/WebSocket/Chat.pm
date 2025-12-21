@@ -2,7 +2,6 @@ package PAGI::App::WebSocket::Chat;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 use JSON::PP ();
 
@@ -23,18 +22,23 @@ my %rooms;      # room => { users => { id => { send => cb, name => str } } }
 my %user_rooms; # user_id => { room => 1 }
 my $next_id = 1;
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         default_room => $args{default_room} // 'lobby',
         max_rooms    => $args{max_rooms} // 100,
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $default_room = $self->{default_room};
     my $max_rooms = $self->{max_rooms};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'websocket';
 
         await $send->({ type => 'websocket.accept' });
@@ -156,11 +160,15 @@ sub to_app ($self) {
     };
 }
 
-sub _encode ($data) {
+sub _encode {
+    my ($data) = @_;
+
     return JSON::PP::encode_json($data);
 }
 
-sub _join_room ($user_id, $username, $send, $room) {
+sub _join_room {
+    my ($user_id, $username, $send, $room) = @_;
+
     $rooms{$room} //= { users => {} };
     $rooms{$room}{users}{$user_id} = { send => $send, name => $username };
     $user_rooms{$user_id}{$room} = 1;
@@ -174,7 +182,9 @@ sub _join_room ($user_id, $username, $send, $room) {
     }, $user_id);
 }
 
-async sub _leave_room ($user_id, $username, $room) {
+async sub _leave_room {
+    my ($user_id, $username, $room) = @_;
+
     return unless $rooms{$room};
 
     delete $rooms{$room}{users}{$user_id};
@@ -192,7 +202,10 @@ async sub _leave_room ($user_id, $username, $room) {
     delete $rooms{$room} if !keys %{$rooms{$room}{users}};
 }
 
-async sub _broadcast_to_room ($room, $data, $exclude_id = undef) {
+async sub _broadcast_to_room {
+    my ($room, $data, $exclude_id) = @_;
+    $exclude_id //= undef;
+
     return unless $rooms{$room};
 
     my $json = _encode($data);

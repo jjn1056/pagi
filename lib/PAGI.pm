@@ -21,9 +21,10 @@ Version 0.001001 (Beta)
 
     # Raw PAGI application
     use Future::AsyncAwait;
-    use experimental 'signatures';
 
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
         await $send->({
@@ -74,10 +75,11 @@ C<Content-Length> based on byte length.
 Raw PAGI example with explicit UTF-8 handling:
 
     use Future::AsyncAwait;
-    use experimental 'signatures';
     use Encode qw(encode decode);
 
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         # Handle lifespan if your server sends it; otherwise fail on unsupported types.
         die "Unsupported type: $scope->{type}" unless $scope->{type} eq 'http';
 
@@ -145,7 +147,9 @@ metrics, etc.).
 
 PAGI applications are async coderefs with this signature:
 
-    async sub app ($scope, $receive, $send) { ... }
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+     ... }
 
 =head2 Parameters
 

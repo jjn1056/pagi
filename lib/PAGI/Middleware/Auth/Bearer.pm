@@ -2,7 +2,6 @@ package PAGI::Middleware::Auth::Bearer;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use JSON::PP ();
@@ -25,7 +24,9 @@ PAGI::Middleware::Auth::Bearer - Bearer token authentication middleware
     };
 
     # In your app:
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         my $auth = $scope->{'pagi.auth'};
         my $user_id = $auth->{claims}{sub};
     }
@@ -64,7 +65,9 @@ Arrayref of path patterns to protect.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{secret} = $config->{secret};
     $self->{algorithms} = $config->{algorithms} // ['HS256'];
     $self->{validator} = $config->{validator};
@@ -75,8 +78,11 @@ sub _init ($self, $config) {
         unless $self->{secret} || $self->{validator};
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -126,7 +132,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _requires_auth ($self, $path) {
+sub _requires_auth {
+    my ($self, $path) = @_;
+
     return 1 unless $self->{paths};
 
     for my $pattern (@{$self->{paths}}) {
@@ -139,12 +147,16 @@ sub _requires_auth ($self, $path) {
     return 0;
 }
 
-sub _parse_bearer_token ($self, $header) {
+sub _parse_bearer_token {
+    my ($self, $header) = @_;
+
     return unless $header =~ /^Bearer\s+(.+)$/i;
     return $1;
 }
 
-sub _validate_token ($self, $token) {
+sub _validate_token {
+    my ($self, $token) = @_;
+
     # Use custom validator if provided
     if ($self->{validator}) {
         return $self->{validator}->($token);
@@ -154,7 +166,9 @@ sub _validate_token ($self, $token) {
     return $self->_validate_jwt($token);
 }
 
-sub _validate_jwt ($self, $token) {
+sub _validate_jwt {
+    my ($self, $token) = @_;
+
     my @parts = split /\./, $token;
     return unless @parts == 3;
 
@@ -203,14 +217,18 @@ sub _validate_jwt ($self, $token) {
     return $claims;
 }
 
-sub _base64url_encode ($self, $data) {
+sub _base64url_encode {
+    my ($self, $data) = @_;
+
     my $encoded = MIME::Base64::encode_base64($data, '');
     $encoded =~ tr{+/}{-_};
     $encoded =~ s/=+$//;
     return $encoded;
 }
 
-sub _secure_compare ($self, $a, $b) {
+sub _secure_compare {
+    my ($self, $a, $b) = @_;
+
     return 0 unless length($a) == length($b);
     my $result = 0;
     for my $i (0 .. length($a) - 1) {
@@ -219,7 +237,9 @@ sub _secure_compare ($self, $a, $b) {
     return $result == 0;
 }
 
-async sub _send_unauthorized ($self, $send, $error) {
+async sub _send_unauthorized {
+    my ($self, $send, $error) = @_;
+
     my $body = $error;
 
     await $send->({
@@ -238,7 +258,9 @@ async sub _send_unauthorized ($self, $send, $error) {
     });
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;

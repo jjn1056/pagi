@@ -132,6 +132,26 @@ sub process_file {
         $result;
     }gmxe;
 
+    # Pattern: Anonymous non-async subs (= sub (...) { or code => sub (...) {)
+    # This handles cases like: my $foo = sub ($x) { or code => sub ($x, @y) {
+    # Also handles: // sub, || sub, , sub (with optional newlines/whitespace)
+    $content =~ s{
+        ((?:=>?|//|\|\||,)[ \t\n]*sub[ \t]*)\(([^)]*)\)([ \t]*\{)
+    }{
+        my $prefix = $1;
+        my $params = $2;
+        my $suffix = $3;
+
+        my ($converted, $defaults) = convert_params($params, '        ');
+        $file_subs_converted++;
+
+        my $result = "${prefix}${suffix}\n        my $converted = \@_;";
+        if ($defaults) {
+            $result .= "\n" . $defaults;
+        }
+        $result;
+    }gmxse;
+
     # Pattern 6: Remove 'use experimental' lines
     my $experimental_removed = 0;
     $content =~ s{^use\s+experimental\s+['"]signatures['"];\n}{}gm && $experimental_removed++;

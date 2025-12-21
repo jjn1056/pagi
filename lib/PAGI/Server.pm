@@ -1,7 +1,6 @@
 package PAGI::Server;
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'IO::Async::Notifier';
 use IO::Async::Listener;
 use IO::Async::Stream;
@@ -414,7 +413,9 @@ handles file I/O asynchronously to avoid blocking the event loop.
 
 =cut
 
-sub _init ($self, $params) {
+sub _init {
+    my ($self, $params) = @_;
+
     $self->{app}              = delete $params->{app} or die "app is required";
     $self->{host}             = delete $params->{host} // '127.0.0.1';
     $self->{port}             = delete $params->{port} // 5000;
@@ -476,7 +477,9 @@ sub _init ($self, $params) {
     $self->SUPER::_init($params);
 }
 
-sub configure ($self, %params) {
+sub configure {
+    my ($self, %params) = @_;
+
     if (exists $params{app}) {
         $self->{app} = delete $params{app};
     }
@@ -552,7 +555,9 @@ sub configure ($self, %params) {
 # Log levels: debug=1, info=2, warn=3, error=4
 my %_LOG_LEVELS = (debug => 1, info => 2, warn => 3, error => 4);
 
-sub _log ($self, $level, $msg) {
+sub _log {
+    my ($self, $level, $msg) = @_;
+
     my $level_num = $_LOG_LEVELS{$level} // 2;
     return if $level_num < $self->{_log_level_num};
     return if $self->{quiet} && $level ne 'error';
@@ -560,7 +565,9 @@ sub _log ($self, $level, $msg) {
 }
 
 # Returns a human-readable sendfile status string for the startup banner
-sub _sendfile_status_string ($self) {
+sub _sendfile_status_string {
+    my ($self) = @_;
+
     my $available = PAGI::Server::Connection->has_sendfile;
     if ($self->{disable_sendfile}) {
         return $available ? 'disabled' : 'n/a (disabled)';
@@ -568,7 +575,9 @@ sub _sendfile_status_string ($self) {
     return $available ? 'on' : 'off (Sys::Sendfile not installed)';
 }
 
-async sub listen ($self) {
+async sub listen {
+    my ($self) = @_;
+
     return if $self->{running};
 
     # Multi-worker mode uses a completely different code path
@@ -580,7 +589,9 @@ async sub listen ($self) {
 }
 
 # Single-worker mode - uses IO::Async normally
-async sub _listen_singleworker ($self) {
+async sub _listen_singleworker {
+    my ($self) = @_;
+
     weaken(my $weak_self = $self);
 
     # Run lifespan startup before accepting connections
@@ -593,7 +604,8 @@ async sub _listen_singleworker ($self) {
     }
 
     my $listener = IO::Async::Listener->new(
-        on_stream => sub ($listener, $stream) {
+        on_stream => sub  {
+        my ($listener, $stream) = @_;
             return unless $weak_self;
             $weak_self->_on_connection($stream);
         },
@@ -652,7 +664,8 @@ async sub _listen_singleworker ($self) {
     # Note: SSL extensions may wrap the listener, so try to configure but ignore if it fails
     eval {
         $listener->configure(
-            on_accept_error => sub ($listener, $error) {
+            on_accept_error => sub  {
+        my ($listener, $error) = @_;
                 return unless $weak_self;
                 $weak_self->_on_accept_error($error);
             },
@@ -690,7 +703,9 @@ async sub _listen_singleworker ($self) {
 }
 
 # Multi-worker mode - forks workers, each with their own event loop
-sub _listen_multiworker ($self) {
+sub _listen_multiworker {
+    my ($self) = @_;
+
     my $workers = $self->{workers};
     my $reuseport = $self->{reuseport};
 
@@ -761,7 +776,9 @@ sub _listen_multiworker ($self) {
 }
 
 # Initiate graceful shutdown in multi-worker mode
-sub _initiate_multiworker_shutdown ($self) {
+sub _initiate_multiworker_shutdown {
+    my ($self) = @_;
+
     return if $self->{shutting_down};
     $self->{shutting_down} = 1;
     $self->{running} = 0;
@@ -785,7 +802,9 @@ sub _initiate_multiworker_shutdown ($self) {
 }
 
 # Graceful restart: replace all workers one by one
-sub _graceful_restart ($self) {
+sub _graceful_restart {
+    my ($self) = @_;
+
     return if $self->{shutting_down};
 
     $self->_log(info => "Received HUP, performing graceful restart");
@@ -798,7 +817,9 @@ sub _graceful_restart ($self) {
 }
 
 # Increase worker pool by 1
-sub _increase_workers ($self) {
+sub _increase_workers {
+    my ($self) = @_;
+
     return if $self->{shutting_down};
 
     my $current = scalar keys %{$self->{worker_pids}};
@@ -809,7 +830,9 @@ sub _increase_workers ($self) {
 }
 
 # Decrease worker pool by 1
-sub _decrease_workers ($self) {
+sub _decrease_workers {
+    my ($self) = @_;
+
     return if $self->{shutting_down};
 
     my @pids = keys %{$self->{worker_pids}};
@@ -825,7 +848,9 @@ sub _decrease_workers ($self) {
     kill 'TERM', $victim_pid;
 }
 
-sub _spawn_worker ($self, $listen_socket, $worker_num) {
+sub _spawn_worker {
+    my ($self, $listen_socket, $worker_num) = @_;
+
     my $loop = $self->loop;
     weaken(my $weak_self = $self);
 
@@ -879,7 +904,9 @@ sub _spawn_worker ($self, $listen_socket, $worker_num) {
     return $pid;
 }
 
-sub _run_as_worker ($self, $listen_socket, $worker_num) {
+sub _run_as_worker {
+    my ($self, $listen_socket, $worker_num) = @_;
+
     # Note: Signal handlers already reset by $loop->fork() (keep_signals defaults to false)
     # Note: $ONE_TRUE_LOOP already cleared by $loop->fork(), so this creates a fresh loop
     my $loop = IO::Async::Loop->new;
@@ -966,7 +993,8 @@ sub _run_as_worker ($self, $listen_socket, $worker_num) {
 
     my $listener = IO::Async::Listener->new(
         handle => $listen_socket,
-        on_stream => sub ($listener, $stream) {
+        on_stream => sub  {
+        my ($listener, $stream) = @_;
             return unless $weak_server;
             $weak_server->_on_connection($stream);
         },
@@ -978,7 +1006,8 @@ sub _run_as_worker ($self, $listen_socket, $worker_num) {
     # Configure accept error handler - try but ignore if it fails (SSL listeners may not support it)
     eval {
         $listener->configure(
-            on_accept_error => sub ($listener, $error) {
+            on_accept_error => sub  {
+        my ($listener, $error) = @_;
                 return unless $weak_server;
                 $weak_server->_on_accept_error($error);
             },
@@ -996,7 +1025,9 @@ sub _run_as_worker ($self, $listen_socket, $worker_num) {
     exit(0);
 }
 
-sub _on_connection ($self, $stream) {
+sub _on_connection {
+    my ($self, $stream) = @_;
+
     weaken(my $weak_self = $self);
 
     # Check if we're at capacity
@@ -1033,7 +1064,9 @@ sub _on_connection ($self, $stream) {
     $self->add_child($stream);
 }
 
-sub _send_503_and_close ($self, $stream) {
+sub _send_503_and_close {
+    my ($self, $stream) = @_;
+
     my $body = "503 Service Unavailable - Server at capacity\r\n";
     my $response = join("\r\n",
         "HTTP/1.1 503 Service Unavailable",
@@ -1060,7 +1093,9 @@ sub _send_503_and_close ($self, $stream) {
     $self->_log(warn => "Connection rejected: at capacity (" . $self->connection_count . "/" . $self->effective_max_connections . ")");
 }
 
-sub _on_accept_error ($self, $error) {
+sub _on_accept_error {
+    my ($self, $error) = @_;
+
     # EMFILE = "Too many open files" - we're out of file descriptors
     # ENFILE = System-wide FD limit reached
     if ($error =~ /Too many open files|EMFILE|ENFILE/i) {
@@ -1078,7 +1113,9 @@ sub _on_accept_error ($self, $error) {
     }
 }
 
-sub _pause_accepting ($self, $duration) {
+sub _pause_accepting {
+    my ($self, $duration) = @_;
+
     return if $self->{_accept_paused};
     $self->{_accept_paused} = 1;
 
@@ -1108,7 +1145,9 @@ sub _pause_accepting ($self, $duration) {
     $self->{_accept_pause_timer} = $timer_id;
 }
 
-sub _log_connection_stats ($self) {
+sub _log_connection_stats {
+    my ($self) = @_;
+
     my $current = $self->connection_count;
     my $max = $self->effective_max_connections;
     my $pct = int(($current / $max) * 100);
@@ -1117,7 +1156,9 @@ sub _log_connection_stats ($self) {
 }
 
 # Called when a request completes (for max_requests tracking)
-sub _on_request_complete ($self) {
+sub _on_request_complete {
+    my ($self) = @_;
+
     return unless $self->{is_worker};
     return unless $self->{max_requests} && $self->{max_requests} > 0;
 
@@ -1136,7 +1177,9 @@ sub _on_request_complete ($self) {
 
 # Lifespan Protocol Implementation
 
-async sub _run_lifespan_startup ($self) {
+async sub _run_lifespan_startup {
+    my ($self) = @_;
+
     # Create lifespan scope
     my $scope = {
         type => 'lifespan',
@@ -1165,7 +1208,8 @@ async sub _run_lifespan_startup ($self) {
     };
 
     # $send for the app - handles app responses
-    my $send = async sub ($event) {
+    my $send = async sub  {
+        my ($event) = @_;
         my $type = $event->{type} // '';
 
         if ($type eq 'lifespan.startup.complete') {
@@ -1245,7 +1289,9 @@ async sub _run_lifespan_startup ($self) {
     return $result;
 }
 
-async sub _run_lifespan_shutdown ($self) {
+async sub _run_lifespan_shutdown {
+    my ($self) = @_;
+
     # If lifespan is not supported or no lifespan was started, just return success
     return { success => 1 } unless $self->{lifespan_supported};
     return { success => 1 } unless $self->{lifespan_send_queue};
@@ -1279,7 +1325,9 @@ async sub _run_lifespan_shutdown ($self) {
     return $result // { success => 1 };
 }
 
-async sub shutdown ($self) {
+async sub shutdown {
+    my ($self) = @_;
+
     return unless $self->{running};
     $self->{running} = 0;
     $self->{shutting_down} = 1;
@@ -1313,7 +1361,9 @@ async sub shutdown ($self) {
 
 # Wait for active connections to complete, with timeout
 # Uses event-driven approach: Connection._close() signals when last one closes
-async sub _drain_connections ($self) {
+async sub _drain_connections {
+    my ($self) = @_;
+
     my $timeout = $self->{shutdown_timeout} // 30;
     my $loop = $self->loop;
 
@@ -1360,19 +1410,27 @@ async sub _drain_connections ($self) {
     return;
 }
 
-sub port ($self) {
+sub port {
+    my ($self) = @_;
+
     return $self->{bound_port} // $self->{port};
 }
 
-sub is_running ($self) {
+sub is_running {
+    my ($self) = @_;
+
     return $self->{running} ? 1 : 0;
 }
 
-sub connection_count ($self) {
+sub connection_count {
+    my ($self) = @_;
+
     return scalar keys %{$self->{connections}};
 }
 
-sub effective_max_connections ($self) {
+sub effective_max_connections {
+    my ($self) = @_;
+
     # If explicitly set, use that
     return $self->{max_connections} if $self->{max_connections} && $self->{max_connections} > 0;
 

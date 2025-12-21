@@ -1,7 +1,6 @@
 package PAGI::App::WrapPSGI;
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 our $VERSION = '0.001';
@@ -30,17 +29,22 @@ PSGI responses to PAGI events.
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $self = bless {
         psgi_app => $args{psgi_app},
     }, $class;
     return $self;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $psgi_app = $self->{psgi_app};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         # TODO: Implement in Step 9
@@ -77,7 +81,9 @@ sub to_app ($self) {
     };
 }
 
-sub _build_env ($self, $scope) {
+sub _build_env {
+    my ($self, $scope) = @_;
+
     # TODO: Implement in Step 9
     my %env = (
         REQUEST_METHOD  => $scope->{method},
@@ -122,7 +128,9 @@ sub _build_env ($self, $scope) {
     return \%env;
 }
 
-async sub _send_response ($self, $send, $response) {
+async sub _send_response {
+    my ($self, $send, $response) = @_;
+
     my ($status, $headers, $body) = @$response;
 
     await $send->({
@@ -168,13 +176,16 @@ async sub _send_response ($self, $send, $response) {
 }
 
 # Handle PSGI delayed/streaming response pattern
-async sub _handle_streaming_response ($self, $send, $responder_callback) {
+async sub _handle_streaming_response {
+    my ($self, $send, $responder_callback) = @_;
+
     my @body_chunks;
     my $response_started = 0;
     my $writer;
 
     # Create a writer object for streaming
-    my $create_writer = sub ($send_ref, $status, $headers) {
+    my $create_writer = sub  {
+        my ($send_ref, $status, $headers) = @_;
         return {
             write => sub {
                 my ($chunk) = @_;
@@ -255,7 +266,9 @@ async sub _handle_streaming_response ($self, $send, $responder_callback) {
     }
 }
 
-async sub _send_body ($self, $send, $body) {
+async sub _send_body {
+    my ($self, $send, $body) = @_;
+
     if (ref $body eq 'ARRAY') {
         my $content = join '', @$body;
         await $send->({
@@ -296,7 +309,9 @@ sub close {
 
 package PAGI::App::WrapPSGI;
 
-sub _pairs ($arrayref) {
+sub _pairs {
+    my ($arrayref) = @_;
+
     my @pairs;
     for (my $i = 0; $i < @$arrayref; $i += 2) {
         push @pairs, [$arrayref->[$i], $arrayref->[$i+1]];

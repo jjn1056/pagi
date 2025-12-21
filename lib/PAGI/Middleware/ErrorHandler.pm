@@ -2,7 +2,6 @@ package PAGI::Middleware::ErrorHandler;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Scalar::Util 'blessed';
@@ -18,7 +17,8 @@ PAGI::Middleware::ErrorHandler - Exception handling middleware
     my $app = builder {
         enable 'ErrorHandler',
             development => 1,
-            on_error    => sub ($error) { warn "App error: $error" };
+            on_error    => sub  {
+        my ($error) = @_; warn "App error: $error" };
         $my_app;
     };
 
@@ -39,7 +39,8 @@ If true, include stack trace in error responses. Should be false in production.
 
 Callback invoked with the error when an exception is caught. Useful for logging.
 
-    on_error => sub ($error) { $logger->error($error) }
+    on_error => sub  {
+        my ($error) = @_; $logger->error($error) }
 
 =item * content_type (default: 'text/html')
 
@@ -53,15 +54,20 @@ HTTP status code for general exceptions.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{development} = $config->{development} // 0;
     $self->{on_error}    = $config->{on_error};
     $self->{content_type} = $config->{content_type} // 'text/html';
     $self->{status}      = $config->{status} // 500;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only handle HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -71,7 +77,8 @@ sub wrap ($self, $app) {
         my $response_started = 0;
 
         # Intercept send to track if response has started
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 $response_started = 1;
             }
@@ -130,7 +137,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _generate_error_body ($self, $error, $status) {
+sub _generate_error_body {
+    my ($self, $error, $status) = @_;
+
     my $error_text = "$error";
     my $content_type = $self->{content_type};
 
@@ -189,7 +198,9 @@ HTML
     }
 }
 
-sub _html_escape ($self, $text) {
+sub _html_escape {
+    my ($self, $text) = @_;
+
     $text =~ s/&/&amp;/g;
     $text =~ s/</&lt;/g;
     $text =~ s/>/&gt;/g;
@@ -197,7 +208,9 @@ sub _html_escape ($self, $text) {
     return $text;
 }
 
-sub _status_message ($self, $status) {
+sub _status_message {
+    my ($self, $status) = @_;
+
     my %messages = (
         400 => 'Bad Request',
         401 => 'Unauthorized',

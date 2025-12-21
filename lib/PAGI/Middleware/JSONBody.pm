@@ -2,7 +2,6 @@ package PAGI::Middleware::JSONBody;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use JSON::PP ();
@@ -21,7 +20,9 @@ PAGI::Middleware::JSONBody - JSON request body parsing middleware
     };
 
     # In your app:
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         my $json_data = $scope->{pagi.parsed_body};
         # $json_data is a hashref/arrayref from JSON
     }
@@ -47,7 +48,9 @@ Content-Type patterns to parse.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{max_size} = $config->{max_size} // 1024 * 1024;  # 1MB
     $self->{content_types} = $config->{content_types} // [
         'application/json',
@@ -55,8 +58,11 @@ sub _init ($self, $config) {
     ];
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -123,7 +129,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _is_json_content_type ($self, $content_type) {
+sub _is_json_content_type {
+    my ($self, $content_type) = @_;
+
     $content_type = lc($content_type);
     $content_type =~ s/\s+//g;  # Remove whitespace
 
@@ -139,7 +147,9 @@ sub _is_json_content_type ($self, $content_type) {
     return 0;
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -147,7 +157,9 @@ sub _get_header ($self, $scope, $name) {
     return;
 }
 
-async sub _send_error ($self, $send, $status, $message) {
+async sub _send_error {
+    my ($self, $send, $status, $message) = @_;
+
     my $body = JSON::PP::encode_json({ error => $message });
 
     await $send->({

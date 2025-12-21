@@ -2,7 +2,6 @@ package PAGI::Middleware::HTTPSRedirect;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -48,15 +47,20 @@ HSTS max-age in seconds (1 year default).
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{redirect_code} = $config->{redirect_code} // 301;
     $self->{exclude} = $config->{exclude} // [];
     $self->{hsts} = $config->{hsts} // 0;
     $self->{hsts_max_age} = $config->{hsts_max_age} // 31536000;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -68,7 +72,8 @@ sub wrap ($self, $app) {
         if ($scheme eq 'https') {
             # Add HSTS header if enabled
             if ($self->{hsts}) {
-                my $wrapped_send = async sub ($event) {
+                my $wrapped_send = async sub  {
+        my ($event) = @_;
                     if ($event->{type} eq 'http.response.start') {
                         my @headers = @{$event->{headers} // []};
                         push @headers, [
@@ -108,7 +113,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _is_excluded ($self, $path) {
+sub _is_excluded {
+    my ($self, $path) = @_;
+
     for my $pattern (@{$self->{exclude}}) {
         if (ref $pattern eq 'Regexp') {
             return 1 if $path =~ $pattern;
@@ -119,7 +126,9 @@ sub _is_excluded ($self, $path) {
     return 0;
 }
 
-async sub _send_redirect ($self, $send, $location) {
+async sub _send_redirect {
+    my ($self, $send, $location) = @_;
+
     my $status = $self->{redirect_code};
     my $body = "Redirecting to $location";
 
@@ -139,7 +148,9 @@ async sub _send_redirect ($self, $send, $location) {
     });
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;

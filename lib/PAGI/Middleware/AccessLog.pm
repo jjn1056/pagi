@@ -2,7 +2,6 @@ package PAGI::Middleware::AccessLog;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Time::HiRes qw(time);
@@ -44,13 +43,18 @@ Log format: 'combined', 'common', or 'tiny'.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{logger} = $config->{logger} // sub { warn @_ };
     $self->{format} = $config->{format} // 'combined';
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only log HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -62,7 +66,8 @@ sub wrap ($self, $app) {
         my $response_size = 0;
 
         # Intercept send to capture response info
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 $status = $event->{status};
             } elsif ($event->{type} eq 'http.response.body') {
@@ -87,13 +92,17 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _log_request ($self, $scope, $status, $size, $start_time) {
+sub _log_request {
+    my ($self, $scope, $status, $size, $start_time) = @_;
+
     my $duration = time() - $start_time;
     my $line = $self->_format_log($scope, $status, $size, $duration);
     $self->{logger}->($line);
 }
 
-sub _format_log ($self, $scope, $status, $size, $duration) {
+sub _format_log {
+    my ($self, $scope, $status, $size, $duration) = @_;
+
     my $format = $self->{format};
 
     # Extract info from scope

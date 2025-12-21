@@ -2,7 +2,6 @@ package PAGI::Util::AsyncFile;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 
 our $VERSION = '0.01';
 
@@ -26,7 +25,8 @@ PAGI::Util::AsyncFile - Non-blocking file I/O for PAGI applications
     my $content = await PAGI::Util::AsyncFile->read_file($loop, '/path/to/file');
 
     # Read file in chunks (streaming)
-    await PAGI::Util::AsyncFile->read_file_chunked($loop, '/path/to/file', async sub ($chunk) {
+    await PAGI::Util::AsyncFile->read_file_chunked($loop, '/path/to/file', async sub  {
+        my ($chunk) = @_;
         # Process each chunk
         await $send->({ type => 'http.response.body', body => $chunk, more => 1 });
     }, chunk_size => 65536);
@@ -57,12 +57,15 @@ separate worker processes, similar to how Node.js/libuv handles file I/O.
 my %_function_pools;
 
 # Get or create the function pool for a given loop
-sub _get_function ($class, $loop) {
+sub _get_function {
+    my ($class, $loop) = @_;
+
     my $loop_id = blessed($loop) ? "$loop" : 'default';
 
     unless ($_function_pools{$loop_id}) {
         my $function = IO::Async::Function->new(
-            code => sub ($op, @args) {
+            code => sub  {
+        my ($op, @args) = @_;
                 return _worker_operation($op, @args);
             },
             min_workers => 1,
@@ -78,7 +81,9 @@ sub _get_function ($class, $loop) {
 }
 
 # Worker process operations
-sub _worker_operation ($op, @args) {
+sub _worker_operation {
+    my ($op, @args) = @_;
+
     if ($op eq 'read_file') {
         my ($path) = @args;
         open my $fh, '<:raw', $path or die "Cannot open $path: $!";
@@ -143,7 +148,9 @@ Throws an exception if the file cannot be read.
 
 =cut
 
-async sub read_file ($class, $loop, $path) {
+async sub read_file {
+    my ($class, $loop, $path) = @_;
+
     die "File not found: $path" unless -f $path;
     die "Cannot read file: $path" unless -r $path;
 
@@ -153,7 +160,8 @@ async sub read_file ($class, $loop, $path) {
 
 =head2 read_file_chunked
 
-    await PAGI::Util::AsyncFile->read_file_chunked($loop, $path, async sub ($chunk) {
+    await PAGI::Util::AsyncFile->read_file_chunked($loop, $path, async sub  {
+        my ($chunk) = @_;
         # Process chunk
     }, chunk_size => 65536);
 
@@ -195,7 +203,9 @@ The callback should return/await properly if it needs to do async operations.
 
 =cut
 
-async sub read_file_chunked ($class, $loop, $path, $callback, %opts) {
+async sub read_file_chunked {
+    my ($class, $loop, $path, $callback, %opts) = @_;
+
     die "File not found: $path" unless -f $path;
     die "Cannot read file: $path" unless -r $path;
 
@@ -266,7 +276,9 @@ Returns a Future that resolves to the number of bytes written.
 
 =cut
 
-async sub write_file ($class, $loop, $path, $content) {
+async sub write_file {
+    my ($class, $loop, $path, $content) = @_;
+
     my $function = $class->_get_function($loop);
     return await $function->call(args => ['write_file', $path, $content]);
 }
@@ -293,7 +305,9 @@ Returns a Future that resolves to the number of bytes written.
 
 =cut
 
-async sub append_file ($class, $loop, $path, $content) {
+async sub append_file {
+    my ($class, $loop, $path, $content) = @_;
+
     my $function = $class->_get_function($loop);
     return await $function->call(args => ['append_file', $path, $content]);
 }
@@ -306,7 +320,9 @@ Get the size of a file asynchronously.
 
 =cut
 
-async sub file_size ($class, $loop, $path) {
+async sub file_size {
+    my ($class, $loop, $path) = @_;
+
     my $function = $class->_get_function($loop);
     return await $function->call(args => ['file_size', $path]);
 }
@@ -319,7 +335,9 @@ Check if a file exists asynchronously.
 
 =cut
 
-async sub file_exists ($class, $loop, $path) {
+async sub file_exists {
+    my ($class, $loop, $path) = @_;
+
     my $function = $class->_get_function($loop);
     return await $function->call(args => ['file_exists', $path]);
 }
@@ -333,7 +351,10 @@ shutdown to properly terminate worker processes.
 
 =cut
 
-sub cleanup ($class, $loop = undef) {
+sub cleanup {
+    my ($class, $loop) = @_;
+    $loop //= undef;
+
     if ($loop) {
         my $loop_id = blessed($loop) ? "$loop" : 'default';
         if (my $function = delete $_function_pools{$loop_id}) {

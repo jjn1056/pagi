@@ -2,7 +2,6 @@ package PAGI::Middleware::ETag;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Digest::MD5 qw(md5_hex);
@@ -37,12 +36,17 @@ If true, generate weak ETags (W/"...").
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{weak} = $config->{weak} // 0;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -53,7 +57,8 @@ sub wrap ($self, $app) {
         my $status;
         my $is_streaming = 0;
 
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 $status = $event->{status};
                 $original_headers = $event->{headers};
@@ -123,7 +128,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _generate_etag ($self, $body) {
+sub _generate_etag {
+    my ($self, $body) = @_;
+
     my $hash = md5_hex($body);
     if ($self->{weak}) {
         return qq{W/"$hash"};

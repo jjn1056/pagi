@@ -2,7 +2,6 @@ package PAGI::App::NotFound;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -20,7 +19,9 @@ PAGI::App::NotFound - Customizable 404 response
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         body => $args{body} // 'Not Found',
         content_type => $args{content_type} // 'text/plain',
@@ -28,12 +29,15 @@ sub new ($class, %args) {
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $body = $self->{body};
     my $content_type = $self->{content_type};
     my $status = $self->{status};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         my $response_body = ref $body eq 'CODE' ? $body->($scope) : $body;
 
         await $send->({

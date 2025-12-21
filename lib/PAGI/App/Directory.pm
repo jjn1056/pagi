@@ -2,7 +2,6 @@ package PAGI::App::Directory;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 use parent 'PAGI::App::File';
 use JSON::PP ();
@@ -22,17 +21,22 @@ PAGI::App::Directory - Serve files with directory listing
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $self = $class->SUPER::new(%args);
     $self->{show_hidden} = $args{show_hidden} // 0;
     return $self;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $parent_app = $self->SUPER::to_app();
     my $root = $self->{root};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         my $path = $scope->{path} // '/';
@@ -60,7 +64,9 @@ sub to_app ($self) {
     };
 }
 
-async sub _send_listing ($self, $send, $scope, $dir_path, $rel_path) {
+async sub _send_listing {
+    my ($self, $send, $scope, $dir_path, $rel_path) = @_;
+
     opendir my $dh, $dir_path or do {
         await $self->_send_error($send, 403, 'Forbidden');
         return;

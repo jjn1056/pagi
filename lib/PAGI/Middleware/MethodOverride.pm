@@ -2,7 +2,6 @@ package PAGI::Middleware::MethodOverride;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -57,7 +56,9 @@ Check the _method query/form parameter.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{param} = $config->{param} // '_method';
     $self->{header} = $config->{header} // 'x-http-method-override';
     $self->{allowed_methods} = $config->{allowed_methods} // [qw(PUT PATCH DELETE)];
@@ -68,8 +69,11 @@ sub _init ($self, $config) {
     $self->{allowed_lookup} = { map { uc($_) => 1 } @{$self->{allowed_methods}} };
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -102,7 +106,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _get_override_method ($self, $scope) {
+sub _get_override_method {
+    my ($self, $scope) = @_;
+
     # Check header first (most secure)
     if ($self->{check_header}) {
         my $header_name = lc($self->{header});

@@ -2,7 +2,6 @@ package PAGI::Middleware::Session;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Digest::SHA qw(sha256_hex);
@@ -23,7 +22,9 @@ PAGI::Middleware::Session - Session management middleware
     };
 
     # In your app:
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         my $session = $scope->{'pagi.session'};
         $session->{user_id} = 123;
         $session->{logged_in} = 1;
@@ -64,7 +65,9 @@ Session store object. Must implement get($id), set($id, $data), delete($id).
 
 my %sessions;  # In-memory session store
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{secret} = $config->{secret}
         // die "Session middleware requires 'secret' option";
     $self->{cookie_name} = $config->{cookie_name} // 'pagi_session';
@@ -76,8 +79,11 @@ sub _init ($self, $config) {
     $self->{store} = $config->{store};
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -103,7 +109,8 @@ sub wrap ($self, $app) {
         my $original_session = { %$session };
 
         # Wrap send to set session cookie
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 # Save session if modified
                 $self->_save_session($session_id, $session);
@@ -127,7 +134,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _load_or_create_session ($self, $session_id) {
+sub _load_or_create_session {
+    my ($self, $session_id) = @_;
+
     my $is_new = 0;
 
     # Validate session ID format and load existing session
@@ -150,36 +159,48 @@ sub _load_or_create_session ($self, $session_id) {
     return ($session, 1);
 }
 
-sub _generate_session_id ($self) {
+sub _generate_session_id {
+    my ($self) = @_;
+
     my $random = join('', map { sprintf("%02x", int(rand(256))) } 1..16);
     my $time = time();
     return sha256_hex("$random-$time-$self->{secret}");
 }
 
-sub _valid_session_id ($self, $id) {
+sub _valid_session_id {
+    my ($self, $id) = @_;
+
     return $id =~ /^[a-f0-9]{64}$/;
 }
 
-sub _get_session ($self, $id) {
+sub _get_session {
+    my ($self, $id) = @_;
+
     if ($self->{store}) {
         return $self->{store}->get($id);
     }
     return $sessions{$id};
 }
 
-sub _save_session ($self, $id, $session) {
+sub _save_session {
+    my ($self, $id, $session) = @_;
+
     if ($self->{store}) {
         return $self->{store}->set($id, $session);
     }
     $sessions{$id} = $session;
 }
 
-sub _is_expired ($self, $session) {
+sub _is_expired {
+    my ($self, $session) = @_;
+
     my $last_access = $session->{_last_access} // $session->{_created} // 0;
     return (time() - $last_access) > $self->{expire};
 }
 
-sub _format_cookie ($self, $session_id) {
+sub _format_cookie {
+    my ($self, $session_id) = @_;
+
     my $cookie = "$self->{cookie_name}=$session_id";
     my $opts = $self->{cookie_options};
 
@@ -192,7 +213,9 @@ sub _format_cookie ($self, $session_id) {
     return $cookie;
 }
 
-sub _parse_cookies ($self, $header) {
+sub _parse_cookies {
+    my ($self, $header) = @_;
+
     my %cookies;
     for my $pair (split /\s*;\s*/, $header) {
         my ($name, $value) = split /=/, $pair, 2;
@@ -207,7 +230,9 @@ sub _parse_cookies ($self, $header) {
     return \%cookies;
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;

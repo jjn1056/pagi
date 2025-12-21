@@ -1,7 +1,6 @@
 package PAGI::Server::Connection;
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future;
 use Future::AsyncAwait;
 use Scalar::Util qw(weaken refaddr);
@@ -37,14 +36,18 @@ sub has_sendfile { return $HAS_SENDFILE }
 # =============================================================================
 # RFC 7230 Section 3.2.6: Field values MUST NOT contain CR or LF
 
-sub _validate_header_value ($value) {
+sub _validate_header_value {
+    my ($value) = @_;
+
     if ($value =~ /[\r\n\0]/) {
         die "Invalid header value: contains CR, LF, or null byte\n";
     }
     return $value;
 }
 
-sub _validate_header_name ($name) {
+sub _validate_header_name {
+    my ($name) = @_;
+
     if ($name =~ /[\r\n\0]/) {
         die "Invalid header name: contains CR, LF, or null byte\n";
     }
@@ -55,7 +58,9 @@ sub _validate_header_name ($name) {
 }
 
 # RFC 6455 Section 11.3.4: Subprotocol must be a token (no whitespace, separators)
-sub _validate_subprotocol ($value) {
+sub _validate_subprotocol {
+    my ($value) = @_;
+
     if ($value =~ /[\r\n\0\s]/) {
         die "Invalid subprotocol: contains CR, LF, null, or whitespace\n";
     }
@@ -103,7 +108,9 @@ connection. It handles:
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $self = bless {
         stream        => $args{stream},
         app           => $args{app},
@@ -156,7 +163,9 @@ sub new ($class, %args) {
 
 use Socket qw(IPPROTO_TCP TCP_NODELAY);
 
-sub start ($self) {
+sub start {
+    my ($self) = @_;
+
     my $stream = $self->{stream};
     weaken(my $weak_self = $self);
 
@@ -198,7 +207,8 @@ sub start ($self) {
 
     # Set up read handler
     $stream->configure(
-        on_read => sub ($s, $buffref, $eof) {
+        on_read => sub  {
+        my ($s, $buffref, $eof) = @_;
             return 0 unless $weak_self;
 
             # Reset idle timer on any read activity
@@ -245,18 +255,24 @@ sub start ($self) {
     );
 }
 
-sub _reset_idle_timer ($self) {
+sub _reset_idle_timer {
+    my ($self) = @_;
+
     return unless $self->{idle_timer};
     $self->{idle_timer}->reset;
     $self->{idle_timer}->start unless $self->{idle_timer}->is_running;
 }
 
-sub _stop_idle_timer ($self) {
+sub _stop_idle_timer {
+    my ($self) = @_;
+
     return unless $self->{idle_timer};
     $self->{idle_timer}->stop if $self->{idle_timer}->is_running;
 }
 
-sub _try_handle_request ($self) {
+sub _try_handle_request {
+    my ($self) = @_;
+
     return if $self->{closed};
     return if $self->{handling_request};
 
@@ -308,7 +324,9 @@ sub _try_handle_request ($self) {
     $self->{request_future}->retain;
 }
 
-sub _is_websocket_upgrade ($self, $request) {
+sub _is_websocket_upgrade {
+    my ($self, $request) = @_;
+
     # Check for WebSocket upgrade headers
     my $has_upgrade = 0;
     my $has_connection_upgrade = 0;
@@ -331,7 +349,9 @@ sub _is_websocket_upgrade ($self, $request) {
     return $has_upgrade && $has_connection_upgrade && $has_ws_key;
 }
 
-sub _is_sse_request ($self, $request) {
+sub _is_sse_request {
+    my ($self, $request) = @_;
+
     # SSE detection per spec:
     # - HTTP method is GET
     # - Accept header includes text/event-stream
@@ -349,7 +369,9 @@ sub _is_sse_request ($self, $request) {
     return 0;
 }
 
-async sub _handle_request ($self, $request) {
+async sub _handle_request {
+    my ($self, $request) = @_;
+
     my $scope = $self->_create_scope($request);
     my $receive = $self->_create_receive($request);
     my $send = $self->_create_send($request);
@@ -403,7 +425,9 @@ async sub _handle_request ($self, $request) {
     }
 }
 
-sub _should_keep_alive ($self, $request) {
+sub _should_keep_alive {
+    my ($self, $request) = @_;
+
     my $http_version = $request->{http_version} // '1.1';
 
     # Check for Connection header
@@ -431,7 +455,9 @@ sub _should_keep_alive ($self, $request) {
     return 0;
 }
 
-sub _create_scope ($self, $request) {
+sub _create_scope {
+    my ($self, $request) = @_;
+
     # Get the event loop from the server for async operations
     my $loop = $self->{server} ? $self->{server}->loop : undef;
 
@@ -461,7 +487,9 @@ sub _create_scope ($self, $request) {
     return $scope;
 }
 
-sub _create_receive ($self, $request) {
+sub _create_receive {
+    my ($self, $request) = @_;
+
     my $content_length = $request->{content_length};
     my $is_chunked = $request->{chunked} // 0;
     my $expect_continue = $request->{expect_continue} // 0;
@@ -655,7 +683,9 @@ sub _create_receive ($self, $request) {
     };
 }
 
-sub _create_send ($self, $request) {
+sub _create_send {
+    my ($self, $request) = @_;
+
     my $chunked = 0;
     my $response_started = 0;
     my $expects_trailers = 0;
@@ -677,7 +707,8 @@ sub _create_send ($self, $request) {
 
     weaken(my $weak_self = $self);
 
-    return async sub ($event) {
+    return async sub  {
+        my ($event) = @_;
         return Future->done unless $weak_self;
         return Future->done if $weak_self->{closed};
 
@@ -831,7 +862,9 @@ sub _create_send ($self, $request) {
     };
 }
 
-sub _send_error_response ($self, $status, $message) {
+sub _send_error_response {
+    my ($self, $status, $message) = @_;
+
     return if $self->{closed};
     return if $self->{response_started};
 
@@ -850,7 +883,9 @@ sub _send_error_response ($self, $status, $message) {
     $self->{response_status} = $status;  # Track for logging
 }
 
-sub _write_access_log ($self) {
+sub _write_access_log {
+    my ($self) = @_;
+
     return unless $self->{access_log};
     return unless $self->{current_request};
 
@@ -886,7 +921,9 @@ sub _write_access_log ($self) {
     print $log "$client_ip - - [$timestamp] \"$method $path\" $status ${duration}s\n";
 }
 
-sub _handle_disconnect ($self) {
+sub _handle_disconnect {
+    my ($self) = @_;
+
     # Determine disconnect event type based on mode
     my $disconnect_event;
     if ($self->{websocket_mode}) {
@@ -913,7 +950,10 @@ sub _handle_disconnect ($self) {
 #   1007 - Invalid frame payload data (e.g., invalid UTF-8)
 #   1009 - Message too big
 #   1011 - Unexpected condition
-sub _send_close_frame ($self, $code, $reason = '') {
+sub _send_close_frame {
+    my ($self, $code, $reason) = @_;
+    $reason //= '';
+
     return unless $self->{stream};
     return if $self->{close_sent};
 
@@ -926,7 +966,9 @@ sub _send_close_frame ($self, $code, $reason = '') {
     $self->{close_sent} = 1;
 }
 
-sub _close ($self) {
+sub _close {
+    my ($self) = @_;
+
     return if $self->{closed};
     $self->{closed} = 1;
 
@@ -981,7 +1023,9 @@ sub _close ($self) {
 # TLS Support Methods
 #
 
-sub _extract_tls_info ($self) {
+sub _extract_tls_info {
+    my ($self) = @_;
+
     my $stream = $self->{stream};
     my $handle = $stream->read_handle;
 
@@ -1102,15 +1146,21 @@ sub _extract_tls_info ($self) {
     $self->{tls_info} = $tls_info;
 }
 
-sub _get_scheme ($self) {
+sub _get_scheme {
+    my ($self) = @_;
+
     return $self->{tls_enabled} ? 'https' : 'http';
 }
 
-sub _get_ws_scheme ($self) {
+sub _get_ws_scheme {
+    my ($self) = @_;
+
     return $self->{tls_enabled} ? 'wss' : 'ws';
 }
 
-sub _get_extensions_for_scope ($self) {
+sub _get_extensions_for_scope {
+    my ($self) = @_;
+
     my %extensions = %{$self->{extensions}};
 
     # Add TLS info to extensions if this is a TLS connection
@@ -1129,7 +1179,9 @@ sub _get_extensions_for_scope ($self) {
 # SSE (Server-Sent Events) Support Methods
 #
 
-async sub _handle_sse_request ($self, $request) {
+async sub _handle_sse_request {
+    my ($self, $request) = @_;
+
     $self->{sse_mode} = 1;
 
     my $scope = $self->_create_sse_scope($request);
@@ -1160,7 +1212,9 @@ async sub _handle_sse_request ($self, $request) {
     $self->_close;
 }
 
-sub _create_sse_scope ($self, $request) {
+sub _create_sse_scope {
+    my ($self, $request) = @_;
+
     # Get the event loop from the server for async operations
     my $loop = $self->{server} ? $self->{server}->loop : undef;
 
@@ -1190,7 +1244,9 @@ sub _create_sse_scope ($self, $request) {
     return $scope;
 }
 
-sub _create_sse_receive ($self, $request) {
+sub _create_sse_receive {
+    my ($self, $request) = @_;
+
     weaken(my $weak_self = $self);
 
     return sub {
@@ -1235,10 +1291,13 @@ sub _create_sse_receive ($self, $request) {
     };
 }
 
-sub _create_sse_send ($self, $request) {
+sub _create_sse_send {
+    my ($self, $request) = @_;
+
     weaken(my $weak_self = $self);
 
-    return async sub ($event) {
+    return async sub  {
+        my ($event) = @_;
         return Future->done unless $weak_self;
         return Future->done if $weak_self->{closed};
 
@@ -1340,7 +1399,9 @@ sub _create_sse_send ($self, $request) {
 # WebSocket handshake magic GUID per RFC 6455
 use constant WS_GUID => '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
-async sub _handle_websocket_request ($self, $request) {
+async sub _handle_websocket_request {
+    my ($self, $request) = @_;
+
     my $scope = $self->_create_websocket_scope($request);
     my $receive = $self->_create_websocket_receive($request);
     my $send = $self->_create_websocket_send($request);
@@ -1364,7 +1425,9 @@ async sub _handle_websocket_request ($self, $request) {
     $self->_close;
 }
 
-sub _create_websocket_scope ($self, $request) {
+sub _create_websocket_scope {
+    my ($self, $request) = @_;
+
     # Extract WebSocket key and subprotocols from headers
     my $ws_key;
     my @subprotocols;
@@ -1412,7 +1475,9 @@ sub _create_websocket_scope ($self, $request) {
     return $scope;
 }
 
-sub _create_websocket_receive ($self, $request) {
+sub _create_websocket_receive {
+    my ($self, $request) = @_;
+
     my $connect_sent = 0;
     weaken(my $weak_self = $self);
 
@@ -1480,10 +1545,13 @@ sub _create_websocket_receive ($self, $request) {
     };
 }
 
-sub _create_websocket_send ($self, $request) {
+sub _create_websocket_send {
+    my ($self, $request) = @_;
+
     weaken(my $weak_self = $self);
 
-    return async sub ($event) {
+    return async sub  {
+        my ($event) = @_;
         return Future->done unless $weak_self;
         return Future->done if $weak_self->{closed};
 
@@ -1597,7 +1665,9 @@ sub _create_websocket_send ($self, $request) {
     };
 }
 
-sub _process_websocket_frames ($self) {
+sub _process_websocket_frames {
+    my ($self) = @_;
+
     return unless $self->{websocket_mode};
     return if $self->{closed};
 
@@ -1757,7 +1827,9 @@ sub _process_websocket_frames ($self) {
 }
 
 # Check if we can use sendfile() for this connection
-sub _can_use_sendfile ($self, $chunked) {
+sub _can_use_sendfile {
+    my ($self, $chunked) = @_;
+
     return 0 unless $HAS_SENDFILE;
     return 0 if $self->{disable_sendfile};  # Explicitly disabled
     return 0 if $self->{tls_enabled};       # Can't sendfile over TLS
@@ -1769,7 +1841,9 @@ sub _can_use_sendfile ($self, $chunked) {
 #   1. Small files (<=64KB): direct in-process read (fastest for small files)
 #   2. Large files with sendfile: zero-copy kernel transfer (fastest for large files)
 #   3. Large files without sendfile: worker pool (non-blocking fallback)
-async sub _send_file_response ($self, $file, $offset, $length, $chunked) {
+async sub _send_file_response {
+    my ($self, $file, $offset, $length, $chunked) = @_;
+
     # Get file size if length not specified
     my $file_size = -s $file;
     die "Cannot stat file $file: $!" unless defined $file_size;
@@ -1829,7 +1903,8 @@ async sub _send_file_response ($self, $file, $offset, $length, $chunked) {
 
         await PAGI::Util::AsyncFile->read_file_chunked(
             $loop, $file,
-            sub ($chunk) {
+            sub  {
+        my ($chunk) = @_;
                 if ($chunked) {
                     my $len = sprintf("%x", length($chunk));
                     $stream->write("$len\r\n$chunk\r\n");
@@ -1854,7 +1929,9 @@ async sub _send_file_response ($self, $file, $offset, $length, $chunked) {
 # Async filehandle response - uses worker pool for non-blocking reads
 # Note: Can't easily use sendfile for arbitrary filehandles (may not have fd,
 # may be pipes, may be in-memory). Falls back to chunked reads.
-async sub _send_fh_response ($self, $fh, $offset, $length, $chunked) {
+async sub _send_fh_response {
+    my ($self, $fh, $offset, $length, $chunked) = @_;
+
     # Seek to offset if specified
     if ($offset && $offset > 0) {
         seek($fh, $offset, 0) or die "Cannot seek: $!";

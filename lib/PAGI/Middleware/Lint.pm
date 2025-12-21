@@ -2,7 +2,6 @@ package PAGI::Middleware::Lint;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -17,7 +16,8 @@ PAGI::Middleware::Lint - Validate PAGI application compliance
     my $app = builder {
         enable 'Lint',
             strict => 1,
-            on_warning => sub ($msg) { warn "PAGI Lint: $msg\n" };
+            on_warning => sub  {
+        my ($msg) = @_; warn "PAGI Lint: $msg\n" };
         $my_app;
     };
 
@@ -47,14 +47,19 @@ Set to false to completely disable lint checks.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{strict} = $config->{strict} // 0;
     $self->{on_warning} = $config->{on_warning};
     $self->{enabled} = $config->{enabled} // 1;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if (!$self->{enabled}) {
             await $app->($scope, $receive, $send);
             return;
@@ -69,7 +74,8 @@ sub wrap ($self, $app) {
         my $event_count = 0;
 
         # Wrap send to validate outgoing events
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             $event_count++;
 
             $self->_lint_event($event, $scope->{type});
@@ -124,7 +130,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _lint_scope ($self, $scope) {
+sub _lint_scope {
+    my ($self, $scope) = @_;
+
     # Check required scope keys
     unless (defined $scope->{type}) {
         $self->_warn("scope missing required 'type' key");
@@ -157,7 +165,9 @@ sub _lint_scope ($self, $scope) {
     }
 }
 
-sub _lint_event ($self, $event, $scope_type) {
+sub _lint_event {
+    my ($self, $event, $scope_type) = @_;
+
     unless (ref $event eq 'HASH') {
         $self->_warn("event must be hashref, got " . ref($event));
         return;
@@ -168,7 +178,9 @@ sub _lint_event ($self, $event, $scope_type) {
     }
 }
 
-sub _lint_response_start ($self, $event) {
+sub _lint_response_start {
+    my ($self, $event) = @_;
+
     unless (defined $event->{status}) {
         $self->_warn("http.response.start missing 'status' key");
     } elsif ($event->{status} !~ /^\d{3}$/) {
@@ -188,13 +200,17 @@ sub _lint_response_start ($self, $event) {
     }
 }
 
-sub _lint_response_body ($self, $event) {
+sub _lint_response_body {
+    my ($self, $event) = @_;
+
     unless (defined $event->{more}) {
         $self->_warn("http.response.body should have 'more' key");
     }
 }
 
-sub _warn ($self, $msg) {
+sub _warn {
+    my ($self, $msg) = @_;
+
     if ($self->{strict}) {
         die "PAGI Lint Error: $msg\n";
     }

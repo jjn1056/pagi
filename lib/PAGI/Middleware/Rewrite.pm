@@ -2,7 +2,6 @@ package PAGI::Middleware::Rewrite;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -51,15 +50,20 @@ HTTP status code for redirects.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{rules} = $config->{rules}
         // die "Rewrite middleware requires 'rules' option";
     $self->{redirect} = $config->{redirect} // 0;
     $self->{redirect_code} = $config->{redirect_code} // 301;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -95,7 +99,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _apply_rules ($self, $path) {
+sub _apply_rules {
+    my ($self, $path) = @_;
+
     for my $rule (@{$self->{rules}}) {
         my $from = $rule->{from};
         my $to = $rule->{to};
@@ -125,7 +131,9 @@ sub _apply_rules ($self, $path) {
     return $path;
 }
 
-async sub _send_redirect ($self, $send, $location) {
+async sub _send_redirect {
+    my ($self, $send, $location) = @_;
+
     my $status = $self->{redirect_code};
     my $body = "Redirecting to $location";
 

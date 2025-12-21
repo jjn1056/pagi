@@ -2,7 +2,6 @@ package PAGI::App::Router;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -21,22 +20,40 @@ PAGI::App::Router - URL routing with path parameters
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         routes => [],
         not_found => $args{not_found},
     }, $class;
 }
 
-sub get    ($self, $path, $app) { $self->route('GET', $path, $app) }
-sub post   ($self, $path, $app) { $self->route('POST', $path, $app) }
-sub put    ($self, $path, $app) { $self->route('PUT', $path, $app) }
-sub patch  ($self, $path, $app) { $self->route('PATCH', $path, $app) }
-sub delete ($self, $path, $app) { $self->route('DELETE', $path, $app) }
-sub head   ($self, $path, $app) { $self->route('HEAD', $path, $app) }
-sub options($self, $path, $app) { $self->route('OPTIONS', $path, $app) }
+sub get {
+    my ($self, $path, $app) = @_;
+ $self->route('GET', $path, $app) }
+sub post {
+    my ($self, $path, $app) = @_;
+ $self->route('POST', $path, $app) }
+sub put {
+    my ($self, $path, $app) = @_;
+ $self->route('PUT', $path, $app) }
+sub patch {
+    my ($self, $path, $app) = @_;
+ $self->route('PATCH', $path, $app) }
+sub delete {
+    my ($self, $path, $app) = @_;
+ $self->route('DELETE', $path, $app) }
+sub head {
+    my ($self, $path, $app) = @_;
+ $self->route('HEAD', $path, $app) }
+sub options {
+    my ($self, $path, $app) = @_;
+ $self->route('OPTIONS', $path, $app) }
 
-sub route ($self, $method, $path, $app) {
+sub route {
+    my ($self, $method, $path, $app) = @_;
+
     my ($regex, @names) = $self->_compile_path($path);
     push @{$self->{routes}}, {
         method => uc($method),
@@ -48,7 +65,9 @@ sub route ($self, $method, $path, $app) {
     return $self;
 }
 
-sub _compile_path ($self, $path) {
+sub _compile_path {
+    my ($self, $path) = @_;
+
     my @names;
     my $regex = $path;
 
@@ -65,11 +84,14 @@ sub _compile_path ($self, $path) {
     return (qr{^$regex$}, @names);
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my @routes = @{$self->{routes}};
     my $not_found = $self->{not_found};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         my $method = uc($scope->{method} // '');
         my $path = $scope->{path} // '/';
 

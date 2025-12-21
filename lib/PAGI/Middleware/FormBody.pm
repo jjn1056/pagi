@@ -2,7 +2,6 @@ package PAGI::Middleware::FormBody;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -20,7 +19,9 @@ PAGI::Middleware::FormBody - Form request body parsing middleware
     };
 
     # In your app:
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         my $form_data = $scope->{pagi.parsed_body};
         # $form_data is a hashref like { name => 'value', ... }
     }
@@ -42,12 +43,17 @@ Maximum body size to parse (in bytes).
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{max_size} = $config->{max_size} // 1024 * 1024;  # 1MB
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -107,7 +113,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _parse_urlencoded ($self, $body) {
+sub _parse_urlencoded {
+    my ($self, $body) = @_;
+
     my %result;
 
     for my $pair (split /&/, $body) {
@@ -132,13 +140,17 @@ sub _parse_urlencoded ($self, $body) {
     return \%result;
 }
 
-sub _url_decode ($self, $str) {
+sub _url_decode {
+    my ($self, $str) = @_;
+
     $str =~ s/\+/ /g;
     $str =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
     return $str;
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -146,7 +158,9 @@ sub _get_header ($self, $scope, $name) {
     return;
 }
 
-async sub _send_error ($self, $send, $status, $message) {
+async sub _send_error {
+    my ($self, $send, $status, $message) = @_;
+
     await $send->({
         type    => 'http.response.start',
         status  => $status,

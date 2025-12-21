@@ -2,7 +2,6 @@ package PAGI::Middleware::RequestId;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -51,13 +50,18 @@ A coderef that generates unique IDs. Receives the scope as argument.
 # Simple counter for uniqueness within process
 my $counter = 0;
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{header}         = $config->{header} // 'X-Request-ID';
     $self->{trust_incoming} = $config->{trust_incoming} // 0;
     $self->{generator}      = $config->{generator} // \&_generate_id;
 }
 
-sub _generate_id ($scope = undef) {
+sub _generate_id {
+    my ($scope) = @_;
+    $scope //= undef;
+
     # Generate a UUID-like ID: timestamp + counter + random
     my $time = time();
     $counter = ($counter + 1) % 0xFFFF;
@@ -71,10 +75,13 @@ sub _generate_id ($scope = undef) {
     );
 }
 
-sub wrap ($self, $app) {
+sub wrap {
+    my ($self, $app) = @_;
+
     my $header_name = lc($self->{header});
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only handle HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -101,7 +108,8 @@ sub wrap ($self, $app) {
         });
 
         # Intercept send to add request ID to response
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 push @{$event->{headers}}, [$self->{header}, $request_id];
             }

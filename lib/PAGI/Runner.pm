@@ -2,7 +2,6 @@ package PAGI::Runner;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Getopt::Long qw(GetOptionsFromArray :config pass_through no_auto_abbrev);
 use Pod::Usage;
 use File::Spec;
@@ -198,7 +197,9 @@ Drop privileges to this group after binding to port. Requires starting as root.
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         host              => $args{host}              // '127.0.0.1',
         port              => $args{port}              // 5000,
@@ -256,7 +257,9 @@ Supported options:
 
 =cut
 
-sub parse_options ($self, @args) {
+sub parse_options {
+    my ($self, @args) = @_;
+
     my %opts;
     my ($help, $version);
 
@@ -349,7 +352,10 @@ Returns the loaded app coderef and stores it in the runner.
 
 =cut
 
-sub load_app ($self, $app_spec = undef, %args) {
+sub load_app {
+    my ($self, $app_spec, %args) = @_;
+    $app_spec //= undef;
+
     # Add library paths to @INC before loading
     if (@{$self->{libs}}) {
         unshift @INC, @{$self->{libs}};
@@ -399,7 +405,9 @@ Returns the server instance (not yet started).
 
 =cut
 
-sub prepare_server ($self) {
+sub prepare_server {
+    my ($self) = @_;
+
     die "No app loaded. Call load_app first.\n" unless $self->{app};
 
     # Validate SSL options
@@ -492,7 +500,9 @@ and runs the event loop. This is the main entry point for CLI usage.
 
 =cut
 
-sub run ($self, @args) {
+sub run {
+    my ($self, @args) = @_;
+
     # Parse CLI options
     @args = $self->parse_options(@args);
 
@@ -591,15 +601,21 @@ sub run ($self, @args) {
 
 # Internal methods
 
-sub _is_module_name ($self, $spec) {
+sub _is_module_name {
+    my ($self, $spec) = @_;
+
     return $spec =~ /::/;
 }
 
-sub _is_file_path ($self, $spec) {
+sub _is_file_path {
+    my ($self, $spec) = @_;
+
     return $spec =~ m{/} || $spec =~ /\.(?:pl|psgi)$/i;
 }
 
-sub _load_module ($self, $module, %args) {
+sub _load_module {
+    my ($self, $module, %args) = @_;
+
     # Validate module name (basic security check)
     die "Invalid module name: $module\n" unless $module =~ /^[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*$/;
 
@@ -632,7 +648,9 @@ sub _load_module ($self, $module, %args) {
     return $app;
 }
 
-sub _load_file ($self, $file) {
+sub _load_file {
+    my ($self, $file) = @_;
+
     # Convert to absolute path
     $file = File::Spec->rel2abs($file);
 
@@ -654,7 +672,9 @@ sub _load_file ($self, $file) {
     return $app;
 }
 
-sub _parse_app_args ($self, @args) {
+sub _parse_app_args {
+    my ($self, @args) = @_;
+
     my %result;
     for my $arg (@args) {
         if ($arg =~ /^([^=]+)=(.*)$/) {
@@ -667,7 +687,9 @@ sub _parse_app_args ($self, @args) {
     return %result;
 }
 
-sub _create_loop ($self) {
+sub _create_loop {
+    my ($self) = @_;
+
     if ($self->{loop}) {
         my $loop_class = "IO::Async::Loop::$self->{loop}";
         eval "require $loop_class" or die "Error: Cannot load loop backend '$self->{loop}': $@\n" .
@@ -677,7 +699,9 @@ sub _create_loop ($self) {
     return IO::Async::Loop->new;
 }
 
-sub _show_help ($self) {
+sub _show_help {
+    my ($self) = @_;
+
     print <<'HELP';
 Usage: pagi-server [options] [app] [key=value ...]
 
@@ -720,11 +744,15 @@ Examples:
 HELP
 }
 
-sub _show_version ($self) {
+sub _show_version {
+    my ($self) = @_;
+
     print "pagi-server version $VERSION (PAGI::Server $PAGI::Server::VERSION)\n";
 }
 
-sub _daemonize ($self) {
+sub _daemonize {
+    my ($self) = @_;
+
     # First fork - parent exits, child continues
     my $pid = fork();
     die "Cannot fork: $!" unless defined $pid;
@@ -753,7 +781,9 @@ sub _daemonize ($self) {
     return $$;  # Return daemon PID
 }
 
-sub _write_pid_file ($self, $pid_file) {
+sub _write_pid_file {
+    my ($self, $pid_file) = @_;
+
     open(my $fh, '>', $pid_file)
         or die "Cannot write PID file $pid_file: $!\n";
     print $fh "$$\n";
@@ -763,12 +793,16 @@ sub _write_pid_file ($self, $pid_file) {
     $self->{_pid_file_path} = $pid_file;
 }
 
-sub _remove_pid_file ($self) {
+sub _remove_pid_file {
+    my ($self) = @_;
+
     return unless $self->{_pid_file_path};
     unlink($self->{_pid_file_path});
 }
 
-sub _drop_privileges ($self) {
+sub _drop_privileges {
+    my ($self) = @_;
+
     my $user = $self->{user};
     my $group = $self->{group};
 

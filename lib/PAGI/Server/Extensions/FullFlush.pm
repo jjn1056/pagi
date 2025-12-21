@@ -1,7 +1,6 @@
 package PAGI::Server::Extensions::FullFlush;
 use strict;
 use warnings;
-use experimental 'signatures';
 
 our $VERSION = '0.001';
 
@@ -23,11 +22,15 @@ forcing immediate flush of TCP write buffers.
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {}, $class;
 }
 
-sub handle_event ($self, $connection, $event) {
+sub handle_event {
+    my ($self, $connection, $event) = @_;
+
     # TODO: Implement in Step 7
     # Force immediate flush of TCP buffer
 }

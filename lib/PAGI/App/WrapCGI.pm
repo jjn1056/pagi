@@ -2,7 +2,6 @@ package PAGI::App::WrapCGI;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -19,18 +18,23 @@ PAGI::App::WrapCGI - Execute CGI scripts as PAGI apps
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         script  => $args{script},
         timeout => $args{timeout} // 30,
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $script = $self->{script};
     my $timeout = $self->{timeout};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         # Build CGI environment

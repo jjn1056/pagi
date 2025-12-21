@@ -2,7 +2,6 @@ package PAGI::Middleware::SSE::Retry;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -45,14 +44,19 @@ If true, includes retry in every sse.send event.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{retry} = $config->{retry} // 3000;
     $self->{include_on_start} = $config->{include_on_start} // 1;
     $self->{include_on_events} = $config->{include_on_events} // 0;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only apply to SSE connections
         if ($scope->{type} ne 'sse') {
             await $app->($scope, $receive, $send);
@@ -63,7 +67,8 @@ sub wrap ($self, $app) {
         my $sent_initial = 0;
 
         # Wrap send to add retry field
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'sse.start') {
                 await $send->($event);
 

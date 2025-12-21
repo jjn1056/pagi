@@ -2,7 +2,6 @@ package PAGI::App::SSE::Stream;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -24,7 +23,9 @@ PAGI::App::SSE::Stream - Server-Sent Events streaming
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         generator   => $args{generator},
         retry       => $args{retry},
@@ -34,14 +35,17 @@ sub new ($class, %args) {
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $generator = $self->{generator};
     my $retry = $self->{retry};
     my $on_connect = $self->{on_connect};
     my $on_close = $self->{on_close};
     my $extra_headers = $self->{headers};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         # Build headers
@@ -74,7 +78,8 @@ sub to_app ($self) {
         my $closed = 0;
 
         # Helper to send SSE events
-        my $send_event = async sub ($event) {
+        my $send_event = async sub  {
+        my ($event) = @_;
             return if $closed;
 
             my $data = '';

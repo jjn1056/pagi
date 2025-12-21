@@ -2,7 +2,6 @@ package PAGI::Middleware;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -15,8 +14,11 @@ PAGI::Middleware - Base class for PAGI middleware
     package My::Middleware;
     use parent 'PAGI::Middleware';
 
-    sub wrap ($self, $app) {
-        return async sub ($scope, $receive, $send) {
+    sub wrap {
+        my ($self, $app) = @_;
+    
+        return async sub  {
+        my ($scope, $receive, $send) = @_;
             # Modify scope for inner app
             my $modified_scope = $self->modify_scope($scope, {
                 custom_key => 'custom_value',
@@ -54,7 +56,9 @@ accessible via C<$self-E<gt>{config}>.
 
 =cut
 
-sub new ($class, %config) {
+sub new {
+    my ($class, %config) = @_;
+
     my $self = bless {
         config => \%config,
     }, $class;
@@ -71,7 +75,9 @@ Default implementation does nothing.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     # Subclasses can override
 }
 
@@ -84,7 +90,9 @@ the middleware logic. Subclasses MUST override this method.
 
 =cut
 
-sub wrap ($self, $app) {
+sub wrap {
+    my ($self, $app) = @_;
+
     die "Subclass must implement wrap()";
 }
 
@@ -97,7 +105,10 @@ This is the recommended way to pass additional data to inner apps.
 
 =cut
 
-sub modify_scope ($self, $scope, $additions = {}) {
+sub modify_scope {
+    my ($self, $scope, $additions) = @_;
+    $additions //= {};
+
     return { %$scope, %$additions };
 }
 
@@ -109,7 +120,8 @@ Wrap the $send callback to intercept outgoing events.
 The interceptor is called with ($event, $original_send) and should
 return a Future.
 
-    my $wrapped_send = $self->intercept_send($send, async sub ($event, $original_send) {
+    my $wrapped_send = $self->intercept_send($send, async sub  {
+        my ($event, $original_send) = @_;
         if ($event->{type} eq 'http.response.start') {
             # Modify headers
             push @{$event->{headers}}, ['x-custom', 'value'];
@@ -119,8 +131,11 @@ return a Future.
 
 =cut
 
-sub intercept_send ($self, $send, $interceptor) {
-    return async sub ($event) {
+sub intercept_send {
+    my ($self, $send, $interceptor) = @_;
+
+    return async sub  {
+        my ($event) = @_;
         await $interceptor->($event, $send);
     };
 }
@@ -134,7 +149,9 @@ Returns the complete body and the final http.request event.
 
 =cut
 
-async sub buffer_request_body ($self, $receive) {
+async sub buffer_request_body {
+    my ($self, $receive) = @_;
+
     my $body = '';
     my $event;
 
@@ -164,7 +181,9 @@ Equivalent to:
 
 =cut
 
-async sub call ($self, $scope, $receive, $send, $app) {
+async sub call {
+    my ($self, $scope, $receive, $send, $app) = @_;
+
     my $wrapped = $self->wrap($app);
     await $wrapped->($scope, $receive, $send);
 }
@@ -197,13 +216,17 @@ application and can:
     use Future::AsyncAwait;
     use Time::HiRes 'time';
 
-    sub wrap ($self, $app) {
-        return async sub ($scope, $receive, $send) {
+    sub wrap {
+        my ($self, $app) = @_;
+    
+        return async sub  {
+        my ($scope, $receive, $send) = @_;
             my $start = time();
             my $status;
 
             # Intercept send to capture status
-            my $wrapped_send = $self->intercept_send($send, async sub ($event, $orig_send) {
+            my $wrapped_send = $self->intercept_send($send, async sub  {
+        my ($event, $orig_send) = @_;
                 if ($event->{type} eq 'http.response.start') {
                     $status = $event->{status};
                 }

@@ -2,7 +2,6 @@ package PAGI::Middleware::ReverseProxy;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -57,13 +56,18 @@ If true, trust X-Forwarded headers from any source. Use with caution!
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{trusted_proxies} = $config->{trusted_proxies} // ['127.0.0.1', '::1'];
     $self->{trust_all} = $config->{trust_all} // 0;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -127,7 +131,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _is_trusted ($self, $ip) {
+sub _is_trusted {
+    my ($self, $ip) = @_;
+
     for my $trusted (@{$self->{trusted_proxies}}) {
         if ($trusted =~ m{/}) {
             # CIDR notation
@@ -140,7 +146,9 @@ sub _is_trusted ($self, $ip) {
     return 0;
 }
 
-sub _ip_in_cidr ($self, $ip, $cidr) {
+sub _ip_in_cidr {
+    my ($self, $ip, $cidr) = @_;
+
     my ($network, $bits) = split m{/}, $cidr;
 
     # Simple IPv4 check
@@ -155,7 +163,9 @@ sub _ip_in_cidr ($self, $ip, $cidr) {
     return ($ip_num & $mask) == ($net_num & $mask);
 }
 
-sub _ip_to_num ($self, $ip) {
+sub _ip_to_num {
+    my ($self, $ip) = @_;
+
     my @octets = split /\./, $ip;
     return unless @octets == 4;
     return unless _all(sub { /^\d+$/ && $_ >= 0 && $_ <= 255 }, @octets);
@@ -171,7 +181,9 @@ sub _all {
     return 1;
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;

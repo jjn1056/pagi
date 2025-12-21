@@ -2,7 +2,6 @@ package PAGI::App::WebSocket::Broadcast;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -21,18 +20,23 @@ PAGI::App::WebSocket::Broadcast - Pub/sub WebSocket broadcast
 my %channels;  # channel => { clients => { id => send_cb } }
 my $next_id = 1;
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         default_channel => $args{channel} // 'default',
         echo_self       => $args{echo_self} // 0,
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $default_channel = $self->{default_channel};
     my $echo_self = $self->{echo_self};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'websocket';
 
         # Accept the connection
@@ -89,7 +93,9 @@ sub to_app ($self) {
 }
 
 # Class method to broadcast to a channel
-sub broadcast ($class, $channel, $message, %opts) {
+sub broadcast {
+    my ($class, $channel, $message, %opts) = @_;
+
     return unless $channels{$channel};
 
     my $is_text = !$opts{binary};
@@ -109,7 +115,10 @@ sub broadcast ($class, $channel, $message, %opts) {
 }
 
 # Get connected client count
-sub client_count ($class, $channel = undef) {
+sub client_count {
+    my ($class, $channel) = @_;
+    $channel //= undef;
+
     if ($channel) {
         return 0 unless $channels{$channel};
         return scalar keys %{$channels{$channel}{clients}};

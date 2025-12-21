@@ -2,7 +2,6 @@ package PAGI::Middleware::Healthcheck;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use JSON::PP ();
@@ -59,7 +58,9 @@ Include individual check results in response.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{path} = $config->{path} // '/health';
     $self->{live_path} = $config->{live_path};
     $self->{ready_path} = $config->{ready_path};
@@ -67,8 +68,11 @@ sub _init ($self, $config) {
     $self->{include_details} = $config->{include_details} // 1;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -99,7 +103,9 @@ sub wrap ($self, $app) {
     };
 }
 
-async sub _send_live ($self, $send) {
+async sub _send_live {
+    my ($self, $send) = @_;
+
     my $body = JSON::PP::encode_json({ status => 'ok' });
 
     await $send->({
@@ -118,7 +124,9 @@ async sub _send_live ($self, $send) {
     });
 }
 
-async sub _send_ready ($self, $send) {
+async sub _send_ready {
+    my ($self, $send) = @_;
+
     my ($healthy, $results) = $self->_run_checks();
 
     my $response = {
@@ -145,7 +153,9 @@ async sub _send_ready ($self, $send) {
     });
 }
 
-async sub _send_health ($self, $send) {
+async sub _send_health {
+    my ($self, $send) = @_;
+
     my ($healthy, $results) = $self->_run_checks();
 
     my $response = {
@@ -173,7 +183,9 @@ async sub _send_health ($self, $send) {
     });
 }
 
-sub _run_checks ($self) {
+sub _run_checks {
+    my ($self) = @_;
+
     my %results;
     my $all_healthy = 1;
 

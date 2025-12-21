@@ -2,7 +2,6 @@ package PAGI::Middleware::GZip;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use IO::Compress::Gzip qw(gzip $GzipError);
@@ -43,7 +42,9 @@ MIME types to compress.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{min_size} = $config->{min_size} // 1024;
     $self->{mime_types} = $config->{mime_types} // [
         'text/html', 'text/plain', 'text/css', 'text/javascript',
@@ -51,8 +52,11 @@ sub _init ($self, $config) {
     ];
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -73,7 +77,8 @@ sub wrap ($self, $app) {
         my $content_type = '';
         my $original_headers;
 
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 $original_headers = $event->{headers};
                 # Get content type
@@ -158,7 +163,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _should_compress ($self, $content_type, $size) {
+sub _should_compress {
+    my ($self, $content_type, $size) = @_;
+
     return 0 if $size < $self->{min_size};
 
     $content_type =~ s/;.*//;  # Remove charset etc.
@@ -174,7 +181,9 @@ sub _should_compress ($self, $content_type, $size) {
     return 0;
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;

@@ -2,7 +2,6 @@ package PAGI::Middleware::Static;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use File::Spec;
@@ -105,7 +104,9 @@ my %MIME_TYPES = (
     bin   => 'application/octet-stream',
 );
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{root}         = $config->{root} // die "Static middleware requires 'root' option";
     $self->{path}         = $config->{path} // qr{^/};
     $self->{pass_through} = $config->{pass_through} // 0;
@@ -116,8 +117,11 @@ sub _init ($self, $config) {
     $self->{root} = File::Spec->rel2abs($self->{root});
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only handle HTTP GET/HEAD requests
         if ($scope->{type} ne 'http' || ($scope->{method} ne 'GET' && $scope->{method} ne 'HEAD')) {
             await $app->($scope, $receive, $send);
@@ -303,7 +307,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _resolve_path ($self, $url_path) {
+sub _resolve_path {
+    my ($self, $url_path) = @_;
+
     # Decode URL path
     my $decoded = $url_path;
     $decoded =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
@@ -317,7 +323,9 @@ sub _resolve_path ($self, $url_path) {
     return $root . $decoded;
 }
 
-sub _is_safe_path ($self, $file_path) {
+sub _is_safe_path {
+    my ($self, $file_path) = @_;
+
     my $root = $self->{root};
 
     # Manually resolve the path to handle .. without requiring file to exist
@@ -334,7 +342,9 @@ sub _is_safe_path ($self, $file_path) {
     return $abs_path =~ m{^\Q$root\E(?:/|$)};
 }
 
-sub _resolve_dots ($self, $path) {
+sub _resolve_dots {
+    my ($self, $path) = @_;
+
     # Split path into components
     my @parts = split m{/}, $path;
     my @resolved;
@@ -358,7 +368,9 @@ sub _resolve_dots ($self, $path) {
     return '/' . join('/', @resolved);
 }
 
-sub _find_index ($self, $dir_path) {
+sub _find_index {
+    my ($self, $dir_path) = @_;
+
     for my $index (@{$self->{index}}) {
         my $index_path = File::Spec->catfile($dir_path, $index);
         return $index_path if -f $index_path;
@@ -366,18 +378,24 @@ sub _find_index ($self, $dir_path) {
     return;
 }
 
-sub _generate_etag ($self, $file_path, $size, $mtime) {
+sub _generate_etag {
+    my ($self, $file_path, $size, $mtime) = @_;
+
     my $data = "$file_path:$size:$mtime";
     return '"' . md5_hex($data) . '"';
 }
 
-sub _get_mime_type ($self, $file_path) {
+sub _get_mime_type {
+    my ($self, $file_path) = @_;
+
     my ($ext) = $file_path =~ /\.([^.]+)$/;
     $ext = lc($ext // '');
     return $MIME_TYPES{$ext} // 'application/octet-stream';
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -385,7 +403,9 @@ sub _get_header ($self, $scope, $name) {
     return;
 }
 
-sub _parse_range ($self, $range_header, $size) {
+sub _parse_range {
+    my ($self, $range_header, $size) = @_;
+
     return (undef, undef, 0) unless $range_header;
 
     # Parse "bytes=start-end" format
@@ -416,7 +436,9 @@ sub _parse_range ($self, $range_header, $size) {
     return (undef, undef, 0);
 }
 
-sub _format_http_date ($self, $epoch) {
+sub _format_http_date {
+    my ($self, $epoch) = @_;
+
     my @days = qw(Sun Mon Tue Wed Thu Fri Sat);
     my @months = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
     my @t = gmtime($epoch);
@@ -425,7 +447,9 @@ sub _format_http_date ($self, $epoch) {
         $t[2], $t[1], $t[0]);
 }
 
-async sub _send_error ($self, $send, $status, $message) {
+async sub _send_error {
+    my ($self, $send, $status, $message) = @_;
+
     await $send->({
         type    => 'http.response.start',
         status  => $status,

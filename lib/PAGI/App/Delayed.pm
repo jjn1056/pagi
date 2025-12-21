@@ -2,7 +2,6 @@ package PAGI::App::Delayed;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 use Future;
 
@@ -28,7 +27,9 @@ PAGI::App::Delayed - Delayed/deferred response handling
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         app     => $args{app},
         delay   => $args{delay},
@@ -37,13 +38,16 @@ sub new ($class, %args) {
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $app = $self->{app};
     my $delay = $self->{delay};
     my $wait = $self->{wait};
     my $timeout = $self->{timeout};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Apply delay
         if (defined $delay && $delay > 0) {
             await _sleep($delay);
@@ -84,7 +88,9 @@ sub to_app ($self) {
 }
 
 # Simple async sleep using IO::Async if available
-sub _sleep ($seconds) {
+sub _sleep {
+    my ($seconds) = @_;
+
     # Try to use IO::Async::Timer if in an IO::Async loop
     eval {
         require IO::Async::Loop;

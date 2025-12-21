@@ -2,7 +2,6 @@ package PAGI::Middleware::Maintenance;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -59,7 +58,9 @@ Custom maintenance page body.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{enabled} = $config->{enabled} // 0;
     $self->{bypass_ips} = $config->{bypass_ips} // [];
     $self->{bypass_paths} = $config->{bypass_paths} // [];
@@ -68,8 +69,11 @@ sub _init ($self, $config) {
     $self->{body} = $config->{body} // $self->_default_body();
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -96,7 +100,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _should_bypass ($self, $scope) {
+sub _should_bypass {
+    my ($self, $scope) = @_;
+
     # Check bypass paths
     my $path = $scope->{path} // '';
     for my $bypass_path (@{$self->{bypass_paths}}) {
@@ -122,7 +128,9 @@ sub _should_bypass ($self, $scope) {
     return 0;
 }
 
-sub _ip_in_cidr ($self, $ip, $cidr) {
+sub _ip_in_cidr {
+    my ($self, $ip, $cidr) = @_;
+
     my ($network, $bits) = split m{/}, $cidr;
 
     # Simple IPv4 check
@@ -137,7 +145,9 @@ sub _ip_in_cidr ($self, $ip, $cidr) {
     return ($ip_num & $mask) == ($net_num & $mask);
 }
 
-sub _ip_to_num ($self, $ip) {
+sub _ip_to_num {
+    my ($self, $ip) = @_;
+
     my @octets = split /\./, $ip;
     return unless @octets == 4;
     return unless _all_valid_octets(@octets);
@@ -151,7 +161,9 @@ sub _all_valid_octets {
     return 1;
 }
 
-async sub _send_maintenance ($self, $send) {
+async sub _send_maintenance {
+    my ($self, $send) = @_;
+
     my $body = $self->{body};
 
     my @headers = (
@@ -175,7 +187,9 @@ async sub _send_maintenance ($self, $send) {
     });
 }
 
-sub _default_body ($self) {
+sub _default_body {
+    my ($self) = @_;
+
     return <<'HTML';
 <!DOCTYPE html>
 <html>

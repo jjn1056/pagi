@@ -2,7 +2,6 @@ package PAGI::Middleware::ConditionalGet;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -30,8 +29,11 @@ requests when the client's conditional headers match. Supports:
 
 =cut
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -59,7 +61,8 @@ sub wrap ($self, $app) {
         my $response_headers;
         my $sent_304 = 0;
 
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 $response_status = $event->{status};
                 $response_headers = $event->{headers};
@@ -113,7 +116,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -121,7 +126,9 @@ sub _get_header ($self, $scope, $name) {
     return;
 }
 
-sub _get_response_header ($self, $headers, $name) {
+sub _get_response_header {
+    my ($self, $headers, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$headers // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -129,7 +136,9 @@ sub _get_response_header ($self, $headers, $name) {
     return;
 }
 
-sub _etag_matches ($self, $if_none_match, $etag) {
+sub _etag_matches {
+    my ($self, $if_none_match, $etag) = @_;
+
     # Parse If-None-Match which can be comma-separated
     # ETags can be weak (W/"...") or strong ("...")
 
@@ -137,7 +146,8 @@ sub _etag_matches ($self, $if_none_match, $etag) {
     return 1 if $if_none_match eq '*';
 
     # Normalize ETags for comparison (weak comparison)
-    my $normalize = sub ($tag) {
+    my $normalize = sub  {
+        my ($tag) = @_;
         $tag =~ s/^\s+//;
         $tag =~ s/\s+$//;
         $tag =~ s/^W\///i;  # Remove weak prefix for comparison
@@ -153,11 +163,14 @@ sub _etag_matches ($self, $if_none_match, $etag) {
     return 0;
 }
 
-sub _not_modified_since ($self, $if_modified_since, $last_modified) {
+sub _not_modified_since {
+    my ($self, $if_modified_since, $last_modified) = @_;
+
     # Parse HTTP dates and compare
     # This is a simplified comparison - both should be HTTP-date format
 
-    my $parse_date = sub ($date_str) {
+    my $parse_date = sub  {
+        my ($date_str) = @_;
         # Try to parse common HTTP date formats
         # RFC 1123: Sun, 06 Nov 1994 08:49:37 GMT
         # RFC 850:  Sunday, 06-Nov-94 08:49:37 GMT
@@ -174,7 +187,9 @@ sub _not_modified_since ($self, $if_modified_since, $last_modified) {
     return $server_time <= $client_time;
 }
 
-sub _filter_headers_for_304 ($self, $headers) {
+sub _filter_headers_for_304 {
+    my ($self, $headers) = @_;
+
     # RFC 7232: 304 response MUST include certain headers
     my @allowed = qw(
         cache-control content-location date etag expires

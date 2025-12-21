@@ -2,7 +2,6 @@ package PAGI::Middleware::WebSocket::RateLimit;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Time::HiRes qw(time);
@@ -62,7 +61,9 @@ Close reason message.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{messages_per_second} = $config->{messages_per_second} // 100;
     $self->{bytes_per_second} = $config->{bytes_per_second} // 1048576;
     $self->{burst_multiplier} = $config->{burst_multiplier} // 2;
@@ -71,8 +72,11 @@ sub _init ($self, $config) {
     $self->{close_reason} = $config->{close_reason} // 'Rate limit exceeded';
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only apply to WebSocket connections
         if ($scope->{type} ne 'websocket') {
             await $app->($scope, $receive, $send);
@@ -167,7 +171,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _handle_limit_exceeded ($self, $scope, $send, $type, $current, $limit) {
+sub _handle_limit_exceeded {
+    my ($self, $scope, $send, $type, $current, $limit) = @_;
+
     my $should_close = 1;  # Default to closing
 
     if ($self->{on_limit_exceeded}) {
@@ -220,7 +226,8 @@ Hashref containing rate limit configuration.
 
     enable 'WebSocket::RateLimit',
         messages_per_second => 10,
-        on_limit_exceeded => sub ($scope, $type, $current, $limit) {
+        on_limit_exceeded => sub  {
+        my ($scope, $type, $current, $limit) = @_;
             warn "Rate limit exceeded for $scope->{client}[0]: $type\n";
             return 1;  # Close connection
         };

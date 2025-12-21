@@ -2,7 +2,6 @@ package PAGI::App::File;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 use Digest::MD5 qw(md5_hex);
 use File::Spec;
@@ -85,7 +84,9 @@ our %MIME_TYPES = (
     webm => 'video/webm',
 );
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $root = $args{root} // '.';
     # Resolve root to absolute path for security comparisons
     my $abs_root = Cwd::realpath($root) // $root;
@@ -98,10 +99,13 @@ sub new ($class, %args) {
     return $self;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $root = $self->{root};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         my $method = uc($scope->{method} // '');
@@ -251,7 +255,9 @@ sub to_app ($self) {
     };
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -259,7 +265,9 @@ sub _get_header ($self, $scope, $name) {
     return;
 }
 
-async sub _send_error ($self, $send, $status, $message) {
+async sub _send_error {
+    my ($self, $send, $status, $message) = @_;
+
     await $send->({
         type => 'http.response.start',
         status => $status,

@@ -1,7 +1,6 @@
 package PAGI::Server::Protocol::HTTP1;
 use strict;
 use warnings;
-use experimental 'signatures';
 use HTTP::Parser::XS qw(parse_http_request);
 use URI::Escape qw(uri_unescape);
 use Encode qw(decode);
@@ -14,7 +13,9 @@ our $VERSION = '0.001';
 # RFC 7230 Section 3.2.6: Field values MUST NOT contain CR or LF
 # Additionally, null bytes are rejected as they can cause truncation attacks
 
-sub _validate_header_name ($name) {
+sub _validate_header_name {
+    my ($name) = @_;
+
     if ($name =~ /[\r\n\0]/) {
         die "Invalid header name: contains CR, LF, or null byte\n";
     }
@@ -26,7 +27,9 @@ sub _validate_header_name ($name) {
     return $name;
 }
 
-sub _validate_header_value ($value) {
+sub _validate_header_value {
+    my ($value) = @_;
+
     if ($value =~ /[\r\n\0]/) {
         die "Invalid header value: contains CR, LF, or null byte\n";
     }
@@ -130,7 +133,9 @@ my %STATUS_PHRASES = (
     503 => 'Service Unavailable',
 );
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $self = bless {
         max_header_size       => $args{max_header_size} // 8192,
         max_request_line_size => $args{max_request_line_size} // 8192,  # 8KB per RFC 7230
@@ -139,7 +144,9 @@ sub new ($class, %args) {
     return $self;
 }
 
-sub parse_request ($self, $buffer_ref) {
+sub parse_request {
+    my ($self, $buffer_ref) = @_;
+
     # HTTP::Parser::XS expects a scalar, not a reference
     my $buffer = ref $buffer_ref ? $$buffer_ref : $buffer_ref;
 
@@ -279,7 +286,11 @@ sub parse_request ($self, $buffer_ref) {
     return ($request, $ret);
 }
 
-sub serialize_response_start ($self, $status, $headers, $chunked = 0, $http_version = '1.1') {
+sub serialize_response_start {
+    my ($self, $status, $headers, $chunked, $http_version) = @_;
+    $chunked //= 0;
+    $http_version //= '1.1';
+
     my $phrase = $STATUS_PHRASES{$status} // 'Unknown';
     my $response = "HTTP/$http_version $status $phrase\r\n";
 
@@ -314,7 +325,10 @@ sub serialize_response_start ($self, $status, $headers, $chunked = 0, $http_vers
     return $response;
 }
 
-sub serialize_response_body ($self, $chunk, $more, $chunked = 0) {
+sub serialize_response_body {
+    my ($self, $chunk, $more, $chunked) = @_;
+    $chunked //= 0;
+
     return '' unless defined $chunk && length $chunk;
 
     if ($chunked) {
@@ -332,15 +346,21 @@ sub serialize_response_body ($self, $chunk, $more, $chunked = 0) {
     }
 }
 
-sub serialize_chunk_end ($self) {
+sub serialize_chunk_end {
+    my ($self) = @_;
+
     return "0\r\n\r\n";
 }
 
-sub serialize_continue ($self) {
+sub serialize_continue {
+    my ($self) = @_;
+
     return "HTTP/1.1 100 Continue\r\n\r\n";
 }
 
-sub serialize_trailers ($self, $headers) {
+sub serialize_trailers {
+    my ($self, $headers) = @_;
+
     my $trailers = '';
     for my $header (@$headers) {
         my ($name, $value) = @$header;
@@ -352,7 +372,9 @@ sub serialize_trailers ($self, $headers) {
     return $trailers;
 }
 
-sub format_date ($self) {
+sub format_date {
+    my ($self) = @_;
+
     my $now = time();
     if ($now != $_cached_date_time) {
         $_cached_date_time = $now;
@@ -379,7 +401,9 @@ Returns (undef, 0, 0) if more data is needed.
 
 =cut
 
-sub parse_chunked_body ($self, $buffer_ref) {
+sub parse_chunked_body {
+    my ($self, $buffer_ref) = @_;
+
     my $buffer = ref $buffer_ref ? $$buffer_ref : $buffer_ref;
     my $data = '';
     my $total_consumed = 0;

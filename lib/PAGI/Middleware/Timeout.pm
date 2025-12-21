@@ -2,7 +2,6 @@ package PAGI::Middleware::Timeout;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Future;
@@ -18,7 +17,8 @@ PAGI::Middleware::Timeout - Request timeout middleware
     my $app = builder {
         enable 'Timeout',
             timeout => 30,
-            on_timeout => sub ($scope) {
+            on_timeout => sub  {
+        my ($scope) = @_;
                 warn "Request to $scope->{path} timed out";
             };
         $my_app;
@@ -50,14 +50,19 @@ IO::Async::Loop instance. If not provided, attempts to get current loop.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{timeout} = $config->{timeout} // 30;
     $self->{on_timeout} = $config->{on_timeout};
     $self->{loop} = $config->{loop};
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -69,7 +74,8 @@ sub wrap ($self, $app) {
         my $response_started = 0;
 
         # Wrapped send that tracks if response started
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             return if $timed_out;
             if ($event->{type} eq 'http.response.start') {
                 $response_started = 1;
@@ -108,13 +114,17 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _get_loop ($self) {
+sub _get_loop {
+    my ($self) = @_;
+
     # Try to get the current loop from IO::Async
     require IO::Async::Loop;
     return IO::Async::Loop->new;
 }
 
-async sub _send_timeout ($self, $send) {
+async sub _send_timeout {
+    my ($self, $send) = @_;
+
     my $body = 'Request timeout';
 
     await $send->({

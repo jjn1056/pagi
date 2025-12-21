@@ -2,7 +2,6 @@ package PAGI::App::Redirect;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -20,7 +19,9 @@ PAGI::App::Redirect - URL redirect app
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         to => $args{to},
         status => $args{status} // 302,
@@ -28,12 +29,15 @@ sub new ($class, %args) {
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $to = $self->{to};
     my $status = $self->{status};
     my $preserve_query = $self->{preserve_query};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         my $location = ref $to eq 'CODE' ? $to->($scope) : $to;
 
         if ($preserve_query && $scope->{query_string}) {

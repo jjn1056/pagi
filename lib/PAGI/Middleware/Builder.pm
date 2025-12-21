@@ -67,7 +67,9 @@ call enable(), enable_if(), mount(), and return the final app.
 
 =cut
 
-sub builder (&) {
+sub builder {
+    my (&) = @_;
+
     my ($block) = @_;
     local $_current_builder = PAGI::Middleware::Builder->new;
     my $app = $block->();
@@ -99,7 +101,9 @@ the scope and returns true/false.
 
 =cut
 
-sub enable_if (&$;@) {
+sub enable_if {
+    my (&$;@) = @_;
+
     my ($condition, $name, %config) = @_;
     croak "enable_if() must be called inside builder {}" unless $_current_builder;
     $_current_builder->add_middleware_if($condition, $name, %config);

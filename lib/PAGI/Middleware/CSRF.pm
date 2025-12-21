@@ -2,7 +2,6 @@ package PAGI::Middleware::CSRF;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Digest::SHA qw(sha256_hex);
@@ -57,7 +56,9 @@ HTTP methods that don't require CSRF validation.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{secret}       = $config->{secret} // die "CSRF middleware requires 'secret' option";
     $self->{token_header} = $config->{token_header} // 'X-CSRF-Token';
     $self->{token_param}  = $config->{token_param} // '_csrf_token';
@@ -65,8 +66,11 @@ sub _init ($self, $config) {
     $self->{safe_methods} = { map { $_ => 1 } @{$config->{safe_methods} // [qw(GET HEAD OPTIONS TRACE)]} };
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only handle HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -119,7 +123,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _generate_token ($self) {
+sub _generate_token {
+    my ($self) = @_;
+
     my $random = '';
     for (1..32) {
         $random .= chr(int(rand(256)));
@@ -127,7 +133,9 @@ sub _generate_token ($self) {
     return sha256_hex($self->{secret} . time() . $random . $$);
 }
 
-sub _get_cookie_token ($self, $scope) {
+sub _get_cookie_token {
+    my ($self, $scope) = @_;
+
     my $cookie_header = $self->_get_header($scope, 'cookie');
     return unless $cookie_header;
 
@@ -138,7 +146,9 @@ sub _get_cookie_token ($self, $scope) {
     return;
 }
 
-sub _get_submitted_token ($self, $scope) {
+sub _get_submitted_token {
+    my ($self, $scope) = @_;
+
     # First check header
     my $token = $self->_get_header($scope, $self->{token_header});
     return $token if $token;
@@ -148,7 +158,9 @@ sub _get_submitted_token ($self, $scope) {
     return;
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -156,7 +168,9 @@ sub _get_header ($self, $scope, $name) {
     return;
 }
 
-async sub _send_error ($self, $send, $status, $message) {
+async sub _send_error {
+    my ($self, $send, $status, $message) = @_;
+
     await $send->({
         type    => 'http.response.start',
         status  => $status,

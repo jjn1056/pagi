@@ -2,7 +2,6 @@ package PAGI::Middleware::TrustedHosts;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -44,7 +43,9 @@ If true, allow requests without a Host header.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{hosts}       = $config->{hosts} // die "TrustedHosts requires 'hosts' option";
     $self->{allow_empty} = $config->{allow_empty} // 0;
 
@@ -52,7 +53,9 @@ sub _init ($self, $config) {
     $self->{_patterns} = [map { $self->_compile_pattern($_) } @{$self->{hosts}}];
 }
 
-sub _compile_pattern ($self, $pattern) {
+sub _compile_pattern {
+    my ($self, $pattern) = @_;
+
     # Escape regex special chars except *
     my $escaped = quotemeta($pattern);
     # Convert escaped * back to regex wildcard
@@ -60,8 +63,11 @@ sub _compile_pattern ($self, $pattern) {
     return qr/^$escaped$/i;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only handle HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -101,7 +107,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -109,7 +117,9 @@ sub _get_header ($self, $scope, $name) {
     return;
 }
 
-async sub _send_error ($self, $send, $status, $message) {
+async sub _send_error {
+    my ($self, $send, $status, $message) = @_;
+
     await $send->({
         type    => 'http.response.start',
         status  => $status,

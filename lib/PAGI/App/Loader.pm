@@ -2,7 +2,6 @@ package PAGI::App::Loader;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -19,7 +18,9 @@ PAGI::App::Loader - Load PAGI app from file
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         file    => $args{file},
         reload  => $args{reload} // 0,
@@ -28,8 +29,11 @@ sub new ($class, %args) {
     }, $class;
 }
 
-sub to_app ($self) {
-    return async sub ($scope, $receive, $send) {
+sub to_app {
+    my ($self) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         my $app = $self->_get_app();
 
         unless ($app) {
@@ -46,7 +50,9 @@ sub to_app ($self) {
     };
 }
 
-sub _get_app ($self) {
+sub _get_app {
+    my ($self) = @_;
+
     my $file = $self->{file};
 
     # Check if reload needed

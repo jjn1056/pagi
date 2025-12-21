@@ -2,7 +2,6 @@ package PAGI::App::Throttle;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -25,7 +24,9 @@ PAGI::App::Throttle - Rate-limited request processing
 # Token bucket state per key
 my %buckets;
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         app      => $args{app},
         rate     => $args{rate} // 10,
@@ -36,7 +37,9 @@ sub new ($class, %args) {
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $app = $self->{app};
     my $rate = $self->{rate};
     my $burst = $self->{burst};
@@ -44,7 +47,8 @@ sub to_app ($self) {
     my $on_limit = $self->{on_limit};
     my $add_headers = $self->{headers};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         my $key = $key_for ? $key_for->($scope) : 'global';
         $key //= 'global';
 
@@ -70,7 +74,8 @@ sub to_app ($self) {
             # Wrap send to add rate limit headers
             my $wrapped_send = $send;
             if ($add_headers) {
-                $wrapped_send = async sub ($event) {
+                $wrapped_send = async sub  {
+        my ($event) = @_;
                     if ($event->{type} eq 'http.response.start') {
                         my @headers = @{$event->{headers} // []};
                         push @headers, ['x-ratelimit-limit', $burst];
@@ -117,17 +122,23 @@ sub to_app ($self) {
 }
 
 # Class method to reset a key's bucket
-sub reset ($class, $key) {
+sub reset {
+    my ($class, $key) = @_;
+
     delete $buckets{$key};
 }
 
 # Class method to reset all buckets
-sub reset_all ($class) {
+sub reset_all {
+    my ($class) = @_;
+
     %buckets = ();
 }
 
 # Class method to get bucket info
-sub info ($class, $key) {
+sub info {
+    my ($class, $key) = @_;
+
     return undef unless $buckets{$key};
     return {
         tokens => $buckets{$key}{tokens},

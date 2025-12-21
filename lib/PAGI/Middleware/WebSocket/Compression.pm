@@ -2,7 +2,6 @@ package PAGI::Middleware::WebSocket::Compression;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -53,15 +52,20 @@ If true, request client to not use context takeover.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{level} = $config->{level} // 6;
     $self->{min_size} = $config->{min_size} // 128;
     $self->{server_no_context_takeover} = $config->{server_no_context_takeover} // 0;
     $self->{client_no_context_takeover} = $config->{client_no_context_takeover} // 0;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only apply to WebSocket connections
         if ($scope->{type} ne 'websocket') {
             await $app->($scope, $receive, $send);
@@ -106,7 +110,8 @@ sub wrap ($self, $app) {
         };
 
         # Wrap send to handle compression
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'websocket.accept') {
                 # Initialize compression streams
                 ($deflator, $inflator) = $init_streams->();
@@ -209,7 +214,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _parse_extensions ($self, $scope) {
+sub _parse_extensions {
+    my ($self, $scope) = @_;
+
     my %extensions;
 
     for my $h (@{$scope->{headers} // []}) {

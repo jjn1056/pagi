@@ -2,7 +2,6 @@ package PAGI::Middleware::ContentLength;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -41,12 +40,17 @@ This is useful for large responses where buffering would be expensive.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{auto_chunked} = $config->{auto_chunked} // 0;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Skip for non-HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -60,7 +64,8 @@ sub wrap ($self, $app) {
         my @headers;
 
         # Create intercepting send to buffer response
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             my $type = $event->{type};
 
             if ($type eq 'http.response.start') {

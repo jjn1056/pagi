@@ -2,7 +2,6 @@ package PAGI::Middleware::WebSocket::Heartbeat;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Future;
@@ -48,14 +47,19 @@ IO::Async::Loop instance for scheduling.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{interval} = $config->{interval} // 30;
     $self->{timeout} = $config->{timeout} // 10;
     $self->{loop} = $config->{loop};
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only apply to WebSocket connections
         if ($scope->{type} ne 'websocket') {
             await $app->($scope, $receive, $send);
@@ -105,7 +109,8 @@ sub wrap ($self, $app) {
         };
 
         # Wrap send to detect accept and handle outgoing pings
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             return if $closed && $event->{type} ne 'websocket.close';
 
             if ($event->{type} eq 'websocket.accept') {
@@ -164,7 +169,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _get_loop ($self) {
+sub _get_loop {
+    my ($self) = @_;
+
     require IO::Async::Loop;
     return IO::Async::Loop->new;
 }

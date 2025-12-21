@@ -2,7 +2,6 @@ package PAGI::Middleware::ContentNegotiation;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -22,7 +21,9 @@ PAGI::Middleware::ContentNegotiation - HTTP content negotiation middleware
     };
 
     # In your app:
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
+    
         my $preferred = $scope->{'pagi.preferred_content_type'};
         if ($preferred eq 'application/json') {
             # Return JSON
@@ -57,7 +58,9 @@ If true, return 406 Not Acceptable when no supported type matches.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{supported_types} = $config->{supported_types}
         // die "ContentNegotiation requires 'supported_types' option";
     $self->{default_type} = $config->{default_type}
@@ -65,8 +68,11 @@ sub _init ($self, $config) {
     $self->{strict} = $config->{strict} // 0;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
             return;
@@ -95,7 +101,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _negotiate ($self, $accept) {
+sub _negotiate {
+    my ($self, $accept) = @_;
+
     my @accepted = $self->_parse_accept($accept);
     return unless @accepted;
 
@@ -123,7 +131,9 @@ sub _negotiate ($self, $accept) {
     return;
 }
 
-sub _parse_accept ($self, $accept) {
+sub _parse_accept {
+    my ($self, $accept) = @_;
+
     my @items;
 
     for my $part (split /\s*,\s*/, $accept) {
@@ -147,7 +157,9 @@ sub _parse_accept ($self, $accept) {
     return @items;
 }
 
-sub _get_header ($self, $scope, $name) {
+sub _get_header {
+    my ($self, $scope, $name) = @_;
+
     $name = lc($name);
     for my $h (@{$scope->{headers} // []}) {
         return $h->[1] if lc($h->[0]) eq $name;
@@ -155,7 +167,9 @@ sub _get_header ($self, $scope, $name) {
     return;
 }
 
-async sub _send_not_acceptable ($self, $send) {
+async sub _send_not_acceptable {
+    my ($self, $send) = @_;
+
     my $supported = join(', ', @{$self->{supported_types}});
     my $body = "Not Acceptable. Supported types: $supported";
 

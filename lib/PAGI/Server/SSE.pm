@@ -1,7 +1,6 @@
 package PAGI::Server::SSE;
 use strict;
 use warnings;
-use experimental 'signatures';
 
 our $VERSION = '0.001';
 
@@ -23,22 +22,30 @@ events according to the SSE wire protocol.
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $self = bless {
         connection => $args{connection},
     }, $class;
     return $self;
 }
 
-sub handle_start ($self, $event) {
+sub handle_start {
+    my ($self, $event) = @_;
+
     # TODO: Implement in Step 5
 }
 
-sub handle_send ($self, $event) {
+sub handle_send {
+    my ($self, $event) = @_;
+
     # TODO: Implement in Step 5
 }
 
-sub format_event ($self, $event) {
+sub format_event {
+    my ($self, $event) = @_;
+
     # TODO: Implement in Step 5
     # Format: event: name\ndata: line1\ndata: line2\n\n
     return '';

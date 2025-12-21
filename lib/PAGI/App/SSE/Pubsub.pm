@@ -2,7 +2,6 @@ package PAGI::App::SSE::Pubsub;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 use Future;
 
@@ -25,7 +24,9 @@ PAGI::App::SSE::Pubsub - Pub/sub Server-Sent Events
 my %channels;  # channel => { clients => { id => { send => cb, scope => scope } } }
 my $next_id = 1;
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         channel     => $args{channel} // 'default',
         retry       => $args{retry},
@@ -37,7 +38,9 @@ sub new ($class, %args) {
 }
 
 # Class method to publish events
-sub publish ($class, $channel, $event) {
+sub publish {
+    my ($class, $channel, $event) = @_;
+
     return unless $channels{$channel};
 
     my $data = _format_event($event);
@@ -69,7 +72,10 @@ sub publish ($class, $channel, $event) {
 }
 
 # Class method to get client count
-sub client_count ($class, $channel = undef) {
+sub client_count {
+    my ($class, $channel) = @_;
+    $channel //= undef;
+
     if ($channel) {
         return 0 unless $channels{$channel};
         return scalar keys %{$channels{$channel}{clients}};
@@ -80,11 +86,15 @@ sub client_count ($class, $channel = undef) {
 }
 
 # Class method to list channels
-sub list_channels ($class) {
+sub list_channels {
+    my ($class) = @_;
+
     return keys %channels;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $channel = $self->{channel};
     my $retry = $self->{retry};
     my $on_connect = $self->{on_connect};
@@ -92,7 +102,8 @@ sub to_app ($self) {
     my $history_size = $self->{history};
     my $extra_headers = $self->{headers};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         # Build headers
@@ -177,7 +188,9 @@ sub to_app ($self) {
     };
 }
 
-sub _format_event ($event) {
+sub _format_event {
+    my ($event) = @_;
+
     my $data = '';
 
     if ($event->{event}) {
@@ -195,7 +208,9 @@ sub _format_event ($event) {
     return "$data\n";
 }
 
-sub _get_last_event_id ($scope) {
+sub _get_last_event_id {
+    my ($scope) = @_;
+
     for my $h (@{$scope->{headers} // []}) {
         if (lc($h->[0]) eq 'last-event-id') {
             return $h->[1];

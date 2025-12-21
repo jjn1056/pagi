@@ -2,7 +2,6 @@ package PAGI::Middleware::SecurityHeaders;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 
@@ -65,7 +64,9 @@ Permissions-Policy header for feature control.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     # Use exists() to allow explicitly passing undef to disable a header
     $self->{x_frame_options}            = exists $config->{x_frame_options}
         ? $config->{x_frame_options} : 'SAMEORIGIN';
@@ -80,8 +81,11 @@ sub _init ($self, $config) {
     $self->{permissions_policy}         = $config->{permissions_policy};
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only handle HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -89,7 +93,8 @@ sub wrap ($self, $app) {
         }
 
         # Intercept send to add security headers
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 $self->_add_security_headers($event->{headers}, $scope);
             }
@@ -100,7 +105,9 @@ sub wrap ($self, $app) {
     };
 }
 
-sub _add_security_headers ($self, $headers, $scope) {
+sub _add_security_headers {
+    my ($self, $headers, $scope) = @_;
+
     # X-Frame-Options
     if (defined $self->{x_frame_options}) {
         push @$headers, ['X-Frame-Options', $self->{x_frame_options}];

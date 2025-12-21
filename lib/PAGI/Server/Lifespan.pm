@@ -1,7 +1,6 @@
 package PAGI::Server::Lifespan;
 use strict;
 use warnings;
-use experimental 'signatures';
 
 our $VERSION = '0.001';
 
@@ -25,7 +24,9 @@ and shutdown events and maintaining shared state.
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $self = bless {
         app   => $args{app},
         state => {},
@@ -33,15 +34,21 @@ sub new ($class, %args) {
     return $self;
 }
 
-sub startup ($self) {
+sub startup {
+    my ($self) = @_;
+
     # TODO: Implement in Step 6
 }
 
-sub shutdown ($self) {
+sub shutdown {
+    my ($self) = @_;
+
     # TODO: Implement in Step 6
 }
 
-sub state ($self) {
+sub state {
+    my ($self) = @_;
+
     return $self->{state};
 }
 

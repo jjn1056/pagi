@@ -2,7 +2,6 @@ package PAGI::App::WebSocket::Echo;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -17,18 +16,23 @@ PAGI::App::WebSocket::Echo - Echo WebSocket messages back to sender
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         on_connect    => $args{on_connect},
         on_disconnect => $args{on_disconnect},
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $on_connect = $self->{on_connect};
     my $on_disconnect = $self->{on_disconnect};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'websocket';
 
         # Accept the connection

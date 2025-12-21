@@ -2,7 +2,6 @@ package PAGI::Middleware::Runtime;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Time::HiRes qw(time);
@@ -44,13 +43,18 @@ Number of decimal places for the duration in seconds.
 
 =cut
 
-sub _init ($self, $config) {
+sub _init {
+    my ($self, $config) = @_;
+
     $self->{header}    = $config->{header} // 'X-Runtime';
     $self->{precision} = $config->{precision} // 6;
 }
 
-sub wrap ($self, $app) {
-    return async sub ($scope, $receive, $send) {
+sub wrap {
+    my ($self, $app) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         # Only handle HTTP requests
         if ($scope->{type} ne 'http') {
             await $app->($scope, $receive, $send);
@@ -60,7 +64,8 @@ sub wrap ($self, $app) {
         my $start_time = time();
 
         # Intercept send to add runtime header
-        my $wrapped_send = async sub ($event) {
+        my $wrapped_send = async sub  {
+        my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
                 my $duration = time() - $start_time;
                 my $formatted = sprintf('%.*f', $self->{precision}, $duration);

@@ -2,7 +2,6 @@ package PAGI::App::Healthcheck;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 use JSON::PP ();
 
@@ -24,18 +23,23 @@ PAGI::App::Healthcheck - Health check endpoint app
 
 our $START_TIME = time();
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         checks  => $args{checks} // {},
         version => $args{version},
     }, $class;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my $checks = $self->{checks};
     my $version = $self->{version};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         my $all_ok = 1;
         my %results;
 

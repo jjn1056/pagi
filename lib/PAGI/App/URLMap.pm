@@ -2,7 +2,6 @@ package PAGI::App::URLMap;
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Future::AsyncAwait;
 
 =head1 NAME
@@ -20,14 +19,18 @@ PAGI::App::URLMap - Mount apps at URL path prefixes
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     return bless {
         mounts => [],
         default => $args{default},
     }, $class;
 }
 
-sub mount ($self, $path, $app) {
+sub mount {
+    my ($self, $path, $app) = @_;
+
     $path =~ s{/+$}{};  # Remove trailing slashes
     push @{$self->{mounts}}, [$path, $app];
     # Keep sorted by length (longest first) for proper matching
@@ -35,18 +38,23 @@ sub mount ($self, $path, $app) {
     return $self;
 }
 
-sub map ($self, $mapping) {
+sub map {
+    my ($self, $mapping) = @_;
+
     while (my ($path, $app) = each %$mapping) {
         $self->mount($path, $app);
     }
     return $self;
 }
 
-sub to_app ($self) {
+sub to_app {
+    my ($self) = @_;
+
     my @mounts = @{$self->{mounts}};
     my $default = $self->{default};
 
-    return async sub ($scope, $receive, $send) {
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         my $path = $scope->{path} // '/';
 
         for my $mount (@mounts) {
