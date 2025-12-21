@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -41,7 +40,8 @@ subtest 'App::WebSocket::Echo' => sub {
             await $app->(
                 { type => 'websocket', path => '/' },
                 async sub { $events[$event_idx++] },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -64,7 +64,8 @@ subtest 'App::WebSocket::Echo' => sub {
             await $app->(
                 { type => 'websocket', path => '/' },
                 async sub { $events[$event_idx++] },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -86,7 +87,8 @@ subtest 'App::WebSocket::Echo' => sub {
             await $app->(
                 { type => 'websocket', path => '/' },
                 async sub { $events[$event_idx++] },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -96,7 +98,8 @@ subtest 'App::WebSocket::Echo' => sub {
     subtest 'calls on_disconnect callback' => sub {
         my $disconnect_code;
         my $app = PAGI::App::WebSocket::Echo->new(
-            on_disconnect => sub ($scope, $code) { $disconnect_code = $code },
+            on_disconnect => sub  {
+        my ($scope, $code) = @_; $disconnect_code = $code },
         )->to_app;
 
         my @events = (
@@ -108,7 +111,8 @@ subtest 'App::WebSocket::Echo' => sub {
             await $app->(
                 { type => 'websocket', path => '/' },
                 async sub { $events[$event_idx++] },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -153,7 +157,8 @@ subtest 'App::WebSocket::Chat' => sub {
             await $app->(
                 { type => 'websocket', path => '/' },
                 async sub { $events[$event_idx++] },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -181,7 +186,8 @@ subtest 'App::WebSocket::Chat' => sub {
             await $app->(
                 { type => 'websocket', path => '/' },
                 async sub { $events[$event_idx++] },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -214,7 +220,8 @@ subtest 'App::WebSocket::Chat' => sub {
             await $app->(
                 { type => 'websocket', path => '/' },
                 async sub { $events[$event_idx++] },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 

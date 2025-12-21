@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -25,7 +24,8 @@ die "App did not return a coderef" unless ref $app eq 'CODE';
 subtest 'Extensions are advertised in scope.extensions' => sub {
     my $captured_scope;
 
-    my $scope_test_app = async sub ($scope, $receive, $send) {
+    my $scope_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -95,7 +95,8 @@ subtest 'Extensions are advertised in scope.extensions' => sub {
 subtest 'Extensions are absent when not enabled' => sub {
     my $captured_scope;
 
-    my $scope_test_app = async sub ($scope, $receive, $send) {
+    my $scope_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -196,7 +197,8 @@ subtest 'Unknown extension events are rejected' => sub {
     my $error_caught = 0;
     my $error_message = '';
 
-    my $fullflush_test_app = async sub ($scope, $receive, $send) {
+    my $fullflush_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -281,7 +283,8 @@ subtest 'Unknown extension events are rejected' => sub {
 
 # Test 5: Fullflush works with SSE
 subtest 'Fullflush extension works with SSE' => sub {
-    my $sse_fullflush_app = async sub ($scope, $receive, $send) {
+    my $sse_fullflush_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {

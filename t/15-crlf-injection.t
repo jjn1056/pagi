@@ -27,7 +27,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Socket::INET;
@@ -160,7 +159,8 @@ subtest 'HTTP1 Protocol - serialize_trailers header injection' => sub {
 # =============================================================================
 
 # App that echoes back subprotocol and custom headers from the accept event
-my $ws_test_app = async sub ($scope, $receive, $send) {
+my $ws_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
     if ($scope->{type} eq 'lifespan') {
         while (1) {
             my $event = await $receive->();
@@ -348,7 +348,8 @@ subtest 'WebSocket custom header injection (issue 1.3)' => sub {
 # Integration Test: HTTP response header injection via app
 # =============================================================================
 
-my $http_test_app = async sub ($scope, $receive, $send) {
+my $http_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
     if ($scope->{type} eq 'lifespan') {
         while (1) {
             my $event = await $receive->();

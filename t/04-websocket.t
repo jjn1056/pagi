@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::WebSocket::Client;
@@ -193,7 +192,8 @@ subtest 'Clean close handshake' => sub {
 subtest 'WebSocket scope type is websocket' => sub {
     my $scope_type = '';
 
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -240,7 +240,8 @@ subtest 'Subprotocol parsing' => sub {
     my @received_subprotocols;
     my $app_called = 0;
 
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -308,7 +309,8 @@ subtest 'Subprotocol parsing' => sub {
 
 # Test 7: WebSocket upgrade rejection returns 403
 subtest 'WebSocket rejection returns 403' => sub {
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {

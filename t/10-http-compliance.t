@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -59,7 +58,8 @@ subtest 'HEAD request returns headers without body' => sub {
 subtest 'Multiple Cookie headers are normalized into single header' => sub {
     my $captured_scope;
 
-    my $cookie_test_app = async sub ($scope, $receive, $send) {
+    my $cookie_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -192,7 +192,8 @@ subtest 'GET request still returns body' => sub {
 subtest 'Header names are lowercased in scope' => sub {
     my $captured_scope;
 
-    my $header_test_app = async sub ($scope, $receive, $send) {
+    my $header_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -268,7 +269,8 @@ subtest 'Header names are lowercased in scope' => sub {
 subtest 'URL-encoded paths are decoded correctly' => sub {
     my $captured_scope;
 
-    my $path_test_app = async sub ($scope, $receive, $send) {
+    my $path_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -548,7 +550,8 @@ subtest 'Max body size exceeded returns 413 Payload Too Large' => sub {
 
         my $stream = IO::Async::Stream->new(
             handle => $socket,
-            on_read => sub ($s, $buffref, $eof) {
+            on_read => sub  {
+        my ($s, $buffref, $eof) = @_;
                 $response .= $$buffref;
                 $$buffref = '';
                 if ($eof || $response =~ /\r\n\r\n/) {
@@ -628,7 +631,8 @@ subtest 'Max header size configuration is passed correctly' => sub {
 
         my $stream = IO::Async::Stream->new(
             handle => $socket,
-            on_read => sub ($s, $buffref, $eof) {
+            on_read => sub  {
+        my ($s, $buffref, $eof) = @_;
                 $response .= $$buffref;
                 $$buffref = '';
                 if ($eof || $response =~ /\r\n\r\n/) {
@@ -670,7 +674,8 @@ subtest 'send() after disconnect returns completed Future' => sub {
     my $app_completed = 0;
     my $error_during_send = 0;
 
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -754,7 +759,8 @@ subtest 'send() after disconnect returns completed Future' => sub {
 subtest 'receive() returns Future that completes with event' => sub {
     my $received_events = [];
 
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -821,7 +827,8 @@ subtest 'receive() returns Future that completes with event' => sub {
 # Test 20: Unsupported scope type causes app to throw exception
 subtest 'Unsupported scope type is handled gracefully' => sub {
     # Create app that only handles http scope
-    my $http_only_app = async sub ($scope, $receive, $send) {
+    my $http_only_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -885,7 +892,8 @@ subtest 'Middleware wraps app without mutating original scope' => sub {
     my $original_scope;
     my $modified_scope;
 
-    my $inner_app = async sub ($scope, $receive, $send) {
+    my $inner_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -920,8 +928,10 @@ subtest 'Middleware wraps app without mutating original scope' => sub {
     };
 
     # Middleware that adds a custom key without mutating original
-    my $middleware = sub ($app) {
-        return async sub ($scope, $receive, $send) {
+    my $middleware = sub  {
+        my ($app) = @_;
+        return async sub  {
+        my ($scope, $receive, $send) = @_;
             $original_scope = $scope;
             # Create a new scope with additional key (don't mutate original)
             my $new_scope = { %$scope, custom_key => 'added_by_middleware' };
@@ -988,7 +998,8 @@ subtest 'HTTP pipelining handles multiple requests' => sub {
 
         my $stream = IO::Async::Stream->new(
             handle => $socket,
-            on_read => sub ($s, $buffref, $eof) {
+            on_read => sub  {
+        my ($s, $buffref, $eof) = @_;
                 $response .= $$buffref;
                 $$buffref = '';
                 # Look for two complete responses
@@ -1029,7 +1040,8 @@ subtest 'HTTP pipelining handles multiple requests' => sub {
 subtest 'on_error callback is invoked for errors' => sub {
     my $error_received;
 
-    my $error_app = async sub ($scope, $receive, $send) {
+    my $error_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -1149,7 +1161,8 @@ subtest 'HTTP/1.1 without Host header returns 400 Bad Request' => sub {
 
         my $stream = IO::Async::Stream->new(
             handle => $socket,
-            on_read => sub ($s, $buffref, $eof) {
+            on_read => sub  {
+        my ($s, $buffref, $eof) = @_;
                 $response .= $$buffref;
                 $$buffref = '';
                 if ($eof || $response =~ /\r\n\r\n/) {
@@ -1205,7 +1218,8 @@ subtest 'HTTP/1.0 without Host header is allowed' => sub {
 
         my $stream = IO::Async::Stream->new(
             handle => $socket,
-            on_read => sub ($s, $buffref, $eof) {
+            on_read => sub  {
+        my ($s, $buffref, $eof) = @_;
                 $response .= $$buffref;
                 $$buffref = '';
                 if ($eof || $response =~ /\r\n\r\n/) {
@@ -1238,7 +1252,8 @@ subtest 'HTTP/1.0 without Host header is allowed' => sub {
 subtest 'Content-Length validation' => sub {
     (async sub {
         # App that echoes back request body size
-        my $echo_app = async sub ($scope, $receive, $send) {
+        my $echo_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             if ($scope->{type} eq 'lifespan') {
                 while (1) {
                     my $event = await $receive->();
@@ -1343,7 +1358,8 @@ subtest 'Too many headers returns 431' => sub {
 
         my $stream = IO::Async::Stream->new(
             handle => $socket,
-            on_read => sub ($s, $buffref, $eof) {
+            on_read => sub  {
+        my ($s, $buffref, $eof) = @_;
                 $response .= $$buffref;
                 $$buffref = '';
                 if ($eof || $response =~ /\r\n\r\n/) {

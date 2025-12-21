@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -89,7 +88,8 @@ subtest 'SSE broadcaster streams events' => sub {
 subtest 'SSE scope type is sse' => sub {
     my $scope_type = '';
 
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -152,7 +152,8 @@ subtest 'SSE scope type is sse' => sub {
 
 # Test 3: SSE multi-line data is formatted correctly
 subtest 'SSE multi-line data formatting' => sub {
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'sse';
 
         await $send->({
@@ -212,7 +213,8 @@ subtest 'SSE multi-line data formatting' => sub {
 subtest 'SSE disconnect detection' => sub {
     my $disconnect_received = 0;
 
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'sse';
 
         await $send->({
@@ -274,7 +276,8 @@ subtest 'SSE disconnect detection' => sub {
 
 # Test 5: SSE chunked encoding is properly terminated
 subtest 'SSE chunked encoding properly terminated' => sub {
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'sse';
 
         await $send->({
@@ -337,7 +340,8 @@ subtest 'SSE chunked encoding properly terminated' => sub {
 
 # Test 6: SSE id and retry fields
 subtest 'SSE id and retry fields' => sub {
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'sse';
 
         await $send->({

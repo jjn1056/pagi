@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -27,7 +26,8 @@ subtest 'ContentLength adds header for buffered response' => sub {
     my $mw = PAGI::Middleware::ContentLength->new;
 
     # App that doesn't set Content-Length
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -47,7 +47,8 @@ subtest 'ContentLength adds header for buffered response' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -71,7 +72,8 @@ subtest 'ContentLength preserves existing Content-Length' => sub {
     my $mw = PAGI::Middleware::ContentLength->new;
 
     # App that already sets Content-Length
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -94,7 +96,8 @@ subtest 'ContentLength preserves existing Content-Length' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -108,7 +111,8 @@ subtest 'ContentLength passes through streaming responses' => sub {
     my $mw = PAGI::Middleware::ContentLength->new;
 
     # App that streams response (more => 1)
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -133,7 +137,8 @@ subtest 'ContentLength passes through streaming responses' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -148,7 +153,8 @@ subtest 'ContentLength skips non-HTTP requests' => sub {
     my $mw = PAGI::Middleware::ContentLength->new;
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         await $send->({
             type    => 'websocket.accept',
@@ -163,7 +169,8 @@ subtest 'ContentLength skips non-HTTP requests' => sub {
         await $wrapped->(
             { type => 'websocket', path => '/' },
             async sub { { type => 'websocket.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -174,7 +181,8 @@ subtest 'ContentLength skips non-HTTP requests' => sub {
 subtest 'ContentLength handles empty body' => sub {
     my $mw = PAGI::Middleware::ContentLength->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 204,
@@ -194,7 +202,8 @@ subtest 'ContentLength handles empty body' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -213,7 +222,8 @@ subtest 'ContentLength handles binary body correctly' => sub {
     my $mw = PAGI::Middleware::ContentLength->new;
 
     my $binary = "\x00\x01\x02\x03\x04";
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -233,7 +243,8 @@ subtest 'ContentLength handles binary body correctly' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -251,7 +262,8 @@ subtest 'ContentLength handles binary body correctly' => sub {
 subtest 'ContentLength auto_chunked option' => sub {
     my $mw = PAGI::Middleware::ContentLength->new(auto_chunked => 1);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -271,7 +283,8 @@ subtest 'ContentLength auto_chunked option' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 

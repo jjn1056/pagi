@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -38,7 +37,8 @@ sub run_async :prototype(&) {
 subtest 'Debug middleware - injects panel into HTML when enabled' => sub {
     my $debug = PAGI::Middleware::Debug->new(enabled => 1);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -55,7 +55,8 @@ subtest 'Debug middleware - injects panel into HTML when enabled' => sub {
     my $scope = make_scope();
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is scalar(@events), 2, 'two events sent';
     like $events[1]{body}, qr/pagi-debug-panel/, 'panel injected';
@@ -65,7 +66,8 @@ subtest 'Debug middleware - injects panel into HTML when enabled' => sub {
 subtest 'Debug middleware - does not inject when disabled' => sub {
     my $debug = PAGI::Middleware::Debug->new(enabled => 0);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -82,7 +84,8 @@ subtest 'Debug middleware - does not inject when disabled' => sub {
     my $scope = make_scope();
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     unlike $events[1]{body}, qr/pagi-debug-panel/, 'no panel when disabled';
 };
@@ -90,7 +93,8 @@ subtest 'Debug middleware - does not inject when disabled' => sub {
 subtest 'Debug middleware - skips non-HTML responses' => sub {
     my $debug = PAGI::Middleware::Debug->new(enabled => 1);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -107,7 +111,8 @@ subtest 'Debug middleware - skips non-HTML responses' => sub {
     my $scope = make_scope();
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[1]{body}, '{"status":"ok"}', 'JSON unchanged';
 };
@@ -122,7 +127,8 @@ subtest 'Lint middleware - warns on missing response' => sub {
         on_warning => sub { push @warnings, shift },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # App completes without sending response
     };
 
@@ -140,7 +146,8 @@ subtest 'Lint middleware - warns on response body before start' => sub {
         on_warning => sub { push @warnings, shift },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Send body without start
         await $send->({ type => 'http.response.body', body => 'test', more => 0 });
     };
@@ -160,7 +167,8 @@ subtest 'Lint middleware - strict mode throws' => sub {
         on_warning => sub { push @warnings, shift },  # Won't be called in strict mode
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Send body without start - this will trigger lint warning
         await $send->({ type => 'http.response.body', body => 'test', more => 0 });
     };
@@ -194,7 +202,8 @@ subtest 'Lint middleware - accepts valid response' => sub {
         on_warning => sub { push @warnings, shift },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -214,7 +223,8 @@ subtest 'Lint middleware - accepts valid response' => sub {
 subtest 'Maintenance middleware - serves 503 when enabled' => sub {
     my $maintenance = PAGI::Middleware::Maintenance->new(enabled => 1);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -223,7 +233,8 @@ subtest 'Maintenance middleware - serves 503 when enabled' => sub {
     my $scope = make_scope();
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 503, 'returns 503';
     like $events[1]{body}, qr/Maintenance|maintenance/i, 'maintenance page';
@@ -232,7 +243,8 @@ subtest 'Maintenance middleware - serves 503 when enabled' => sub {
 subtest 'Maintenance middleware - passes through when disabled' => sub {
     my $maintenance = PAGI::Middleware::Maintenance->new(enabled => 0);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -241,7 +253,8 @@ subtest 'Maintenance middleware - passes through when disabled' => sub {
     my $scope = make_scope();
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'passes through when disabled';
 };
@@ -252,7 +265,8 @@ subtest 'Maintenance middleware - bypasses for allowed IPs' => sub {
         bypass_ips => ['192.168.1.100'],
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -261,7 +275,8 @@ subtest 'Maintenance middleware - bypasses for allowed IPs' => sub {
     my $scope = make_scope(client => ['192.168.1.100', 12345]);
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'bypasses for allowed IP';
 };
@@ -272,7 +287,8 @@ subtest 'Maintenance middleware - bypasses for allowed paths' => sub {
         bypass_paths => ['/health'],
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -281,7 +297,8 @@ subtest 'Maintenance middleware - bypasses for allowed paths' => sub {
     my $scope = make_scope(path => '/health');
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'bypasses for health path';
 };
@@ -294,7 +311,8 @@ subtest 'MethodOverride - overrides from header' => sub {
     my $override = PAGI::Middleware::MethodOverride->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -316,7 +334,8 @@ subtest 'MethodOverride - overrides from query param' => sub {
     my $override = PAGI::Middleware::MethodOverride->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -337,7 +356,8 @@ subtest 'MethodOverride - ignores non-POST requests' => sub {
     my $override = PAGI::Middleware::MethodOverride->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -360,7 +380,8 @@ subtest 'MethodOverride - rejects disallowed methods' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });

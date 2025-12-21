@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -32,7 +31,8 @@ subtest 'AccessLog logs requests with client IP, method, path, status, size' => 
         format => 'combined',
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -62,7 +62,8 @@ subtest 'AccessLog logs requests with client IP, method, path, status, size' => 
                 ],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { },
+            async sub  {
+        my ($event) = @_; },
         );
     });
 
@@ -85,7 +86,8 @@ subtest 'AccessLog common format' => sub {
         format => 'common',
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 201,
@@ -110,7 +112,8 @@ subtest 'AccessLog common format' => sub {
                 headers => [],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { },
+            async sub  {
+        my ($event) = @_; },
         );
     });
 
@@ -128,7 +131,8 @@ subtest 'AccessLog tiny format' => sub {
         format => 'tiny',
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 404,
@@ -153,7 +157,8 @@ subtest 'AccessLog tiny format' => sub {
                 headers => [],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { },
+            async sub  {
+        my ($event) = @_; },
         );
     });
 
@@ -168,7 +173,8 @@ subtest 'AccessLog skips non-HTTP requests' => sub {
         logger => sub { push @log_lines, @_ },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'websocket.accept', headers => [] });
     };
 
@@ -178,7 +184,8 @@ subtest 'AccessLog skips non-HTTP requests' => sub {
         await $wrapped->(
             { type => 'websocket', path => '/ws' },
             async sub { { type => 'websocket.disconnect' } },
-            async sub ($event) { },
+            async sub  {
+        my ($event) = @_; },
         );
     });
 
@@ -193,7 +200,8 @@ subtest 'RequestId generates unique IDs and adds to response' => sub {
     my $mw = PAGI::Middleware::RequestId->new;
 
     my $received_request_id;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $received_request_id = $scope->{request_id};
         await $send->({
             type    => 'http.response.start',
@@ -215,7 +223,8 @@ subtest 'RequestId generates unique IDs and adds to response' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent1, $event },
+            async sub  {
+        my ($event) = @_; push @sent1, $event },
         );
     });
 
@@ -239,7 +248,8 @@ subtest 'RequestId generates unique IDs and adds to response' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent2, $event },
+            async sub  {
+        my ($event) = @_; push @sent2, $event },
         );
     });
 
@@ -251,7 +261,8 @@ subtest 'RequestId trusts incoming header when configured' => sub {
     my $mw = PAGI::Middleware::RequestId->new(trust_incoming => 1);
 
     my $received_request_id;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $received_request_id = $scope->{request_id};
         await $send->({
             type    => 'http.response.start',
@@ -277,7 +288,8 @@ subtest 'RequestId trusts incoming header when configured' => sub {
                 headers => [['x-request-id', 'my-custom-id-123']],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -287,7 +299,8 @@ subtest 'RequestId trusts incoming header when configured' => sub {
 subtest 'RequestId uses custom header name' => sub {
     my $mw = PAGI::Middleware::RequestId->new(header => 'X-Correlation-ID');
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -307,7 +320,8 @@ subtest 'RequestId uses custom header name' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -328,7 +342,8 @@ subtest 'RequestId uses custom header name' => sub {
 subtest 'Runtime adds X-Runtime header with valid duration' => sub {
     my $mw = PAGI::Middleware::Runtime->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Small delay to ensure measurable runtime
         await $send->({
             type    => 'http.response.start',
@@ -349,7 +364,8 @@ subtest 'Runtime adds X-Runtime header with valid duration' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -375,7 +391,8 @@ subtest 'Runtime uses custom header and precision' => sub {
         precision => 3,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -395,7 +412,8 @@ subtest 'Runtime uses custom header and precision' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -414,7 +432,8 @@ subtest 'Runtime uses custom header and precision' => sub {
 subtest 'Runtime skips non-HTTP requests' => sub {
     my $mw = PAGI::Middleware::Runtime->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'websocket.accept', headers => [] });
     };
 
@@ -425,7 +444,8 @@ subtest 'Runtime skips non-HTTP requests' => sub {
         await $wrapped->(
             { type => 'websocket', path => '/ws' },
             async sub { { type => 'websocket.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 

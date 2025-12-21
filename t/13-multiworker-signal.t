@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -19,7 +18,8 @@ use PAGI::Server;
 my $loop = IO::Async::Loop->new;
 
 # Simple app for testing
-my $app = async sub ($scope, $receive, $send) {
+my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
     if ($scope->{type} eq 'lifespan') {
         while (1) {
             my $event = await $receive->();

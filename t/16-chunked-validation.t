@@ -20,7 +20,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 
 use FindBin;

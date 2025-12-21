@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::WebSocket::Client;
@@ -22,7 +21,8 @@ subtest 'WebSocket receive queue grows when app does not consume messages' => su
     my $app_started = 0;
 
     # App that accepts WebSocket but delays consuming messages
-    my $slow_app = async sub ($scope, $receive, $send) {
+    my $slow_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -120,7 +120,8 @@ subtest 'max_receive_queue limit closes connection when exceeded' => sub {
     my $close_sent = 0;
 
     # App that accepts WebSocket but NEVER calls receive (simulating frozen app)
-    my $non_consuming_app = async sub ($scope, $receive, $send) {
+    my $non_consuming_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -204,7 +205,8 @@ subtest 'max_receive_queue limit closes connection when exceeded' => sub {
 subtest 'WebSocket works normally with responsive consumer' => sub {
     my @received;
 
-    my $responsive_app = async sub ($scope, $receive, $send) {
+    my $responsive_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();

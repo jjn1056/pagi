@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -72,11 +71,13 @@ subtest 'Middleware base class' => sub {
         my $mw = PAGI::Middleware->new;
         my @captured;
 
-        my $original_send = async sub ($event) {
+        my $original_send = async sub  {
+        my ($event) = @_;
             push @captured, { original => $event };
         };
 
-        my $interceptor = async sub ($event, $send) {
+        my $interceptor = async sub  {
+        my ($event, $send) = @_;
             push @captured, { intercepted => $event->{type} };
             # Modify event
             $event->{modified} = 1;
@@ -108,13 +109,17 @@ subtest 'Custom middleware subclass' => sub {
         use Future::AsyncAwait;
         use experimental 'signatures';
 
-        sub wrap ($self, $app) {
+        sub wrap {
+            my ($self, $app) = @_;
+        
             my $header_name  = $self->{config}{name}  // 'x-test';
             my $header_value = $self->{config}{value} // 'added';
 
-            return async sub ($scope, $receive, $send) {
+            return async sub  {
+        my ($scope, $receive, $send) = @_;
                 # Intercept send to add header
-                my $wrapped_send = $self->intercept_send($send, async sub ($event, $orig) {
+                my $wrapped_send = $self->intercept_send($send, async sub  {
+        my ($event, $orig) = @_;
                     if ($event->{type} eq 'http.response.start') {
                         push @{$event->{headers}}, [$header_name, $header_value];
                     }
@@ -132,11 +137,14 @@ subtest 'Custom middleware subclass' => sub {
         use Future::AsyncAwait;
         use experimental 'signatures';
 
-        sub wrap ($self, $app) {
+        sub wrap {
+            my ($self, $app) = @_;
+        
             my $key   = $self->{config}{key};
             my $value = $self->{config}{value};
 
-            return async sub ($scope, $receive, $send) {
+            return async sub  {
+        my ($scope, $receive, $send) = @_;
                 my $modified = $self->modify_scope($scope, { $key => $value });
                 await $app->($modified, $receive, $send);
             };
@@ -146,7 +154,8 @@ subtest 'Custom middleware subclass' => sub {
     # Test: wrap() returns valid async sub
     subtest 'wrap() returns async sub' => sub {
         my $mw = TestMiddleware::AddHeader->new(name => 'x-custom', value => 'hello');
-        my $app = async sub ($scope, $receive, $send) {
+        my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         };
@@ -160,7 +169,8 @@ subtest 'Custom middleware subclass' => sub {
             await $wrapped->(
                 { type => 'http', path => '/' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -185,7 +195,8 @@ subtest 'Custom middleware subclass' => sub {
         my $original_scope = { type => 'http', path => '/test' };
         my $received_scope;
 
-        my $app = async sub ($scope, $receive, $send) {
+        my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
             $received_scope = $scope;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -197,7 +208,8 @@ subtest 'Custom middleware subclass' => sub {
             await $wrapped->(
                 $original_scope,
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -224,9 +236,12 @@ subtest 'Middleware Builder' => sub {
             use experimental 'signatures';
             our $call_order = [];
 
-            sub wrap ($self, $app) {
+            sub wrap {
+                my ($self, $app) = @_;
+            
                 my $name = $self->{config}{name};
-                return async sub ($scope, $receive, $send) {
+                return async sub  {
+        my ($scope, $receive, $send) = @_;
                     push @$call_order, "enter:$name";
                     await $app->($scope, $receive, $send);
                     push @$call_order, "exit:$name";
@@ -237,7 +252,8 @@ subtest 'Middleware Builder' => sub {
         $TestMiddleware::Counter::call_order = [];
 
         # Build using DSL
-        my $inner_app = async sub ($scope, $receive, $send) {
+        my $inner_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             push @$TestMiddleware::Counter::call_order, "app";
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -253,7 +269,8 @@ subtest 'Middleware Builder' => sub {
             await $app->(
                 { type => 'http', path => '/' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -271,15 +288,19 @@ subtest 'Middleware Builder' => sub {
             use experimental 'signatures';
             our $was_applied = 0;
 
-            sub wrap ($self, $app) {
-                return async sub ($scope, $receive, $send) {
+            sub wrap {
+                my ($self, $app) = @_;
+            
+                return async sub  {
+        my ($scope, $receive, $send) = @_;
                     $was_applied = 1;
                     await $app->($scope, $receive, $send);
                 };
             }
         }
 
-        my $inner_app = async sub ($scope, $receive, $send) {
+        my $inner_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         };
@@ -298,7 +319,8 @@ subtest 'Middleware Builder' => sub {
             await $app->(
                 { type => 'http', path => '/api/users' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
         ok $TestMiddleware::Marker::was_applied, 'middleware applied for /api/ path';
@@ -309,7 +331,8 @@ subtest 'Middleware Builder' => sub {
             await $app->(
                 { type => 'http', path => '/web/home' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
         ok !$TestMiddleware::Marker::was_applied, 'middleware skipped for non-/api/ path';
@@ -321,7 +344,8 @@ subtest 'Middleware Builder' => sub {
         my $api_path;
         my $api_root_path;
 
-        my $api_app = async sub ($scope, $receive, $send) {
+        my $api_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             $api_called = 1;
             $api_path = $scope->{path};
             $api_root_path = $scope->{root_path};
@@ -330,7 +354,8 @@ subtest 'Middleware Builder' => sub {
         };
 
         my $main_called = 0;
-        my $main_app = async sub ($scope, $receive, $send) {
+        my $main_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             $main_called = 1;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'Main', more => 0 });
@@ -346,7 +371,8 @@ subtest 'Middleware Builder' => sub {
             await $app->(
                 { type => 'http', path => '/api/users', root_path => '' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
         ok $api_called, 'API app was called';
@@ -360,7 +386,8 @@ subtest 'Middleware Builder' => sub {
             await $app->(
                 { type => 'http', path => '/web/home', root_path => '' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
         ok !$api_called, 'API app was not called';
@@ -372,7 +399,8 @@ subtest 'Middleware Builder' => sub {
             await $app->(
                 { type => 'http', path => '/api', root_path => '' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
         ok $api_called, 'API app was called for exact path';

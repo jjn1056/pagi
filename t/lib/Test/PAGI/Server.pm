@@ -1,7 +1,6 @@
 package Test::PAGI::Server;
 use strict;
 use warnings;
-use experimental 'signatures';
 
 our $VERSION = '0.001';
 
@@ -27,7 +26,9 @@ Test utilities for running integration tests against PAGI::Server.
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
+
     my $self = bless {
         app  => $args{app},
         port => $args{port} // 0,  # 0 = pick available port
@@ -35,27 +36,39 @@ sub new ($class, %args) {
     return $self;
 }
 
-sub start ($self) {
+sub start {
+    my ($self) = @_;
+
     # TODO: Implement - start server in background
 }
 
-sub stop ($self) {
+sub stop {
+    my ($self) = @_;
+
     # TODO: Implement - stop server
 }
 
-sub port ($self) {
+sub port {
+    my ($self) = @_;
+
     return $self->{port};
 }
 
-sub base_url ($self) {
+sub base_url {
+    my ($self) = @_;
+
     return "http://127.0.0.1:" . $self->port;
 }
 
-sub request ($self, $method, $path, %opts) {
+sub request {
+    my ($self, $method, $path, %opts) = @_;
+
     # TODO: Implement - make HTTP request
 }
 
-sub websocket ($self, $path, %opts) {
+sub websocket {
+    my ($self, $path, %opts) = @_;
+
     # TODO: Implement - open WebSocket connection
 }
 

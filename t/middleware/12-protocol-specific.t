@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -29,7 +28,8 @@ subtest 'WebSocket::Heartbeat - adds heartbeat config to scope' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         # Send accept
         await $send->({ type => 'websocket.accept' });
@@ -46,7 +46,8 @@ subtest 'WebSocket::Heartbeat - adds heartbeat config to scope' => sub {
         $wrapped->(
             $scope,
             async sub { { type => 'websocket.disconnect' } },
-            async sub ($e) { push @events, $e }
+            async sub  {
+        my ($e) = @_; push @events, $e }
         );
     };
 
@@ -59,7 +60,8 @@ subtest 'WebSocket::Heartbeat - passes through non-websocket' => sub {
     my $heartbeat = PAGI::Middleware::WebSocket::Heartbeat->new(loop => $loop);
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -83,7 +85,8 @@ subtest 'SSE::Retry - sends retry hint on start' => sub {
         include_on_start => 1,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'sse.start' });
         await $send->({ type => 'sse.send', data => 'test' });
     };
@@ -93,7 +96,8 @@ subtest 'SSE::Retry - sends retry hint on start' => sub {
 
     my @events;
     run_async {
-        $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e });
+        $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e });
     };
 
     is scalar(@events), 3, 'three events sent';
@@ -107,7 +111,8 @@ subtest 'SSE::Retry - adds retry to scope' => sub {
     my $retry = PAGI::Middleware::SSE::Retry->new(retry => 3000);
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'sse.start' });
     };
@@ -124,7 +129,8 @@ subtest 'SSE::Retry - passes through non-SSE' => sub {
     my $retry = PAGI::Middleware::SSE::Retry->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -150,7 +156,8 @@ subtest 'SSE::Heartbeat - adds heartbeat config to scope' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'sse.start' });
     };
@@ -169,7 +176,8 @@ subtest 'SSE::Heartbeat - passes through non-SSE' => sub {
     my $heartbeat = PAGI::Middleware::SSE::Heartbeat->new(loop => $loop);
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });

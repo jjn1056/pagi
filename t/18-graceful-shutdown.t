@@ -20,7 +20,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Async::Timer::Countdown;
@@ -40,7 +39,8 @@ use PAGI::Server;
 subtest 'Active request should complete during shutdown' => sub {
     # App that handles requests with configurable delay
     # Query param ?delay=N causes N second delay before response
-    my $slow_app = async sub ($scope, $receive, $send) {
+    my $slow_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -201,7 +201,8 @@ subtest 'Single-worker mode graceful shutdown' => sub {
     # Test with workers => 0 (single-worker mode) which is simpler
     # In single-worker mode, we can test shutdown behavior directly
 
-    my $slow_app = async sub ($scope, $receive, $send) {
+    my $slow_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();

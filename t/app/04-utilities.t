@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -37,7 +36,8 @@ subtest 'App::Healthcheck' => sub {
             await $app->(
                 { type => 'http', path => '/health' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -59,7 +59,8 @@ subtest 'App::Healthcheck' => sub {
             await $app->(
                 { type => 'http', path => '/health' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -80,7 +81,8 @@ subtest 'App::Healthcheck' => sub {
             await $app->(
                 { type => 'http', path => '/health' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -101,7 +103,8 @@ subtest 'App::Healthcheck' => sub {
             await $app->(
                 { type => 'http', path => '/health' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -123,7 +126,8 @@ subtest 'App::Healthcheck' => sub {
             await $app->(
                 { type => 'http', path => '/health' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -161,7 +165,8 @@ subtest 'App::Loader loads app from file' => sub {
             await $app->(
                 { type => 'http', path => '/' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -177,7 +182,8 @@ subtest 'App::Loader loads app from file' => sub {
             await $app->(
                 { type => 'http', path => '/' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -195,7 +201,8 @@ subtest 'App::Throttle rate limiting' => sub {
     PAGI::App::Throttle->reset_all;
 
     subtest 'allows requests within limit' => sub {
-        my $inner_app = async sub ($scope, $receive, $send) {
+        my $inner_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         };
@@ -211,7 +218,8 @@ subtest 'App::Throttle rate limiting' => sub {
             await $app->(
                 { type => 'http', path => '/', client => ['127.0.0.1', 12345] },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -221,7 +229,8 @@ subtest 'App::Throttle rate limiting' => sub {
     subtest 'blocks requests over limit' => sub {
         PAGI::App::Throttle->reset_all;
 
-        my $inner_app = async sub ($scope, $receive, $send) {
+        my $inner_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         };
@@ -241,7 +250,8 @@ subtest 'App::Throttle rate limiting' => sub {
                 await $app->(
                     { type => 'http', path => '/' },
                     async sub { { type => 'http.disconnect' } },
-                    async sub ($event) { push @sent, $event },
+                    async sub  {
+        my ($event) = @_; push @sent, $event },
                 );
             });
             if ($sent[0]{status} == 429) {
@@ -256,7 +266,8 @@ subtest 'App::Throttle rate limiting' => sub {
     subtest 'adds rate limit headers' => sub {
         PAGI::App::Throttle->reset_all;
 
-        my $inner_app = async sub ($scope, $receive, $send) {
+        my $inner_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         };
@@ -273,7 +284,8 @@ subtest 'App::Throttle rate limiting' => sub {
             await $app->(
                 { type => 'http', path => '/' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -284,7 +296,8 @@ subtest 'App::Throttle rate limiting' => sub {
     subtest '429 response includes Retry-After' => sub {
         PAGI::App::Throttle->reset_all;
 
-        my $inner_app = async sub ($scope, $receive, $send) {
+        my $inner_app = async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         };
@@ -301,7 +314,8 @@ subtest 'App::Throttle rate limiting' => sub {
             await $app->(
                 { type => 'http', path => '/' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -311,7 +325,8 @@ subtest 'App::Throttle rate limiting' => sub {
             await $app->(
                 { type => 'http', path => '/' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 

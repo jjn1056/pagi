@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -39,7 +38,8 @@ subtest 'Cookie middleware - parses cookies' => sub {
     my $cookie = PAGI::Middleware::Cookie->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -61,7 +61,8 @@ subtest 'Cookie middleware - parses cookies' => sub {
 subtest 'Cookie middleware - cookie jar sets response cookies' => sub {
     my $cookie = PAGI::Middleware::Cookie->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $scope->{'pagi.cookie_jar'}->set('token', 'xyz789', httponly => 1, secure => 1);
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -72,7 +73,8 @@ subtest 'Cookie middleware - cookie jar sets response cookies' => sub {
 
     my @events;
     my $receive = async sub { {} };
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
 
     run_async { $wrapped->($scope, $receive, $send) };
 
@@ -93,7 +95,8 @@ subtest 'Session middleware - creates new session' => sub {
     my $session = PAGI::Middleware::Session->new(secret => 'test-secret');
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         $scope->{'pagi.session'}{user_id} = 42;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
@@ -105,7 +108,8 @@ subtest 'Session middleware - creates new session' => sub {
 
     my @events;
     my $receive = async sub { {} };
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
 
     run_async { $wrapped->($scope, $receive, $send) };
 
@@ -124,7 +128,8 @@ subtest 'Session middleware - restores existing session' => sub {
 
     # First request - create session
     my $session_id;
-    my $app1 = async sub ($scope, $receive, $send) {
+    my $app1 = async sub  {
+        my ($scope, $receive, $send) = @_;
         $session_id = $scope->{'pagi.session_id'};
         $scope->{'pagi.session'}{counter} = 1;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
@@ -135,7 +140,8 @@ subtest 'Session middleware - restores existing session' => sub {
 
     # Second request - restore session
     my $captured_session;
-    my $app2 = async sub ($scope, $receive, $send) {
+    my $app2 = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_session = $scope->{'pagi.session'};
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -157,7 +163,8 @@ subtest 'Auth::Basic - returns 401 without credentials' => sub {
         authenticator => sub { 1 },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -167,7 +174,8 @@ subtest 'Auth::Basic - returns 401 without credentials' => sub {
 
     my @events;
     my $receive = async sub { {} };
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
 
     run_async { $wrapped->($scope, $receive, $send) };
 
@@ -178,13 +186,15 @@ subtest 'Auth::Basic - returns 401 without credentials' => sub {
 
 subtest 'Auth::Basic - accepts valid credentials' => sub {
     my $auth = PAGI::Middleware::Auth::Basic->new(
-        authenticator => sub ($user, $pass) {
+        authenticator => sub  {
+        my ($user, $pass) = @_;
             return $user eq 'admin' && $pass eq 'secret';
         },
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -195,7 +205,8 @@ subtest 'Auth::Basic - accepts valid credentials' => sub {
     my $scope = make_scope(headers => [['Authorization', "Basic $credentials"]]);
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'request succeeds';
     is $captured_scope->{'pagi.auth'}{username}, 'admin', 'username in scope';
@@ -203,12 +214,14 @@ subtest 'Auth::Basic - accepts valid credentials' => sub {
 
 subtest 'Auth::Basic - rejects invalid credentials' => sub {
     my $auth = PAGI::Middleware::Auth::Basic->new(
-        authenticator => sub ($user, $pass) {
+        authenticator => sub  {
+        my ($user, $pass) = @_;
             return $user eq 'admin' && $pass eq 'secret';
         },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -218,7 +231,8 @@ subtest 'Auth::Basic - rejects invalid credentials' => sub {
     my $scope = make_scope(headers => [['Authorization', "Basic $credentials"]]);
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 401, 'returns 401 for wrong password';
 };
@@ -250,7 +264,8 @@ sub _base64url_encode {
 subtest 'Auth::Bearer - returns 401 without token' => sub {
     my $auth = PAGI::Middleware::Auth::Bearer->new(secret => 'test-secret');
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -259,7 +274,8 @@ subtest 'Auth::Bearer - returns 401 without token' => sub {
     my $scope = make_scope();
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 401, 'returns 401 without token';
 };
@@ -271,7 +287,8 @@ subtest 'Auth::Bearer - accepts valid JWT' => sub {
     my $token = make_jwt({ sub => 'user123', exp => time() + 3600 }, $secret);
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -281,7 +298,8 @@ subtest 'Auth::Bearer - accepts valid JWT' => sub {
     my $scope = make_scope(headers => [['Authorization', "Bearer $token"]]);
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'request succeeds';
     is $captured_scope->{'pagi.auth'}{claims}{sub}, 'user123', 'JWT claims in scope';
@@ -293,7 +311,8 @@ subtest 'Auth::Bearer - rejects expired JWT' => sub {
 
     my $token = make_jwt({ sub => 'user123', exp => time() - 3600 }, $secret);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -302,7 +321,8 @@ subtest 'Auth::Bearer - rejects expired JWT' => sub {
     my $scope = make_scope(headers => [['Authorization', "Bearer $token"]]);
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 401, 'rejects expired token';
 };
@@ -312,7 +332,8 @@ subtest 'Auth::Bearer - rejects invalid signature' => sub {
 
     my $token = make_jwt({ sub => 'user123' }, 'wrong-secret');
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -321,7 +342,8 @@ subtest 'Auth::Bearer - rejects invalid signature' => sub {
     my $scope = make_scope(headers => [['Authorization', "Bearer $token"]]);
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 401, 'rejects invalid signature';
 };

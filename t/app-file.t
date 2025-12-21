@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -23,7 +22,9 @@ my $loop = IO::Async::Loop->new;
 my $static_dir = "$FindBin::Bin/../examples/app-01-file/static";
 
 # Helper to create server with App::File
-sub create_server (%opts) {
+sub create_server {
+    my (%opts) = @_;
+
     my $app = PAGI::App::File->new(
         root => $opts{root} // $static_dir,
         %{$opts{app_opts} // {}},
@@ -43,7 +44,9 @@ sub create_server (%opts) {
 }
 
 # Helper to make HTTP request
-async sub http_get ($port, $path, %headers) {
+async sub http_get {
+    my ($port, $path, %headers) = @_;
+
     my $http = Net::Async::HTTP->new;
     $loop->add($http);
 

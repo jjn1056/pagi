@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -34,7 +33,8 @@ subtest 'CORS handles preflight OPTIONS request' => sub {
     );
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         await $send->({
             type    => 'http.response.start',
@@ -63,7 +63,8 @@ subtest 'CORS handles preflight OPTIONS request' => sub {
                 ],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -82,7 +83,8 @@ subtest 'CORS adds headers to actual requests' => sub {
         credentials => 1,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -107,7 +109,8 @@ subtest 'CORS adds headers to actual requests' => sub {
                 headers => [['origin', 'https://example.com']],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -121,7 +124,8 @@ subtest 'CORS rejects unknown origins' => sub {
         origins => ['https://allowed.com'],
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -146,7 +150,8 @@ subtest 'CORS rejects unknown origins' => sub {
                 headers => [['origin', 'https://evil.com']],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -162,7 +167,8 @@ subtest 'CORS rejects unknown origins' => sub {
 subtest 'SecurityHeaders adds X-Content-Type-Options' => sub {
     my $mw = PAGI::Middleware::SecurityHeaders->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -182,7 +188,8 @@ subtest 'SecurityHeaders adds X-Content-Type-Options' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -195,7 +202,8 @@ subtest 'SecurityHeaders adds X-Frame-Options' => sub {
         x_frame_options => 'DENY',
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -215,7 +223,8 @@ subtest 'SecurityHeaders adds X-Frame-Options' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -226,7 +235,8 @@ subtest 'SecurityHeaders adds X-Frame-Options' => sub {
 subtest 'SecurityHeaders adds all default headers' => sub {
     my $mw = PAGI::Middleware::SecurityHeaders->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -246,7 +256,8 @@ subtest 'SecurityHeaders adds all default headers' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -267,7 +278,8 @@ subtest 'TrustedHosts allows valid hosts' => sub {
     );
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         await $send->({
             type    => 'http.response.start',
@@ -293,7 +305,8 @@ subtest 'TrustedHosts allows valid hosts' => sub {
                 headers => [['host', 'example.com']],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -307,7 +320,8 @@ subtest 'TrustedHosts rejects invalid hosts' => sub {
     );
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
     };
 
@@ -323,7 +337,8 @@ subtest 'TrustedHosts rejects invalid hosts' => sub {
                 headers => [['host', 'evil.com']],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -337,7 +352,8 @@ subtest 'TrustedHosts supports wildcard patterns' => sub {
     );
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         await $send->({
             type    => 'http.response.start',
@@ -362,7 +378,8 @@ subtest 'TrustedHosts supports wildcard patterns' => sub {
                 headers => [['host', 'api.example.com']],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { },
+            async sub  {
+        my ($event) = @_; },
         );
     });
 
@@ -377,7 +394,8 @@ subtest 'CSRF rejects POST without token' => sub {
     my $mw = PAGI::Middleware::CSRF->new(secret => 'test-secret');
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
     };
 
@@ -393,7 +411,8 @@ subtest 'CSRF rejects POST without token' => sub {
                 headers => [],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -406,7 +425,8 @@ subtest 'CSRF allows POST with valid token' => sub {
 
     # Generate a token first with a GET request
     my $token;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $token = $scope->{csrf_token};
         await $send->({
             type    => 'http.response.start',
@@ -433,7 +453,8 @@ subtest 'CSRF allows POST with valid token' => sub {
                 headers => [],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent1, $event },
+            async sub  {
+        my ($event) = @_; push @sent1, $event },
         );
     });
 
@@ -451,7 +472,8 @@ subtest 'CSRF allows POST with valid token' => sub {
 
     # POST request with token
     my $post_called = 0;
-    my $post_app = async sub ($scope, $receive, $send) {
+    my $post_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $post_called = 1;
         await $send->({
             type    => 'http.response.start',
@@ -480,7 +502,8 @@ subtest 'CSRF allows POST with valid token' => sub {
                 ],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent2, $event },
+            async sub  {
+        my ($event) = @_; push @sent2, $event },
         );
     });
 
@@ -492,7 +515,8 @@ subtest 'CSRF allows GET without token' => sub {
     my $mw = PAGI::Middleware::CSRF->new(secret => 'test-secret');
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         await $send->({
             type    => 'http.response.start',
@@ -518,7 +542,8 @@ subtest 'CSRF allows GET without token' => sub {
                 headers => [],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 

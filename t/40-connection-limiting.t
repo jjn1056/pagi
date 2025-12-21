@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Scalar::Util qw(refaddr);
 use IO::Async::Loop;
@@ -80,7 +79,8 @@ subtest 'returns 503 when at max_connections' => sub {
     my $loop = IO::Async::Loop->new;
 
     my $server = PAGI::Server->new(
-        app => async sub ($scope, $receive, $send) {
+        app => async sub  {
+        my ($scope, $receive, $send) = @_;
             # Handle lifespan
             if ($scope->{type} eq 'lifespan') {
                 while (1) {
@@ -172,7 +172,8 @@ subtest 'EMFILE error pauses accepting temporarily' => sub {
     my $loop = IO::Async::Loop->new;
 
     my $server = PAGI::Server->new(
-        app => async sub ($scope, $receive, $send) {
+        app => async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         },
@@ -196,7 +197,8 @@ subtest 'logs warning when approaching max_connections' => sub {
     local $SIG{__WARN__} = sub { push @warnings, @_ };
 
     my $server = PAGI::Server->new(
-        app => async sub ($scope, $receive, $send) {
+        app => async sub  {
+        my ($scope, $receive, $send) = @_;
             # Handle lifespan
             if ($scope->{type} eq 'lifespan') {
                 while (1) {

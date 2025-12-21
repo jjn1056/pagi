@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -23,8 +22,11 @@ sub run_async {
 }
 
 # Helper app generators
-sub make_response_app ($status, $body) {
-    return async sub ($scope, $receive, $send) {
+sub make_response_app {
+    my ($status, $body) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => $status, headers => [] });
         await $send->({ type => 'http.response.body', body => $body, more => 0 });
     };
@@ -47,7 +49,8 @@ subtest 'App::URLMap routes by path prefix' => sub {
             await $app->(
                 { type => 'http', path => '/api/users' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -57,7 +60,8 @@ subtest 'App::URLMap routes by path prefix' => sub {
 
     subtest 'adjusts path for mounted app' => sub {
         my $received_path;
-        my $inner = async sub ($scope, $receive, $send) {
+        my $inner = async sub  {
+        my ($scope, $receive, $send) = @_;
             $received_path = $scope->{path};
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -71,7 +75,8 @@ subtest 'App::URLMap routes by path prefix' => sub {
             await $app->(
                 { type => 'http', path => '/api/users/123' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -88,7 +93,8 @@ subtest 'App::URLMap routes by path prefix' => sub {
             await $app->(
                 { type => 'http', path => '/unknown' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -106,7 +112,8 @@ subtest 'App::URLMap routes by path prefix' => sub {
             await $app->(
                 { type => 'http', path => '/api/v2/users' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -135,7 +142,8 @@ subtest 'App::Cascade tries apps in sequence' => sub {
             await $app->(
                 { type => 'http', path => '/test' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -157,7 +165,8 @@ subtest 'App::Cascade tries apps in sequence' => sub {
             await $app->(
                 { type => 'http', path => '/test' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -179,7 +188,8 @@ subtest 'App::Cascade tries apps in sequence' => sub {
             await $app->(
                 { type => 'http', path => '/test' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -201,7 +211,8 @@ subtest 'App::NotFound returns 404' => sub {
             await $app->(
                 { type => 'http', path => '/anything' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -217,7 +228,8 @@ subtest 'App::NotFound returns 404' => sub {
             await $app->(
                 { type => 'http', path => '/anything' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -239,7 +251,8 @@ subtest 'App::Redirect returns redirects' => sub {
             await $app->(
                 { type => 'http', path => '/old' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -256,7 +269,8 @@ subtest 'App::Redirect returns redirects' => sub {
             await $app->(
                 { type => 'http', path => '/old' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -273,7 +287,8 @@ subtest 'App::Redirect returns redirects' => sub {
             await $app->(
                 { type => 'http', path => '/test' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 

@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -82,7 +81,8 @@ subtest 'read_file_chunked - basic' => sub {
     my @chunks;
     my $total = PAGI::Util::AsyncFile->read_file_chunked(
         $loop, $filename,
-        sub ($chunk) { push @chunks, $chunk },
+        sub  {
+        my ($chunk) = @_; push @chunks, $chunk },
         chunk_size => 100
     )->get;
 
@@ -100,7 +100,8 @@ subtest 'read_file_chunked - async callback' => sub {
     my $callback_count = 0;
     PAGI::Util::AsyncFile->read_file_chunked(
         $loop, $filename,
-        async sub ($chunk) {
+        async sub  {
+        my ($chunk) = @_;
             $callback_count++;
             push @chunks, $chunk;
             # Simulate async processing
@@ -121,7 +122,8 @@ subtest 'read_file_chunked - single chunk' => sub {
     my @chunks;
     PAGI::Util::AsyncFile->read_file_chunked(
         $loop, $filename,
-        sub ($chunk) { push @chunks, $chunk },
+        sub  {
+        my ($chunk) = @_; push @chunks, $chunk },
         chunk_size => 1000  # Larger than file
     )->get;
 

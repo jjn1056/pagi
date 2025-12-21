@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -43,7 +42,8 @@ subtest 'Rewrite middleware - exact match' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -64,7 +64,8 @@ subtest 'Rewrite middleware - regex with captures' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -85,7 +86,8 @@ subtest 'Rewrite middleware - redirect mode' => sub {
         redirect_code => 302,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -94,7 +96,8 @@ subtest 'Rewrite middleware - redirect mode' => sub {
     my $scope = make_scope(path => '/old');
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 302, 'redirect status';
     my %headers = map { lc($_->[0]) => $_->[1] } @{$events[0]{headers}};
@@ -107,7 +110,8 @@ subtest 'Rewrite middleware - no match passes through' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -128,7 +132,8 @@ subtest 'Rewrite middleware - no match passes through' => sub {
 subtest 'HTTPSRedirect - redirects HTTP to HTTPS' => sub {
     my $redirect = PAGI::Middleware::HTTPSRedirect->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -141,7 +146,8 @@ subtest 'HTTPSRedirect - redirects HTTP to HTTPS' => sub {
     );
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 301, 'redirect status';
     my %headers = map { lc($_->[0]) => $_->[1] } @{$events[0]{headers}};
@@ -152,7 +158,8 @@ subtest 'HTTPSRedirect - passes through HTTPS' => sub {
     my $redirect = PAGI::Middleware::HTTPSRedirect->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -162,7 +169,8 @@ subtest 'HTTPSRedirect - passes through HTTPS' => sub {
     my $scope = make_scope(scheme => 'https');
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'HTTPS passes through';
 };
@@ -172,7 +180,8 @@ subtest 'HTTPSRedirect - excludes paths' => sub {
         exclude => ['/health'],
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -181,7 +190,8 @@ subtest 'HTTPSRedirect - excludes paths' => sub {
     my $scope = make_scope(scheme => 'http', path => '/health');
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'excluded path not redirected';
 };
@@ -196,7 +206,8 @@ subtest 'ReverseProxy - updates client from X-Forwarded-For' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -220,7 +231,8 @@ subtest 'ReverseProxy - updates scheme from X-Forwarded-Proto' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -244,7 +256,8 @@ subtest 'ReverseProxy - ignores untrusted proxies' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -270,7 +283,8 @@ subtest 'Healthcheck - returns health status' => sub {
         path => '/health',
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'App', more => 0 });
     };
@@ -279,7 +293,8 @@ subtest 'Healthcheck - returns health status' => sub {
     my $scope = make_scope(path => '/health');
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'health check returns 200';
     my $body = JSON::PP::decode_json($events[1]{body});
@@ -291,7 +306,8 @@ subtest 'Healthcheck - passes through other paths' => sub {
         path => '/health',
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'App', more => 0 });
     };
@@ -300,7 +316,8 @@ subtest 'Healthcheck - passes through other paths' => sub {
     my $scope = make_scope(path => '/api');
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[1]{body}, 'App', 'non-health path passes through';
 };
@@ -314,7 +331,8 @@ subtest 'Healthcheck - runs custom checks' => sub {
         },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'App', more => 0 });
     };
@@ -323,7 +341,8 @@ subtest 'Healthcheck - runs custom checks' => sub {
     my $scope = make_scope(path => '/health');
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 503, 'returns 503 when check fails';
     my $body = JSON::PP::decode_json($events[1]{body});
@@ -345,7 +364,8 @@ subtest 'Healthcheck - liveness probe' => sub {
     my $scope = make_scope(path => '/healthz');
 
     my @events;
-    run_async { $wrapped->($scope, async sub { {} }, async sub ($e) { push @events, $e }) };
+    run_async { $wrapped->($scope, async sub { {} }, async sub  {
+        my ($e) = @_; push @events, $e }) };
 
     is $events[0]{status}, 200, 'liveness always returns 200';
 };

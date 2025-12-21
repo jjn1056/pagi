@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Socket::INET;
@@ -39,7 +38,8 @@ subtest 'Request line length limit (3.16)' => sub {
 };
 
 subtest 'Request line limit enforced by server' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -134,7 +134,8 @@ subtest 'Server header added to responses (4.2)' => sub {
 };
 
 subtest 'Server header in actual responses' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -211,7 +212,8 @@ subtest 'Server header in actual responses' => sub {
 # =============================================================================
 
 subtest 'Certificate file validation at startup (4.4)' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Minimal app
         if ($scope->{type} eq 'lifespan') {
             while (1) {

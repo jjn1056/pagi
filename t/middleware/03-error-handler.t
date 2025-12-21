@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -26,7 +25,8 @@ sub run_async {
 subtest 'ErrorHandler catches exceptions and returns 500' => sub {
     my $mw = PAGI::Middleware::ErrorHandler->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Something went wrong!";
     };
 
@@ -37,7 +37,8 @@ subtest 'ErrorHandler catches exceptions and returns 500' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -60,7 +61,8 @@ subtest 'ErrorHandler catches exceptions and returns 500' => sub {
 subtest 'ErrorHandler shows stack trace in development mode' => sub {
     my $mw = PAGI::Middleware::ErrorHandler->new(development => 1);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Detailed error message";
     };
 
@@ -71,7 +73,8 @@ subtest 'ErrorHandler shows stack trace in development mode' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -82,7 +85,8 @@ subtest 'ErrorHandler shows stack trace in development mode' => sub {
 subtest 'ErrorHandler hides details in production mode' => sub {
     my $mw = PAGI::Middleware::ErrorHandler->new(development => 0);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Secret internal error details";
     };
 
@@ -93,7 +97,8 @@ subtest 'ErrorHandler hides details in production mode' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -104,10 +109,12 @@ subtest 'ErrorHandler hides details in production mode' => sub {
 subtest 'ErrorHandler calls on_error callback' => sub {
     my @errors;
     my $mw = PAGI::Middleware::ErrorHandler->new(
-        on_error => sub ($error) { push @errors, $error },
+        on_error => sub  {
+        my ($error) = @_; push @errors, $error },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Test error for callback";
     };
 
@@ -117,7 +124,8 @@ subtest 'ErrorHandler calls on_error callback' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { },
+            async sub  {
+        my ($event) = @_; },
         );
     });
 
@@ -131,7 +139,8 @@ subtest 'ErrorHandler supports JSON content type' => sub {
         development  => 1,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "JSON error";
     };
 
@@ -142,7 +151,8 @@ subtest 'ErrorHandler supports JSON content type' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -167,7 +177,8 @@ subtest 'ErrorHandler supports plain text content type' => sub {
         content_type => 'text/plain',
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Plain text error";
     };
 
@@ -178,7 +189,8 @@ subtest 'ErrorHandler supports plain text content type' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -201,7 +213,8 @@ subtest 'ErrorHandler respects exception status_code method' => sub {
 
     my $mw = PAGI::Middleware::ErrorHandler->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die TestException->new(404);
     };
 
@@ -212,7 +225,8 @@ subtest 'ErrorHandler respects exception status_code method' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -223,7 +237,8 @@ subtest 'ErrorHandler respects exception status_code method' => sub {
 subtest 'ErrorHandler passes through successful responses' => sub {
     my $mw = PAGI::Middleware::ErrorHandler->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -243,7 +258,8 @@ subtest 'ErrorHandler passes through successful responses' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -256,7 +272,8 @@ subtest 'ErrorHandler skips non-HTTP requests' => sub {
     my $mw = PAGI::Middleware::ErrorHandler->new;
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         die "WebSocket error";
     };
@@ -267,7 +284,8 @@ subtest 'ErrorHandler skips non-HTTP requests' => sub {
     my $future = $wrapped->(
         { type => 'websocket', path => '/' },
         async sub { { type => 'websocket.disconnect' } },
-        async sub ($event) { push @sent, $event },
+        async sub  {
+        my ($event) = @_; push @sent, $event },
     );
 
     # The future should fail (not be caught by middleware)
@@ -281,7 +299,8 @@ subtest 'ErrorHandler skips non-HTTP requests' => sub {
 subtest 'ErrorHandler escapes HTML in error messages' => sub {
     my $mw = PAGI::Middleware::ErrorHandler->new(development => 1);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "<script>alert('xss')</script>";
     };
 
@@ -292,7 +311,8 @@ subtest 'ErrorHandler escapes HTML in error messages' => sub {
         await $wrapped->(
             { type => 'http', path => '/' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 

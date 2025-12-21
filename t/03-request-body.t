@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -83,7 +82,8 @@ subtest 'Large POST body works correctly' => sub {
     my $received_body = '';
     my $event_count = 0;
 
-    my $tracking_app = async sub ($scope, $receive, $send) {
+    my $tracking_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
         my $body = '';
@@ -145,7 +145,8 @@ subtest 'Large POST body works correctly' => sub {
 subtest 'Chunked Transfer-Encoding on request body' => sub {
     my $received_body = '';
 
-    my $echo_app = async sub ($scope, $receive, $send) {
+    my $echo_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
         my $body = '';

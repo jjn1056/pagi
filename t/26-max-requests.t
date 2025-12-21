@@ -2,7 +2,6 @@
 use strict;
 use warnings;
 use v5.32;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Future::AsyncAwait;
@@ -23,7 +22,8 @@ subtest 'worker restarts after max_requests' => sub {
 # Test: max_requests=0 means unlimited
 subtest 'max_requests 0 means unlimited' => sub {
     my $server = PAGI::Server->new(
-        app => async sub ($scope, $receive, $send) {
+        app => async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK' });
         },
@@ -40,7 +40,8 @@ subtest 'max_requests 0 means unlimited' => sub {
 subtest 'max_requests ignored in single worker mode' => sub {
     my $loop = IO::Async::Loop->new;
     my $server = PAGI::Server->new(
-        app => async sub ($scope, $receive, $send) {
+        app => async sub  {
+        my ($scope, $receive, $send) = @_;
             # Handle lifespan events
             if ($scope->{type} eq 'lifespan') {
                 while (1) {
@@ -89,7 +90,8 @@ subtest 'max_requests ignored in single worker mode' => sub {
 subtest '_on_request_complete increments counter' => sub {
     my $loop = IO::Async::Loop->new;
     my $server = PAGI::Server->new(
-        app => async sub ($scope, $receive, $send) {
+        app => async sub  {
+        my ($scope, $receive, $send) = @_;
             if ($scope->{type} eq 'lifespan') {
                 my $msg = await $receive->();
                 if ($msg->{type} eq 'lifespan.startup') {

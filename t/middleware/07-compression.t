@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -37,7 +36,8 @@ sub run_async :prototype(&) {
 subtest 'GZip middleware - compresses when client accepts' => sub {
     my $gzip = PAGI::Middleware::GZip->new(min_size => 10);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -54,7 +54,8 @@ subtest 'GZip middleware - compresses when client accepts' => sub {
     my $scope = make_scope(headers => [['Accept-Encoding', 'gzip, deflate']]);
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -77,7 +78,8 @@ subtest 'GZip middleware - compresses when client accepts' => sub {
 subtest 'GZip middleware - skips when client does not accept gzip' => sub {
     my $gzip = PAGI::Middleware::GZip->new(min_size => 10);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -94,7 +96,8 @@ subtest 'GZip middleware - skips when client does not accept gzip' => sub {
     my $scope = make_scope(headers => []);  # No Accept-Encoding
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -107,7 +110,8 @@ subtest 'GZip middleware - skips when client does not accept gzip' => sub {
 subtest 'GZip middleware - skips small responses' => sub {
     my $gzip = PAGI::Middleware::GZip->new(min_size => 1000);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -124,7 +128,8 @@ subtest 'GZip middleware - skips small responses' => sub {
     my $scope = make_scope(headers => [['Accept-Encoding', 'gzip']]);
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -141,7 +146,8 @@ subtest 'GZip middleware - skips small responses' => sub {
 subtest 'ETag middleware - generates ETag' => sub {
     my $etag = PAGI::Middleware::ETag->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -158,7 +164,8 @@ subtest 'ETag middleware - generates ETag' => sub {
     my $scope = make_scope();
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -171,7 +178,8 @@ subtest 'ETag middleware - generates ETag' => sub {
 subtest 'ETag middleware - generates weak ETag' => sub {
     my $etag = PAGI::Middleware::ETag->new(weak => 1);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -188,7 +196,8 @@ subtest 'ETag middleware - generates weak ETag' => sub {
     my $scope = make_scope();
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -200,7 +209,8 @@ subtest 'ETag middleware - generates weak ETag' => sub {
 subtest 'ETag middleware - preserves existing ETag' => sub {
     my $etag = PAGI::Middleware::ETag->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -217,7 +227,8 @@ subtest 'ETag middleware - preserves existing ETag' => sub {
     my $scope = make_scope();
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -233,7 +244,8 @@ subtest 'ETag middleware - preserves existing ETag' => sub {
 subtest 'ConditionalGet - returns 304 on ETag match' => sub {
     my $cond = PAGI::Middleware::ConditionalGet->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -250,7 +262,8 @@ subtest 'ConditionalGet - returns 304 on ETag match' => sub {
     my $scope = make_scope(headers => [['If-None-Match', '"abc123"']]);
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -262,7 +275,8 @@ subtest 'ConditionalGet - returns 304 on ETag match' => sub {
 subtest 'ConditionalGet - returns 200 on ETag mismatch' => sub {
     my $cond = PAGI::Middleware::ConditionalGet->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -279,7 +293,8 @@ subtest 'ConditionalGet - returns 200 on ETag mismatch' => sub {
     my $scope = make_scope(headers => [['If-None-Match', '"different"']]);
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -291,7 +306,8 @@ subtest 'ConditionalGet - returns 200 on ETag mismatch' => sub {
 subtest 'ConditionalGet - handles wildcard If-None-Match' => sub {
     my $cond = PAGI::Middleware::ConditionalGet->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -308,7 +324,8 @@ subtest 'ConditionalGet - handles wildcard If-None-Match' => sub {
     my $scope = make_scope(headers => [['If-None-Match', '*']]);
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -319,7 +336,8 @@ subtest 'ConditionalGet - handles wildcard If-None-Match' => sub {
 subtest 'ConditionalGet - ignores POST requests' => sub {
     my $cond = PAGI::Middleware::ConditionalGet->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -339,7 +357,8 @@ subtest 'ConditionalGet - ignores POST requests' => sub {
     );
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };

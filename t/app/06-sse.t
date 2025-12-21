@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -28,7 +27,8 @@ subtest 'App::SSE::Stream' => sub {
 
     subtest 'sends SSE headers' => sub {
         my $app = PAGI::App::SSE::Stream->new(
-            generator => async sub ($send_event, $scope) {
+            generator => async sub  {
+        my ($send_event, $scope) = @_;
                 await $send_event->({ data => 'test' });
             },
         )->to_app;
@@ -38,7 +38,8 @@ subtest 'App::SSE::Stream' => sub {
             await $app->(
                 { type => 'http', path => '/events' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -55,7 +56,8 @@ subtest 'App::SSE::Stream' => sub {
     subtest 'sends retry hint' => sub {
         my $app = PAGI::App::SSE::Stream->new(
             retry => 5000,
-            generator => async sub ($send_event, $scope) {
+            generator => async sub  {
+        my ($send_event, $scope) = @_;
                 # Empty generator
             },
         )->to_app;
@@ -65,7 +67,8 @@ subtest 'App::SSE::Stream' => sub {
             await $app->(
                 { type => 'http', path => '/events' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -76,7 +79,8 @@ subtest 'App::SSE::Stream' => sub {
 
     subtest 'sends events from generator' => sub {
         my $app = PAGI::App::SSE::Stream->new(
-            generator => async sub ($send_event, $scope) {
+            generator => async sub  {
+        my ($send_event, $scope) = @_;
                 await $send_event->({ data => 'Hello' });
                 await $send_event->({ event => 'custom', data => 'World' });
                 await $send_event->({ id => '123', data => 'With ID' });
@@ -88,7 +92,8 @@ subtest 'App::SSE::Stream' => sub {
             await $app->(
                 { type => 'http', path => '/events' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -103,7 +108,8 @@ subtest 'App::SSE::Stream' => sub {
 
     subtest 'handles multiline data' => sub {
         my $app = PAGI::App::SSE::Stream->new(
-            generator => async sub ($send_event, $scope) {
+            generator => async sub  {
+        my ($send_event, $scope) = @_;
                 await $send_event->({ data => "Line 1\nLine 2\nLine 3" });
             },
         )->to_app;
@@ -113,7 +119,8 @@ subtest 'App::SSE::Stream' => sub {
             await $app->(
                 { type => 'http', path => '/events' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -125,14 +132,16 @@ subtest 'App::SSE::Stream' => sub {
         my $connected = 0;
         my $app = PAGI::App::SSE::Stream->new(
             on_connect => sub { $connected = 1 },
-            generator => async sub ($send_event, $scope) { },
+            generator => async sub  {
+        my ($send_event, $scope) = @_; },
         )->to_app;
 
         run_async(async sub {
             await $app->(
                 { type => 'http', path => '/events' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -163,7 +172,8 @@ subtest 'App::SSE::Pubsub' => sub {
             await $app->(
                 { type => 'http', path => '/events', headers => [] },
                 async sub { $events[$event_idx++] },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 

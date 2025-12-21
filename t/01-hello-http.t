@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Async::Timer::Countdown;
@@ -84,7 +83,8 @@ subtest 'Basic HTTP response returns 200 OK' => sub {
 subtest 'HTTP scope contains all required keys' => sub {
     my $captured_scope;
 
-    my $scope_test_app = async sub ($scope, $receive, $send) {
+    my $scope_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope (required by all apps)
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -154,7 +154,8 @@ subtest 'HTTP scope contains all required keys' => sub {
 
 # Test 7: App exception results in 500 response
 subtest 'App exception results in 500 response' => sub {
-    my $error_app = async sub ($scope, $receive, $send) {
+    my $error_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope first
         if ($scope->{type} eq 'lifespan') {
             while (1) {

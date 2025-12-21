@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -41,7 +40,8 @@ subtest 'RateLimit - allows requests under limit' => sub {
         burst               => 10,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -59,7 +59,8 @@ subtest 'RateLimit - allows requests under limit' => sub {
     for my $i (1..5) {
         my $scope = make_scope(client => ['192.168.1.100', 12345]);
         my @events;
-        my $send = async sub ($event) { push @events, $event };
+        my $send = async sub  {
+        my ($event) = @_; push @events, $event };
         my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
         run_async { $wrapped->($scope, $receive, $send) };
@@ -81,7 +82,8 @@ subtest 'RateLimit - blocks requests over limit' => sub {
         burst               => 3,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -100,7 +102,8 @@ subtest 'RateLimit - blocks requests over limit' => sub {
     for my $i (1..3) {
         my $scope = make_scope(client => ['192.168.1.200', 12345]);
         my @events;
-        my $send = async sub ($event) { push @events, $event };
+        my $send = async sub  {
+        my ($event) = @_; push @events, $event };
         my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
         run_async { $wrapped->($scope, $receive, $send) };
@@ -110,7 +113,8 @@ subtest 'RateLimit - blocks requests over limit' => sub {
     # Next request should be rate limited
     my $scope = make_scope(client => ['192.168.1.200', 12345]);
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -128,7 +132,8 @@ subtest 'RateLimit - different clients have separate limits' => sub {
         burst               => 2,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -147,7 +152,8 @@ subtest 'RateLimit - different clients have separate limits' => sub {
     for my $i (1..2) {
         my $scope = make_scope(client => ['10.0.0.1', 12345]);
         my @events;
-        my $send = async sub ($event) { push @events, $event };
+        my $send = async sub  {
+        my ($event) = @_; push @events, $event };
         my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
         run_async { $wrapped->($scope, $receive, $send) };
         is $events[0]{status}, 200, "client A request $i allowed";
@@ -157,7 +163,8 @@ subtest 'RateLimit - different clients have separate limits' => sub {
     for my $i (1..2) {
         my $scope = make_scope(client => ['10.0.0.2', 12345]);
         my @events;
-        my $send = async sub ($event) { push @events, $event };
+        my $send = async sub  {
+        my ($event) = @_; push @events, $event };
         my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
         run_async { $wrapped->($scope, $receive, $send) };
         is $events[0]{status}, 200, "client B request $i allowed";
@@ -166,7 +173,8 @@ subtest 'RateLimit - different clients have separate limits' => sub {
     # Client A is now rate limited
     my $scope = make_scope(client => ['10.0.0.1', 12345]);
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
     run_async { $wrapped->($scope, $receive, $send) };
     is $events[0]{status}, 429, 'client A blocked';
@@ -178,10 +186,12 @@ subtest 'RateLimit - custom key generator' => sub {
     my $rate_limit = PAGI::Middleware::RateLimit->new(
         requests_per_second => 0.1,
         burst               => 1,
-        key_generator       => sub ($scope) { $scope->{path} },
+        key_generator       => sub  {
+        my ($scope) = @_; $scope->{path} },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -224,7 +234,8 @@ subtest 'Timeout - allows fast requests' => sub {
         loop    => $loop,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -241,7 +252,8 @@ subtest 'Timeout - allows fast requests' => sub {
     my $scope = make_scope();
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -258,7 +270,8 @@ subtest 'Timeout - times out slow requests' => sub {
         on_timeout => sub { $timeout_called = 1 },
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Simulate slow processing
         await $loop->delay_future(after => 1);  # 1 second
         await $send->({
@@ -277,7 +290,8 @@ subtest 'Timeout - times out slow requests' => sub {
     my $scope = make_scope();
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { { type => 'http.request', body => '', more => 0 } };
 
     run_async { $wrapped->($scope, $receive, $send) };
@@ -292,7 +306,8 @@ subtest 'Timeout - passes through non-HTTP requests' => sub {
         loop    => $loop,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'websocket.accept' });
     };
 
@@ -300,7 +315,8 @@ subtest 'Timeout - passes through non-HTTP requests' => sub {
     my $scope = { type => 'websocket' };
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
     my $receive = async sub { {} };
 
     run_async { $wrapped->($scope, $receive, $send) };

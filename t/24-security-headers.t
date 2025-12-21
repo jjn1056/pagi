@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -12,7 +11,8 @@ use PAGI::Middleware::Builder;
 my $loop = IO::Async::Loop->new;
 
 # Simple test app that returns 200 OK
-my $simple_app = async sub ($scope, $receive, $send) {
+my $simple_app = async sub  {
+        my ($scope, $receive, $send) = @_;
     if ($scope->{type} eq 'lifespan') {
         while (1) {
             my $event = await $receive->();
@@ -231,7 +231,8 @@ subtest 'Permissions-Policy can be set' => sub {
 subtest 'Non-HTTP scopes pass through unchanged' => sub {
     my $ws_connected = 0;
 
-    my $ws_app = async sub ($scope, $receive, $send) {
+    my $ws_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();

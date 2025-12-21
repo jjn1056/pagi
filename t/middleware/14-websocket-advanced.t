@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -27,7 +26,8 @@ subtest 'WebSocket::Compression - adds compression config to scope' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'websocket.accept' });
     };
@@ -55,7 +55,8 @@ subtest 'WebSocket::Compression - passes through non-websocket' => sub {
     my $compress = PAGI::Middleware::WebSocket::Compression->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -73,7 +74,8 @@ subtest 'WebSocket::Compression - passes through without extension' => sub {
     my $compress = PAGI::Middleware::WebSocket::Compression->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'websocket.accept' });
     };
@@ -107,7 +109,8 @@ subtest 'WebSocket::RateLimit - adds rate limit config to scope' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'websocket.accept' });
     };
@@ -141,7 +144,8 @@ subtest 'WebSocket::RateLimit - passes through messages within limit' => sub {
     my @received_events;
     my $msg_count = 0;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'websocket.accept' });
 
         while ($msg_count < 3) {
@@ -181,7 +185,8 @@ subtest 'WebSocket::RateLimit - passes through non-websocket' => sub {
     my $ratelimit = PAGI::Middleware::WebSocket::RateLimit->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -214,7 +219,8 @@ subtest 'WebSocket::RateLimit - calls callback on limit exceeded' => sub {
     );
 
     my @received;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'websocket.accept' });
 
         for my $i (1..2) {

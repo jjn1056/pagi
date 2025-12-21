@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Async::Timer::Countdown;
@@ -76,7 +75,8 @@ subtest 'HTTPS connection works with TLS introspection app' => sub {
 subtest 'TLS connection populates scope.extensions.tls' => sub {
     my $captured_scope;
 
-    my $tls_test_app = async sub ($scope, $receive, $send) {
+    my $tls_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -155,7 +155,8 @@ subtest 'TLS connection populates scope.extensions.tls' => sub {
 subtest 'TLS connection has scheme https' => sub {
     my $captured_scope;
 
-    my $scheme_test_app = async sub ($scope, $receive, $send) {
+    my $scheme_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -222,7 +223,8 @@ subtest 'TLS connection has scheme https' => sub {
 subtest 'Non-TLS connection has no tls extension' => sub {
     my $captured_scope;
 
-    my $no_tls_test_app = async sub ($scope, $receive, $send) {
+    my $no_tls_test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {
@@ -346,7 +348,8 @@ subtest 'CLI launcher supports --ssl-cert and --ssl-key for HTTPS' => sub {
 subtest 'TLS 1.2 minimum version is enforced by default' => sub {
     my $captured_scope;
 
-    my $tls_version_app = async sub ($scope, $receive, $send) {
+    my $tls_version_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -417,7 +420,8 @@ subtest 'TLS 1.2 minimum version is enforced by default' => sub {
 subtest 'Custom TLS min_version and cipher_list are configurable' => sub {
     my $captured_scope;
 
-    my $custom_tls_app = async sub ($scope, $receive, $send) {
+    my $custom_tls_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -487,7 +491,8 @@ subtest 'Custom TLS min_version and cipher_list are configurable' => sub {
 
 # Test 9: verify_client requires client certificate (connection fails without one)
 subtest 'verify_client requires client certificate' => sub {
-    my $strict_app = async sub ($scope, $receive, $send) {
+    my $strict_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -573,7 +578,8 @@ subtest 'verify_client requires client certificate' => sub {
 subtest 'Client certificates are captured when provided' => sub {
     my $captured_scope;
 
-    my $client_cert_app = async sub ($scope, $receive, $send) {
+    my $client_cert_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # Handle lifespan scope
         if ($scope->{type} eq 'lifespan') {
             while (1) {

@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -30,7 +29,8 @@ subtest 'Child process gets fresh loop (not parent cached)' => sub {
     close($fh);
 
     # App that reports the loop state
-    my $diagnostic_app = async sub ($scope, $receive, $send) {
+    my $diagnostic_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             # During lifespan startup, capture loop info
             while (1) {

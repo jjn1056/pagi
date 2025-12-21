@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -31,7 +30,8 @@ my $test_root = abs_path('t/static_test_files');
 subtest 'Static middleware serves HTML with correct MIME type' => sub {
     my $mw = PAGI::Middleware::Static->new(root => $test_root);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 404,
@@ -51,7 +51,8 @@ subtest 'Static middleware serves HTML with correct MIME type' => sub {
         await $wrapped->(
             { type => 'http', path => '/index.html', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -79,7 +80,8 @@ subtest 'Static middleware serves JavaScript with correct MIME type' => sub {
         await $wrapped->(
             { type => 'http', path => '/app.js', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -106,7 +108,8 @@ subtest 'Static middleware serves CSS with correct MIME type' => sub {
         await $wrapped->(
             { type => 'http', path => '/style.css', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -135,7 +138,8 @@ subtest 'Static middleware prevents path traversal with ../' => sub {
         await $wrapped->(
             { type => 'http', path => '/../../../etc/passwd', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -153,7 +157,8 @@ subtest 'Static middleware prevents encoded path traversal' => sub {
         await $wrapped->(
             { type => 'http', path => '/%2e%2e/%2e%2e/etc/passwd', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -172,7 +177,8 @@ subtest 'Static middleware allows valid subdirectory access' => sub {
         await $wrapped->(
             { type => 'http', path => '/subdir/file.txt', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -195,7 +201,8 @@ subtest 'Static middleware returns ETag header' => sub {
         await $wrapped->(
             { type => 'http', path => '/hello.txt', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -223,7 +230,8 @@ subtest 'Static middleware returns 304 for matching ETag' => sub {
         await $wrapped->(
             { type => 'http', path => '/hello.txt', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent1, $event },
+            async sub  {
+        my ($event) = @_; push @sent1, $event },
         );
     });
 
@@ -246,7 +254,8 @@ subtest 'Static middleware returns 304 for matching ETag' => sub {
                 headers => [['if-none-match', $etag]],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent2, $event },
+            async sub  {
+        my ($event) = @_; push @sent2, $event },
         );
     });
 
@@ -274,7 +283,8 @@ subtest 'Static middleware supports Range requests' => sub {
                 headers => [['range', 'bytes=0-4']],
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -309,7 +319,8 @@ subtest 'Static middleware handles suffix range' => sub {
                 headers => [['range', 'bytes=-5']],  # Last 5 bytes
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -332,7 +343,8 @@ subtest 'Static middleware returns 416 for invalid range' => sub {
                 headers => [['range', 'bytes=1000-2000']],  # Beyond file size
             },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -354,7 +366,8 @@ subtest 'Static middleware returns 404 for missing files' => sub {
         await $wrapped->(
             { type => 'http', path => '/nonexistent.txt', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -365,7 +378,8 @@ subtest 'Static middleware pass_through falls back to app' => sub {
     my $mw = PAGI::Middleware::Static->new(root => $test_root, pass_through => 1);
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         await $send->({
             type    => 'http.response.start',
@@ -386,7 +400,8 @@ subtest 'Static middleware pass_through falls back to app' => sub {
         await $wrapped->(
             { type => 'http', path => '/nonexistent.txt', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -405,7 +420,8 @@ subtest 'Static middleware serves index file for directory' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -424,7 +440,8 @@ subtest 'Static middleware handles HEAD requests' => sub {
         await $wrapped->(
             { type => 'http', path => '/hello.txt', method => 'HEAD', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -446,7 +463,8 @@ subtest 'Static middleware skips non-GET/HEAD requests' => sub {
     my $mw = PAGI::Middleware::Static->new(root => $test_root);
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         await $send->({
             type    => 'http.response.start',
@@ -467,7 +485,8 @@ subtest 'Static middleware skips non-GET/HEAD requests' => sub {
         await $wrapped->(
             { type => 'http', path => '/hello.txt', method => 'POST', headers => [] },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 

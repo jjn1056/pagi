@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -27,7 +26,8 @@ subtest 'Head middleware suppresses body for HEAD requests' => sub {
     my $mw = PAGI::Middleware::Head->new;
 
     my $received_method;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $received_method = $scope->{method};
         await $send->({
             type    => 'http.response.start',
@@ -51,7 +51,8 @@ subtest 'Head middleware suppresses body for HEAD requests' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'HEAD' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -79,7 +80,8 @@ subtest 'Head middleware passes through GET requests' => sub {
     my $mw = PAGI::Middleware::Head->new;
 
     my $received_method;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $received_method = $scope->{method};
         await $send->({
             type    => 'http.response.start',
@@ -100,7 +102,8 @@ subtest 'Head middleware passes through GET requests' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'GET' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -111,7 +114,8 @@ subtest 'Head middleware passes through GET requests' => sub {
 subtest 'Head middleware handles streaming responses' => sub {
     my $mw = PAGI::Middleware::Head->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -141,7 +145,8 @@ subtest 'Head middleware handles streaming responses' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'HEAD' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -156,7 +161,8 @@ subtest 'Head middleware handles streaming responses' => sub {
 subtest 'Head middleware suppresses trailers' => sub {
     my $mw = PAGI::Middleware::Head->new;
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -184,7 +190,8 @@ subtest 'Head middleware suppresses trailers' => sub {
         await $wrapped->(
             { type => 'http', path => '/', method => 'HEAD' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -197,7 +204,8 @@ subtest 'Head middleware skips non-HTTP requests' => sub {
     my $mw = PAGI::Middleware::Head->new;
 
     my $app_called = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $app_called = 1;
         await $send->({
             type    => 'websocket.accept',
@@ -212,7 +220,8 @@ subtest 'Head middleware skips non-HTTP requests' => sub {
         await $wrapped->(
             { type => 'websocket', path => '/' },
             async sub { { type => 'websocket.disconnect' } },
-            async sub ($event) { push @sent, $event },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
         );
     });
 
@@ -225,7 +234,8 @@ subtest 'Head middleware preserves other HTTP methods' => sub {
 
     for my $method (qw(POST PUT DELETE PATCH OPTIONS)) {
         my $received_method;
-        my $app = async sub ($scope, $receive, $send) {
+        my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
             $received_method = $scope->{method};
             await $send->({
                 type    => 'http.response.start',
@@ -246,7 +256,8 @@ subtest 'Head middleware preserves other HTTP methods' => sub {
             await $wrapped->(
                 { type => 'http', path => '/', method => $method },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 

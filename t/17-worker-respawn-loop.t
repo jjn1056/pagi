@@ -18,7 +18,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Async::Timer::Countdown;
@@ -44,7 +43,8 @@ subtest 'Startup failure should not cause excessive respawns' => sub {
     _write_count($counter_file, 0);
 
     # App that increments counter then fails during lifespan startup
-    my $failing_app = async sub ($scope, $receive, $send) {
+    my $failing_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             # Increment the counter file (each worker startup attempt)
             my $count = _read_count($counter_file);
@@ -130,7 +130,9 @@ subtest 'Startup failure should not cause excessive respawns' => sub {
 };
 
 # Helper to read count from file
-sub _read_count ($file) {
+sub _read_count {
+    my ($file) = @_;
+
     open my $fh, '<', $file or return 0;
     my $count = <$fh> // 0;
     close $fh;
@@ -139,7 +141,9 @@ sub _read_count ($file) {
 }
 
 # Helper to write count to file (with locking for safety)
-sub _write_count ($file, $count) {
+sub _write_count {
+    my ($file, $count) = @_;
+
     open my $fh, '>', $file or die "Cannot write $file: $!";
     flock($fh, 2);  # LOCK_EX
     print $fh "$count\n";

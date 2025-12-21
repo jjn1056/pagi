@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -55,7 +54,8 @@ subtest 'Shared state is shallow-copied per request' => sub {
     my $lifespan_state;
     my @request_states;
 
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             my $state = $scope->{state};
             $state->{counter} = 0;
@@ -128,7 +128,8 @@ subtest 'Shared state is shallow-copied per request' => sub {
 
 # Test 3: Lifespan startup failure prevents connection acceptance
 subtest 'Lifespan startup failure prevents server start' => sub {
-    my $fail_app = async sub ($scope, $receive, $send) {
+    my $fail_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -175,7 +176,8 @@ subtest 'Graceful shutdown sends lifespan.shutdown' => sub {
     my $shutdown_received = 0;
     my $shutdown_completed = 0;
 
-    my $test_app = async sub ($scope, $receive, $send) {
+    my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -227,7 +229,8 @@ subtest 'Graceful shutdown sends lifespan.shutdown' => sub {
 
 # Test 5: Apps that don't support lifespan still work
 subtest 'Apps without lifespan support still work' => sub {
-    my $simple_app = async sub ($scope, $receive, $send) {
+    my $simple_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         # This app only handles HTTP - throws for other scope types
         die "Unsupported scope type: $scope->{type}" unless $scope->{type} eq 'http';
 

@@ -1,7 +1,6 @@
 use strict;
 use warnings;
 use utf8;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -15,7 +14,9 @@ use PAGI::Server;
 my $loop = IO::Async::Loop->new;
 my $sample = "λ🔥café";
 
-sub percent_encode ($str) {
+sub percent_encode {
+    my ($str) = @_;
+
     my $bytes = encode_utf8($str // '');
     $bytes =~ s/([^A-Za-z0-9\-._~])/sprintf("%%%02X", ord($1))/eg;
     return $bytes;
@@ -23,7 +24,8 @@ sub percent_encode ($str) {
 
 my %captures;
 
-my $app = async sub ($scope, $receive, $send) {
+my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
     if ($scope->{type} eq 'lifespan') {
         while (1) {
             my $event = await $receive->();

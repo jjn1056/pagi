@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -38,7 +37,8 @@ subtest 'JSONBody - parses valid JSON' => sub {
     my $json_mw = PAGI::Middleware::JSONBody->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({
             type    => 'http.response.start',
@@ -64,7 +64,8 @@ subtest 'JSONBody - parses valid JSON' => sub {
     };
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
 
     run_async { $wrapped->($scope, $receive, $send) };
 
@@ -77,7 +78,8 @@ subtest 'JSONBody - parses valid JSON' => sub {
 subtest 'JSONBody - returns 400 for invalid JSON' => sub {
     my $json_mw = PAGI::Middleware::JSONBody->new();
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -101,7 +103,8 @@ subtest 'JSONBody - returns 400 for invalid JSON' => sub {
     };
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
 
     run_async { $wrapped->($scope, $receive, $send) };
 
@@ -111,7 +114,8 @@ subtest 'JSONBody - returns 400 for invalid JSON' => sub {
 subtest 'JSONBody - returns 413 for large body' => sub {
     my $json_mw = PAGI::Middleware::JSONBody->new(max_size => 100);
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -135,7 +139,8 @@ subtest 'JSONBody - returns 413 for large body' => sub {
     };
 
     my @events;
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
 
     run_async { $wrapped->($scope, $receive, $send) };
 
@@ -146,7 +151,8 @@ subtest 'JSONBody - skips non-JSON content types' => sub {
     my $json_mw = PAGI::Middleware::JSONBody->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({
             type    => 'http.response.start',
@@ -175,7 +181,8 @@ subtest 'JSONBody - handles application/XXX+json' => sub {
     my $json_mw = PAGI::Middleware::JSONBody->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({
             type    => 'http.response.start',
@@ -214,7 +221,8 @@ subtest 'FormBody - parses URL-encoded form' => sub {
     my $form_mw = PAGI::Middleware::FormBody->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({
             type    => 'http.response.start',
@@ -252,7 +260,8 @@ subtest 'FormBody - handles URL encoding' => sub {
     my $form_mw = PAGI::Middleware::FormBody->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -279,7 +288,8 @@ subtest 'FormBody - handles multiple values for same key' => sub {
     my $form_mw = PAGI::Middleware::FormBody->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -306,7 +316,8 @@ subtest 'FormBody - skips non-form content types' => sub {
     my $form_mw = PAGI::Middleware::FormBody->new();
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -333,7 +344,8 @@ subtest 'ContentNegotiation - selects preferred type' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -359,7 +371,8 @@ subtest 'ContentNegotiation - handles wildcard' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -385,7 +398,8 @@ subtest 'ContentNegotiation - handles type wildcard' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -412,7 +426,8 @@ subtest 'ContentNegotiation - uses default when no match' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -438,7 +453,8 @@ subtest 'ContentNegotiation - strict mode returns 406' => sub {
         strict          => 1,
     );
 
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
     };
@@ -451,7 +467,8 @@ subtest 'ContentNegotiation - strict mode returns 406' => sub {
 
     my @events;
     my $receive = async sub { {} };
-    my $send = async sub ($event) { push @events, $event };
+    my $send = async sub  {
+        my ($event) = @_; push @events, $event };
 
     run_async { $wrapped->($scope, $receive, $send) };
 
@@ -464,7 +481,8 @@ subtest 'ContentNegotiation - handles no Accept header' => sub {
     );
 
     my $captured_scope;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_scope = $scope;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });

@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use File::Temp qw(tempfile tempdir);
 use POSIX qw(WNOHANG);

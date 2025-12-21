@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -95,7 +94,8 @@ subtest 'PSGI env contains all required keys' => sub {
     my $pagi_app = $wrapper->to_app;
 
     # Wrap with lifespan handler
-    my $wrapped_app = async sub ($scope, $receive, $send) {
+    my $wrapped_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -168,7 +168,8 @@ subtest 'PSGI array body response works' => sub {
     my $pagi_app = $wrapper->to_app;
 
     # Wrap with lifespan handler
-    my $wrapped_app = async sub ($scope, $receive, $send) {
+    my $wrapped_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -225,7 +226,8 @@ subtest 'PSGI filehandle body response works' => sub {
     my $pagi_app = $wrapper->to_app;
 
     # Wrap with lifespan handler
-    my $wrapped_app = async sub ($scope, $receive, $send) {
+    my $wrapped_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -285,7 +287,8 @@ subtest 'PSGI streaming response (coderef body) works' => sub {
     my $pagi_app = $wrapper->to_app;
 
     # Wrap with lifespan handler
-    my $wrapped_app = async sub ($scope, $receive, $send) {
+    my $wrapped_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();

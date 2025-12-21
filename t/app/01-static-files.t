@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -36,7 +35,9 @@ print $fh "Nested content";
 close $fh;
 
 # Helper to create server with an app
-sub create_server ($app) {
+sub create_server {
+    my ($app) = @_;
+
     my $server = PAGI::Server->new(
         app   => $app,
         host  => '127.0.0.1',
@@ -49,7 +50,9 @@ sub create_server ($app) {
 }
 
 # Helper to make HTTP request
-async sub http_request ($port, $method, $path, %opts) {
+async sub http_request {
+    my ($port, $method, $path, %opts) = @_;
+
     my $http = Net::Async::HTTP->new(fail_on_error => 0);
     $loop->add($http);
 

@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Socket::INET;
@@ -52,7 +51,8 @@ subtest 'Content-Length validation in parser (3.12)' => sub {
 };
 
 subtest 'Content-Length validation by server (3.12)' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -125,7 +125,8 @@ subtest 'Content-Length validation by server (3.12)' => sub {
 # =============================================================================
 
 subtest 'HTTP/1.0 Keep-Alive advertisement (3.15)' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -198,7 +199,8 @@ subtest 'HTTP/1.0 Keep-Alive advertisement (3.15)' => sub {
 };
 
 subtest 'HTTP/1.0 without keep-alive should not advertise it' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -271,7 +273,8 @@ subtest 'HTTP/1.0 without keep-alive should not advertise it' => sub {
 };
 
 subtest 'HTTP/1.1 should not need Connection: keep-alive' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();

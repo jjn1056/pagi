@@ -2,7 +2,6 @@
 use strict;
 use warnings;
 use v5.32;
-use experimental 'signatures';
 use Test2::V0;
 
 # This test requires 'hey' to be installed and is skipped by default
@@ -20,7 +19,8 @@ subtest 'server survives high concurrency with low max_connections' => sub {
     my $loop = IO::Async::Loop->new;
 
     my $server = PAGI::Server->new(
-        app => async sub ($scope, $receive, $send) {
+        app => async sub  {
+        my ($scope, $receive, $send) = @_;
             # Handle lifespan
             if ($scope->{type} eq 'lifespan') {
                 while (1) {

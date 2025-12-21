@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Socket::INET;
@@ -19,7 +18,8 @@ my $loop = IO::Async::Loop->new;
 
 subtest 'WebSocket frame parser cleaned up on close (3.1)' => sub {
     my $ws_connection;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -114,7 +114,8 @@ subtest 'WebSocket frame parser cleaned up on close (3.1)' => sub {
 
 subtest 'Connection closed after application exception (3.2)' => sub {
     my $exception_thrown = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -205,7 +206,8 @@ subtest 'Connection closed after application exception (3.2)' => sub {
 
 subtest 'Exception after response started handled properly (3.17)' => sub {
     my $exception_thrown = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -298,7 +300,8 @@ subtest 'Exception after response started handled properly (3.17)' => sub {
 subtest 'Multiple connections with exceptions all cleaned up' => sub {
     my $request_count = 0;
     my $exception_count = 0;
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();

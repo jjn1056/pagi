@@ -21,7 +21,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use IO::Socket::INET;
@@ -34,7 +33,8 @@ use PAGI::Server;
 my $loop = IO::Async::Loop->new;
 
 # Simple WebSocket echo app for testing
-my $test_app = async sub ($scope, $receive, $send) {
+my $test_app = async sub  {
+        my ($scope, $receive, $send) = @_;
     if ($scope->{type} eq 'lifespan') {
         while (1) {
             my $event = await $receive->();
@@ -71,7 +71,10 @@ my $test_app = async sub ($scope, $receive, $send) {
 #   byte 1: MASK(1) + payload_len(7)
 #   bytes 2-5: masking key (if MASK=1)
 #   remaining: masked payload
-sub make_websocket_frame ($opcode, $payload, $masked = 1) {
+sub make_websocket_frame {
+    my ($opcode, $payload, $masked) = @_;
+    $masked //= 1;
+
     my $frame = '';
 
     # First byte: FIN=1, RSV=0, opcode
@@ -110,7 +113,9 @@ sub make_websocket_frame ($opcode, $payload, $masked = 1) {
 }
 
 # Helper to parse WebSocket close frame
-sub parse_close_frame ($data) {
+sub parse_close_frame {
+    my ($data) = @_;
+
     return unless length($data) >= 2;
 
     my $byte0 = ord(substr($data, 0, 1));

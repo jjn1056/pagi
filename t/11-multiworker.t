@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 
 use Test2::V0;
 use IO::Async::Loop;
@@ -16,7 +15,8 @@ plan skip_all => "Fork not available on this platform" if $^O eq 'MSWin32';
 
 # Test 1: Server accepts workers configuration
 subtest 'Server accepts workers configuration' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             my $event = await $receive->();
             if ($event->{type} eq 'lifespan.startup') {
@@ -63,7 +63,8 @@ subtest 'Server accepts workers configuration' => sub {
 
 # Test 2: Single worker mode (workers=0 or 1) works as before
 subtest 'Single worker mode continues to work' => sub {
-    my $app = async sub ($scope, $receive, $send) {
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             my $event = await $receive->();
             if ($event->{type} eq 'lifespan.startup') {

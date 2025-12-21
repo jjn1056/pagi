@@ -1,7 +1,6 @@
 #!/usr/bin/env perl
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -37,8 +36,11 @@ print $fh $large_content;
 close $fh;
 
 # Helper to create a basic app that handles lifespan
-sub make_app ($handler) {
-    return async sub ($scope, $receive, $send) {
+sub make_app {
+    my ($handler) = @_;
+
+    return async sub  {
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
             while (1) {
                 my $event = await $receive->();
@@ -57,7 +59,9 @@ sub make_app ($handler) {
 }
 
 # Helper to run a server test
-sub with_server ($app, $test) {
+sub with_server {
+    my ($app, $test) = @_;
+
     my $server = PAGI::Server->new(
         app => make_app($app),
         host => '127.0.0.1',
@@ -79,7 +83,8 @@ sub with_server ($app, $test) {
 
 subtest 'file response sends full file (with Content-Length - sendfile path)' => sub {
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({
                 type => 'http.response.start',
                 status => 200,
@@ -93,7 +98,8 @@ subtest 'file response sends full file (with Content-Length - sendfile path)' =>
                 file => $test_file,
             });
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/test.txt")->get;
             is($response->code, 200, 'got 200 response');
             is($response->content, $test_content, 'file content matches');
@@ -105,7 +111,8 @@ subtest 'file response sends full file (with Content-Length - sendfile path)' =>
 subtest 'file response with chunked encoding (worker pool path)' => sub {
     # No Content-Length = chunked encoding = can't use sendfile = worker pool
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({
                 type => 'http.response.start',
                 status => 200,
@@ -119,7 +126,8 @@ subtest 'file response with chunked encoding (worker pool path)' => sub {
                 file => $test_file,
             });
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/test.txt")->get;
             is($response->code, 200, 'got 200 response');
             is($response->content, $test_content, 'file content matches with chunked encoding');
@@ -133,7 +141,8 @@ subtest 'file response with offset and length (Range request simulation)' => sub
     my $expected = substr($test_content, $offset, $length);
 
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({
                 type => 'http.response.start',
                 status => 206,
@@ -150,7 +159,8 @@ subtest 'file response with offset and length (Range request simulation)' => sub
                 length => $length,
             });
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/test.txt")->get;
             is($response->code, 206, 'got 206 Partial Content');
             is($response->content, $expected, 'partial content matches');
@@ -164,7 +174,8 @@ subtest 'file response offset at end of file' => sub {
     my $expected = substr($test_content, $offset);
 
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({
                 type => 'http.response.start',
                 status => 206,
@@ -180,7 +191,8 @@ subtest 'file response offset at end of file' => sub {
                 # No length = read to EOF
             });
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/test.txt")->get;
             is($response->code, 206, 'got 206 response');
             is($response->content, $expected, 'content from offset to EOF matches');
@@ -190,7 +202,8 @@ subtest 'file response offset at end of file' => sub {
 
 subtest 'fh response sends from filehandle' => sub {
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             open my $fh, '<:raw', $test_file or die "Cannot open: $!";
 
             await $send->({
@@ -209,7 +222,8 @@ subtest 'fh response sends from filehandle' => sub {
 
             close $fh;
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/")->get;
             is($response->code, 200, 'got 200 response');
             is($response->content, $test_content, 'filehandle content matches');
@@ -223,7 +237,8 @@ subtest 'fh response with offset (seek)' => sub {
     my $expected = substr($test_content, $offset, $length);
 
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             open my $fh, '<:raw', $test_file or die "Cannot open: $!";
 
             await $send->({
@@ -243,7 +258,8 @@ subtest 'fh response with offset (seek)' => sub {
 
             close $fh;
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/")->get;
             is($response->code, 200, 'got 200 response');
             is($response->content, $expected, 'fh with offset content matches');
@@ -253,7 +269,8 @@ subtest 'fh response with offset (seek)' => sub {
 
 subtest 'binary file response preserves bytes' => sub {
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({
                 type => 'http.response.start',
                 status => 200,
@@ -267,7 +284,8 @@ subtest 'binary file response preserves bytes' => sub {
                 file => $binary_file,
             });
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/binary.bin")->get;
             is($response->code, 200, 'got 200 response');
             is(length($response->content), length($binary_content), 'binary length matches');
@@ -278,7 +296,8 @@ subtest 'binary file response preserves bytes' => sub {
 
 subtest 'large file streams correctly (tests chunking)' => sub {
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({
                 type => 'http.response.start',
                 status => 200,
@@ -292,7 +311,8 @@ subtest 'large file streams correctly (tests chunking)' => sub {
                 file => $large_file,
             });
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/large.bin")->get;
             is($response->code, 200, 'got 200 response');
             is(length($response->content), length($large_content), 'large file length matches');
@@ -304,7 +324,8 @@ subtest 'large file streams correctly (tests chunking)' => sub {
 subtest 'large file with chunked encoding' => sub {
     # Force chunked encoding (worker pool path) with large file
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({
                 type => 'http.response.start',
                 status => 200,
@@ -318,7 +339,8 @@ subtest 'large file with chunked encoding' => sub {
                 file => $large_file,
             });
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/large.bin")->get;
             is($response->code, 200, 'got 200 response');
             is(length($response->content), length($large_content), 'large file length matches (chunked)');
@@ -332,7 +354,8 @@ subtest 'file not found dies with error' => sub {
     my $error_message = '';
 
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             # Don't start a response until we know the file exists
             # Test that the file operation fails properly
             eval {
@@ -370,7 +393,8 @@ subtest 'file not found dies with error' => sub {
                 });
             }
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/")->get;
             is($response->code, 404, 'got 404 for missing file');
             ok($server->is_running, 'server still running after file error');
@@ -387,7 +411,8 @@ subtest 'zero-length file works' => sub {
     close $fh;
 
     with_server(
-        async sub ($scope, $receive, $send) {
+        async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({
                 type => 'http.response.start',
                 status => 200,
@@ -401,7 +426,8 @@ subtest 'zero-length file works' => sub {
                 file => $empty_file,
             });
         },
-        sub ($port, $server) {
+        sub  {
+        my ($port, $server) = @_;
             my $response = $http->GET("http://127.0.0.1:$port/empty.txt")->get;
             is($response->code, 200, 'got 200 response');
             is($response->content, '', 'empty file returns empty content');

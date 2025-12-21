@@ -2,7 +2,6 @@
 
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -27,7 +26,8 @@ subtest 'Basic routing' => sub {
 
     subtest 'matches exact path' => sub {
         my $router = PAGI::App::Router->new;
-        $router->get('/users' => async sub ($scope, $receive, $send) {
+        $router->get('/users' => async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'Users list', more => 0 });
         });
@@ -38,7 +38,8 @@ subtest 'Basic routing' => sub {
             await $app->(
                 { type => 'http', method => 'GET', path => '/users' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -48,7 +49,8 @@ subtest 'Basic routing' => sub {
 
     subtest 'returns 404 for non-matching path' => sub {
         my $router = PAGI::App::Router->new;
-        $router->get('/users' => async sub ($scope, $receive, $send) {
+        $router->get('/users' => async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'Users', more => 0 });
         });
@@ -59,7 +61,8 @@ subtest 'Basic routing' => sub {
             await $app->(
                 { type => 'http', method => 'GET', path => '/posts' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -68,7 +71,8 @@ subtest 'Basic routing' => sub {
 
     subtest 'returns 405 for wrong method' => sub {
         my $router = PAGI::App::Router->new;
-        $router->get('/users' => async sub ($scope, $receive, $send) {
+        $router->get('/users' => async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'Users', more => 0 });
         });
@@ -79,7 +83,8 @@ subtest 'Basic routing' => sub {
             await $app->(
                 { type => 'http', method => 'POST', path => '/users' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -93,7 +98,8 @@ subtest 'Path parameters' => sub {
     subtest 'captures named parameter' => sub {
         my $captured_params;
         my $router = PAGI::App::Router->new;
-        $router->get('/users/:id' => async sub ($scope, $receive, $send) {
+        $router->get('/users/:id' => async sub  {
+        my ($scope, $receive, $send) = @_;
             $captured_params = $scope->{'pagi.router'}{params};
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -104,7 +110,8 @@ subtest 'Path parameters' => sub {
             await $app->(
                 { type => 'http', method => 'GET', path => '/users/123' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -114,7 +121,8 @@ subtest 'Path parameters' => sub {
     subtest 'captures multiple parameters' => sub {
         my $captured_params;
         my $router = PAGI::App::Router->new;
-        $router->get('/users/:user_id/posts/:post_id' => async sub ($scope, $receive, $send) {
+        $router->get('/users/:user_id/posts/:post_id' => async sub  {
+        my ($scope, $receive, $send) = @_;
             $captured_params = $scope->{'pagi.router'}{params};
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -125,7 +133,8 @@ subtest 'Path parameters' => sub {
             await $app->(
                 { type => 'http', method => 'GET', path => '/users/42/posts/99' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -136,7 +145,8 @@ subtest 'Path parameters' => sub {
     subtest 'captures wildcard' => sub {
         my $captured_params;
         my $router = PAGI::App::Router->new;
-        $router->get('/files/*filepath' => async sub ($scope, $receive, $send) {
+        $router->get('/files/*filepath' => async sub  {
+        my ($scope, $receive, $send) = @_;
             $captured_params = $scope->{'pagi.router'}{params};
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -147,7 +157,8 @@ subtest 'Path parameters' => sub {
             await $app->(
                 { type => 'http', method => 'GET', path => '/files/path/to/file.txt' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { },
+                async sub  {
+        my ($event) = @_; },
             );
         });
 
@@ -159,7 +170,8 @@ subtest 'HTTP methods' => sub {
 
     subtest 'POST route' => sub {
         my $router = PAGI::App::Router->new;
-        $router->post('/users' => async sub ($scope, $receive, $send) {
+        $router->post('/users' => async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 201, headers => [] });
             await $send->({ type => 'http.response.body', body => 'Created', more => 0 });
         });
@@ -170,7 +182,8 @@ subtest 'HTTP methods' => sub {
             await $app->(
                 { type => 'http', method => 'POST', path => '/users' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -179,7 +192,8 @@ subtest 'HTTP methods' => sub {
 
     subtest 'DELETE route' => sub {
         my $router = PAGI::App::Router->new;
-        $router->delete('/users/:id' => async sub ($scope, $receive, $send) {
+        $router->delete('/users/:id' => async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 204, headers => [] });
             await $send->({ type => 'http.response.body', body => '', more => 0 });
         });
@@ -190,7 +204,8 @@ subtest 'HTTP methods' => sub {
             await $app->(
                 { type => 'http', method => 'DELETE', path => '/users/123' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -199,7 +214,8 @@ subtest 'HTTP methods' => sub {
 
     subtest 'HEAD matches GET route' => sub {
         my $router = PAGI::App::Router->new;
-        $router->get('/users' => async sub ($scope, $receive, $send) {
+        $router->get('/users' => async sub  {
+        my ($scope, $receive, $send) = @_;
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         });
@@ -210,7 +226,8 @@ subtest 'HTTP methods' => sub {
             await $app->(
                 { type => 'http', method => 'HEAD', path => '/users' },
                 async sub { { type => 'http.disconnect' } },
-                async sub ($event) { push @sent, $event },
+                async sub  {
+        my ($event) = @_; push @sent, $event },
             );
         });
 
@@ -221,7 +238,8 @@ subtest 'HTTP methods' => sub {
 subtest 'Route info in scope' => sub {
     my $captured_route;
     my $router = PAGI::App::Router->new;
-    $router->get('/users/:id' => async sub ($scope, $receive, $send) {
+    $router->get('/users/:id' => async sub  {
+        my ($scope, $receive, $send) = @_;
         $captured_route = $scope->{'pagi.router'}{route};
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
@@ -232,7 +250,8 @@ subtest 'Route info in scope' => sub {
         await $app->(
             { type => 'http', method => 'GET', path => '/users/123' },
             async sub { { type => 'http.disconnect' } },
-            async sub ($event) { },
+            async sub  {
+        my ($event) = @_; },
         );
     });
 

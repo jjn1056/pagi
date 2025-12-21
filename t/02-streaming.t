@@ -1,6 +1,5 @@
 use strict;
 use warnings;
-use experimental 'signatures';
 use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
@@ -15,7 +14,8 @@ my $loop = IO::Async::Loop->new;
 
 # Test 1: Streaming response with multiple chunks
 subtest 'Streaming response uses chunked Transfer-Encoding' => sub {
-    my $simple_streaming_app = async sub ($scope, $receive, $send) {
+    my $simple_streaming_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
         while (1) {
@@ -64,7 +64,8 @@ subtest 'Streaming response uses chunked Transfer-Encoding' => sub {
 
 # Test 2: Multiple body chunks arrive in order
 subtest 'Multiple http.response.body events work correctly' => sub {
-    my $streaming_app = async sub ($scope, $receive, $send) {
+    my $streaming_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
         while (1) {
@@ -111,7 +112,8 @@ subtest 'Multiple http.response.body events work correctly' => sub {
 
 # Test 3: Streaming without trailers terminates correctly
 subtest 'Streaming without trailers terminates correctly' => sub {
-    my $no_trailer_app = async sub ($scope, $receive, $send) {
+    my $no_trailer_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
         while (1) {
@@ -160,7 +162,8 @@ subtest 'Streaming without trailers terminates correctly' => sub {
 # Note: Net::Async::HTTP doesn't easily expose trailers, but we verify the body
 # Trailers are verified manually with: curl -s -D - http://localhost:5000/
 subtest 'Streaming with trailers - body content correct' => sub {
-    my $trailer_app = async sub ($scope, $receive, $send) {
+    my $trailer_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
         while (1) {
@@ -215,7 +218,8 @@ subtest 'Client disconnect stops streaming app' => sub {
     my $disconnect_detected = 0;
     my $chunks_sent = 0;
 
-    my $slow_streaming_app = async sub ($scope, $receive, $send) {
+    my $slow_streaming_app = async sub  {
+        my ($scope, $receive, $send) = @_;
         die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
         my $loop = IO::Async::Loop->new;
