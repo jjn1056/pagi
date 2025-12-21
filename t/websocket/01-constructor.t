@@ -91,4 +91,81 @@ subtest 'dies on invalid parameter types' => sub {
     );
 };
 
+subtest 'scope property accessors' => sub {
+    my $scope = {
+        type         => 'websocket',
+        path         => '/chat/room1',
+        raw_path     => '/chat/room1',
+        query_string => 'token=abc&user=bob',
+        scheme       => 'wss',
+        http_version => '1.1',
+        headers      => [
+            ['host', 'example.com'],
+            ['origin', 'https://example.com'],
+        ],
+        subprotocols => ['chat', 'json'],
+        client       => ['192.168.1.1', 54321],
+        server       => ['example.com', 443],
+    };
+    my $receive = sub { };
+    my $send = sub { };
+
+    my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+
+    is($ws->path, '/chat/room1', 'path accessor');
+    is($ws->raw_path, '/chat/room1', 'raw_path accessor');
+    is($ws->query_string, 'token=abc&user=bob', 'query_string accessor');
+    is($ws->scheme, 'wss', 'scheme accessor');
+    is($ws->http_version, '1.1', 'http_version accessor');
+    is($ws->subprotocols, ['chat', 'json'], 'subprotocols accessor');
+    is($ws->client, ['192.168.1.1', 54321], 'client accessor');
+    is($ws->server, ['example.com', 443], 'server accessor');
+    is($ws->scope, $scope, 'scope returns raw scope');
+};
+
+subtest 'header accessors' => sub {
+    my $scope = {
+        type    => 'websocket',
+        headers => [
+            ['host', 'example.com'],
+            ['origin', 'https://example.com'],
+            ['cookie', 'session=abc123'],
+            ['x-custom', 'value1'],
+            ['x-custom', 'value2'],
+        ],
+    };
+    my $receive = sub { };
+    my $send = sub { };
+
+    my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+
+    is($ws->header('host'), 'example.com', 'single header');
+    is($ws->header('Host'), 'example.com', 'case-insensitive');
+    is($ws->header('x-custom'), 'value2', 'returns last value for duplicates');
+    is($ws->header('nonexistent'), undef, 'returns undef for missing');
+
+    my @customs = $ws->header_all('x-custom');
+    is(\@customs, ['value1', 'value2'], 'header_all returns all values');
+
+    isa_ok($ws->headers, ['Hash::MultiValue'], 'headers returns Hash::MultiValue');
+};
+
+subtest 'defaults for optional scope keys' => sub {
+    my $scope = {
+        type    => 'websocket',
+        path    => '/ws',
+        headers => [],
+    };
+    my $receive = sub { };
+    my $send = sub { };
+
+    my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+
+    is($ws->raw_path, '/ws', 'raw_path defaults to path');
+    is($ws->query_string, '', 'query_string defaults to empty');
+    is($ws->scheme, 'ws', 'scheme defaults to ws');
+    is($ws->http_version, '1.1', 'http_version defaults to 1.1');
+    is($ws->subprotocols, [], 'subprotocols defaults to empty array');
+};
+
 done_testing;

@@ -2,6 +2,7 @@ package PAGI::WebSocket;
 use strict;
 use warnings;
 use Carp qw(croak);
+use Hash::MultiValue;
 
 our $VERSION = '0.01';
 
@@ -26,6 +27,50 @@ sub new {
         _close_reason => undef,
         _on_close     => [],
     }, $class;
+}
+
+# Scope property accessors
+sub scope        { shift->{scope} }
+sub path         { shift->{scope}{path} }
+sub raw_path     { my $s = shift; $s->{scope}{raw_path} // $s->{scope}{path} }
+sub query_string { shift->{scope}{query_string} // '' }
+sub scheme       { shift->{scope}{scheme} // 'ws' }
+sub http_version { shift->{scope}{http_version} // '1.1' }
+sub subprotocols { shift->{scope}{subprotocols} // [] }
+sub client       { shift->{scope}{client} }
+sub server       { shift->{scope}{server} }
+
+# Single header lookup (case-insensitive, returns last value)
+sub header {
+    my ($self, $name) = @_;
+    $name = lc($name);
+    my $value;
+    for my $pair (@{$self->{scope}{headers} // []}) {
+        if (lc($pair->[0]) eq $name) {
+            $value = $pair->[1];
+        }
+    }
+    return $value;
+}
+
+# All headers as Hash::MultiValue (cached)
+sub headers {
+    my $self = shift;
+    return $self->{_headers} if $self->{_headers};
+
+    my @pairs;
+    for my $pair (@{$self->{scope}{headers} // []}) {
+        push @pairs, lc($pair->[0]), $pair->[1];
+    }
+
+    $self->{_headers} = Hash::MultiValue->new(@pairs);
+    return $self->{_headers};
+}
+
+# All values for a header
+sub header_all {
+    my ($self, $name) = @_;
+    return $self->headers->get_all(lc($name));
 }
 
 1;
