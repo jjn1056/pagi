@@ -5,6 +5,7 @@ use Carp qw(croak);
 use Hash::MultiValue;
 use Future::AsyncAwait;
 use Future;
+use JSON::PP ();
 
 our $VERSION = '0.01';
 
@@ -137,6 +138,50 @@ async sub close {
     });
 
     $self->_set_closed($code, $reason);
+
+    return $self;
+}
+
+# Send text message
+async sub send_text {
+    my ($self, $text) = @_;
+
+    croak "Cannot send on closed WebSocket" if $self->is_closed;
+
+    await $self->{send}->({
+        type => 'websocket.send',
+        text => $text,
+    });
+
+    return $self;
+}
+
+# Send binary message
+async sub send_bytes {
+    my ($self, $bytes) = @_;
+
+    croak "Cannot send on closed WebSocket" if $self->is_closed;
+
+    await $self->{send}->({
+        type  => 'websocket.send',
+        bytes => $bytes,
+    });
+
+    return $self;
+}
+
+# Send JSON-encoded message
+async sub send_json {
+    my ($self, $data) = @_;
+
+    croak "Cannot send on closed WebSocket" if $self->is_closed;
+
+    my $json = JSON::PP::encode_json($data);
+
+    await $self->{send}->({
+        type => 'websocket.send',
+        text => $json,
+    });
 
     return $self;
 }
