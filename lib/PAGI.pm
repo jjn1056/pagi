@@ -214,7 +214,7 @@ Process startup/shutdown lifecycle events
 
 =over 4
 
-=item * Perl 5.32+ (required for native subroutine signatures)
+=item * Perl 5.16+
 
 =item * IO::Async (event loop)
 

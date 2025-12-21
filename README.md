@@ -12,7 +12,7 @@ PAGI is a specification for asynchronous Perl web applications, designed as a sp
 
 ## Requirements
 
-- Perl 5.32+ (required for native subroutine signatures)
+- Perl 5.16+
 - cpanminus (for dependency installation)
 
 ## Quick Start

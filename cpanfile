@@ -1,7 +1,7 @@
 # PAGI::Server dependencies
 # Install with: cpanm --installdeps .
 
-requires 'perl', '5.032';
+requires 'perl', '5.016';
 
 # Core async framework
 requires 'IO::Async', '0.802';  # Includes IO::Async::Function for worker pools

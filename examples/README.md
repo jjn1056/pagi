@@ -3,7 +3,7 @@
 This directory contains progressively more advanced PAGI examples. Each subdirectory is prefixed with a two-digit number so you can follow along in order.
 
 ## Requirements
-- Perl 5.32+ (for signature syntax) with `Future::AsyncAwait` and `IO::Async`
+- Perl 5.16+ with `Future::AsyncAwait` and `IO::Async`
 - A PAGI-capable server or the ability to plug these coderefs into your own harness (`bin/pagi-server-ref` runs everything in this directory using `lib/PAGI/Server/Ref.pm`)
 
 Examples assume you understand the core spec (`docs/specs/main.mkdn`) plus the relevant protocol documents.
