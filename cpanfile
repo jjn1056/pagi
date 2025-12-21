@@ -19,7 +19,7 @@ requires 'IO::Async::SSL', '0.25';
 requires 'IO::Socket::SSL', '2.074';
 
 # Zero-copy file transfer (optional but recommended for performance)
-requires 'Sys::Sendfile', '0.11';
+recommends 'Sys::Sendfile', '0.11';
 
 # Utilities
 requires 'URI::Escape', '5.09';

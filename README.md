@@ -18,8 +18,11 @@ PAGI is a specification for asynchronous Perl web applications, designed as a sp
 ## Quick Start
 
 ```bash
-# Set up environment (installs dependencies)
+# Install dependencies
 cpanm --installdeps .
+
+# For best file-serving performance (zero-copy sendfile):
+cpanm --installdeps . --with-recommends
 
 # Run tests
 prove -l t/
@@ -37,9 +40,10 @@ PAGI applications are async coderefs with this signature:
 
 ```perl
 use Future::AsyncAwait;
-use experimental 'signatures';
 
-async sub app ($scope, $receive, $send) {
+async sub app {
+    my ($scope, $receive, $send) = @_;
+
     die "Unsupported: $scope->{type}" if $scope->{type} ne 'http';
 
     await $send->({
