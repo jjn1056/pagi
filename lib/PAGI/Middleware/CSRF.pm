@@ -92,7 +92,8 @@ sub wrap {
             });
 
             # Add Set-Cookie if token is new
-            my $wrapped_send = $cookie_token ? $send : async sub ($event) {
+            my $wrapped_send = $cookie_token ? $send : async sub {
+                my ($event) = @_;
                 if ($event->{type} eq 'http.response.start') {
                     push @{$event->{headers}}, [
                         'Set-Cookie',

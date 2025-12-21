@@ -150,7 +150,8 @@ subtest 'App::Loader loads app from file' => sub {
             use warnings;
             use Future::AsyncAwait;
 
-            async sub ($scope, $receive, $send) {
+            async sub {
+                my ($scope, $receive, $send) = @_;
                 await $send->({ type => 'http.response.start', status => 200, headers => [] });
                 await $send->({ type => 'http.response.body', body => 'Loaded!', more => 0 });
             };

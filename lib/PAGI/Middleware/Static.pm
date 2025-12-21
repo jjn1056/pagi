@@ -271,7 +271,8 @@ sub wrap {
             eval {
                 await PAGI::Util::AsyncFile->read_file_chunked(
                     $loop, $file_path,
-                    async sub ($chunk) {
+                    async sub  {
+        my ($chunk) = @_;
                         $bytes_sent += length($chunk);
                         my $more = $bytes_sent < $body_size ? 1 : 0;
                         await $send->({
