@@ -73,6 +73,35 @@ sub header_all {
     return $self->headers->get_all(lc($name));
 }
 
+# State accessors
+sub state { shift->{_state} }
+
+sub is_connected {
+    my $self = shift;
+    return $self->{_state} eq 'connected';
+}
+
+sub is_closed {
+    my $self = shift;
+    return $self->{_state} eq 'closed';
+}
+
+sub close_code   { shift->{_close_code} }
+sub close_reason { shift->{_close_reason} }
+
+# Internal state setters
+sub _set_state {
+    my ($self, $state) = @_;
+    $self->{_state} = $state;
+}
+
+sub _set_closed {
+    my ($self, $code, $reason) = @_;
+    $self->{_state} = 'closed';
+    $self->{_close_code} = $code // 1005;
+    $self->{_close_reason} = $reason // '';
+}
+
 1;
 
 __END__
