@@ -190,6 +190,8 @@ subtest 'normalize_type with shortcuts' => sub {
     is(PAGI::Request::Negotiate->normalize_type('html'), 'text/html', 'html shortcut');
     is(PAGI::Request::Negotiate->normalize_type('json'), 'application/json', 'json shortcut');
     is(PAGI::Request::Negotiate->normalize_type('xml'), 'application/xml', 'xml shortcut');
+    is(PAGI::Request::Negotiate->normalize_type('atom'), 'application/atom+xml', 'atom shortcut');
+    is(PAGI::Request::Negotiate->normalize_type('rss'), 'application/rss+xml', 'rss shortcut');
     is(PAGI::Request::Negotiate->normalize_type('text'), 'text/plain', 'text shortcut');
     is(PAGI::Request::Negotiate->normalize_type('txt'), 'text/plain', 'txt shortcut');
     is(PAGI::Request::Negotiate->normalize_type('css'), 'text/css', 'css shortcut');

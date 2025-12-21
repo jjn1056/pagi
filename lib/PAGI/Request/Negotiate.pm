@@ -59,6 +59,8 @@ my %TYPE_SHORTCUTS = (
     txt  => 'text/plain',
     json => 'application/json',
     xml  => 'application/xml',
+    atom => 'application/atom+xml',
+    rss  => 'application/rss+xml',
     css  => 'text/css',
     js   => 'application/javascript',
     png  => 'image/png',
@@ -219,6 +221,8 @@ Convert a type shortcut to its full MIME type. Known shortcuts include:
     html   => text/html
     json   => application/json
     xml    => application/xml
+    atom   => application/atom+xml
+    rss    => application/rss+xml
     text   => text/plain
     txt    => text/plain
     css    => text/css
