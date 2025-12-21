@@ -273,7 +273,8 @@ async sub receive {
     while (1) {
         my $event = await $self->{receive}->();
 
-        if (!$event || $event->{type} eq 'websocket.disconnect') {
+        if (!defined($event) || $event->{type} eq 'websocket.disconnect') {
+            # 1005 = No Status Rcvd (RFC 6455)
             my $code = $event->{code} // 1005;
             my $reason = $event->{reason} // '';
             $self->_set_closed($code, $reason);
