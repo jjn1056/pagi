@@ -1,19 +1,10 @@
 # Streaming Response Example
 #
 # Demonstrates chunked transfer encoding with trailers.
+# Test with: curl -N http://localhost:5000/
 #
-# IMPORTANT: Safari does NOT progressively render chunked HTML responses.
-# This is a known WebKit limitation (bugs.webkit.org/show_bug.cgi?id=252413).
-# Safari buffers the entire response until the connection closes.
-#
-# For progressive rendering in ALL browsers, use:
-#   - SSE (text/event-stream) - see examples/sse-dashboard/
-#   - WebSockets - see examples/websocket-echo-v2/
-#
-# Test with:
-#   curl -N http://localhost:5000/   # Works - shows chunks progressively
-#   Chrome/Firefox                    # Works - progressive rendering
-#   Safari                            # DOES NOT WORK - waits for completion
+# Note: Safari buffers chunked responses until complete (WebKit limitation).
+# Use SSE or WebSockets for cross-browser progressive rendering.
 
 use strict;
 use warnings;
@@ -47,26 +38,17 @@ async sub app {
     await drain_request($receive);
 
     # Start the response with chunked encoding and trailers
-    # Using text/html so browsers render progressively (text/plain gets buffered)
-    # X-Accel-Buffering: no hints to proxies/browsers to disable buffering
     await $send->({
         type     => 'http.response.start',
         status   => 200,
-        headers  => [
-            [ 'content-type', 'text/html; charset=utf-8' ],
-            [ 'x-accel-buffering', 'no' ],
-            [ 'cache-control', 'no-cache' ],
-        ],
+        headers  => [ [ 'content-type', 'text/plain' ] ],
         trailers => 1,
     });
 
-    # Chunks sent 1 second apart - use curl -N to see them arrive progressively
     my @chunks = (
-        "<!DOCTYPE html><html><body><pre>\n",
-        "Chunk 1 - " . localtime() . "\n",
-        "Chunk 2 - " . localtime() . "\n",
-        "Chunk 3 - " . localtime() . "\n",
-        "</pre></body></html>\n",
+        "Chunk 1\n",
+        "Chunk 2\n",
+        "Chunk 3\n",
     );
 
     # Start a task that waits for client disconnect.
