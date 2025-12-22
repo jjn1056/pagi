@@ -31,6 +31,29 @@ sub put     { shift->_request('PUT', @_) }
 sub patch   { shift->_request('PATCH', @_) }
 sub options { shift->_request('OPTIONS', @_) }
 
+# Cookie management
+sub cookies {
+    my ($self) = @_;
+    return $self->{cookies};
+}
+
+sub cookie {
+    my ($self, $name) = @_;
+    return $self->{cookies}{$name};
+}
+
+sub set_cookie {
+    my ($self, $name, $value) = @_;
+    $self->{cookies}{$name} = $value;
+    return $self;
+}
+
+sub clear_cookies {
+    my ($self) = @_;
+    $self->{cookies} = {};
+    return $self;
+}
+
 sub _request {
     my ($self, $method, $path, %opts) = @_;
 

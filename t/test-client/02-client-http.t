@@ -169,4 +169,87 @@ subtest 'query parameter encoding' => sub {
     like $res->text, qr/foo=bar/, 'option query added';
 };
 
+subtest 'cookies persist across requests' => sub {
+    my $cookie_app = async sub {
+        my ($scope, $receive, $send) = @_;
+
+        # Check for cookie header
+        my $has_cookie = '';
+        for my $h (@{$scope->{headers}}) {
+            if (lc($h->[0]) eq 'cookie') {
+                $has_cookie = $h->[1];
+            }
+        }
+
+        my @resp_headers = (['content-type', 'text/plain']);
+        my $body;
+
+        if ($scope->{path} eq '/login') {
+            push @resp_headers, ['set-cookie', 'session=abc123'];
+            $body = 'logged in';
+        } else {
+            $body = $has_cookie ? "Cookie: $has_cookie" : "No cookie";
+        }
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => \@resp_headers,
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            body => $body,
+            more => 0,
+        });
+    };
+
+    my $client = PAGI::Test::Client->new(app => $cookie_app);
+
+    # Before login - no cookie
+    is $client->get('/dashboard')->text, 'No cookie', 'no cookie initially';
+
+    # Login sets cookie
+    is $client->get('/login')->text, 'logged in', 'login response';
+
+    # After login - cookie sent
+    like $client->get('/dashboard')->text, qr/session=abc123/, 'cookie persisted';
+
+    # Cookie accessors
+    is $client->cookie('session'), 'abc123', 'cookie() accessor';
+    ok exists $client->cookies->{session}, 'cookies() hashref';
+
+    # Clear cookies
+    $client->clear_cookies;
+    is $client->get('/dashboard')->text, 'No cookie', 'cookies cleared';
+};
+
+subtest 'set_cookie manually' => sub {
+    my $echo_app = async sub {
+        my ($scope, $receive, $send) = @_;
+
+        my $cookie = '';
+        for my $h (@{$scope->{headers}}) {
+            $cookie = $h->[1] if lc($h->[0]) eq 'cookie';
+        }
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            body => "Cookie: $cookie",
+            more => 0,
+        });
+    };
+
+    my $client = PAGI::Test::Client->new(app => $echo_app);
+    $client->set_cookie('theme', 'dark');
+
+    like $client->get('/')->text, qr/theme=dark/, 'manual cookie sent';
+};
+
 done_testing;
