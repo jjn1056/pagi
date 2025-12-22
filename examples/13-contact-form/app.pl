@@ -5,10 +5,10 @@ use warnings;
 use Future::AsyncAwait;
 use File::Basename qw(dirname);
 use File::Spec;
-use JSON::PP qw(encode_json);
 
 use lib 'lib';
 use PAGI::Request;
+use PAGI::Response;
 use PAGI::App::File;
 
 # Configure upload limits
@@ -107,16 +107,18 @@ async sub _handle_submit {
         }
     }
 
+    my $res = PAGI::Response->new($send);
+
     # Return errors if any
     if (@errors) {
-        return await _send_json($send, 400, {
+        return await $res->status(400)->json({
             success => 0,
             errors  => \@errors,
         });
     }
 
     # Success response
-    my $response = {
+    return await $res->json({
         success => 1,
         message => 'Thank you for your message!',
         data    => {
@@ -127,34 +129,7 @@ async sub _handle_submit {
             subscribe => ($subscribe eq 'yes' ? 1 : 0),
             attachment => $saved_file,
         },
-    };
-
-    return await _send_json($send, 200, $response);
-}
-
-async sub _send_json {
-    my ($send, $status, $data) = @_;
-
-    my $body = encode_json($data);
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => $status,
-        headers => [
-            ['content-type', 'application/json'],
-            ['content-length', length($body)],
-        ],
     });
-    await $send->({
-        type => 'http.response.body',
-        body => $body,
-        more => 0,
-    });
-}
-
-async sub _send_error {
-    my ($send, $status, $message) = @_;
-    return await _send_json($send, $status, { error => $message });
 }
 
 async sub _handle_lifespan {

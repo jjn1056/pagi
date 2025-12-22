@@ -22,10 +22,11 @@ PAGI::Response - Fluent response builder for PAGI applications
     use PAGI::Response;
     use Future::AsyncAwait;
 
+    # Basic usage in a raw PAGI app
     async sub app ($scope, $receive, $send) {
         my $res = PAGI::Response->new($send);
 
-        # Fluent chaining
+        # Fluent chaining - set status, headers, then send
         await $res->status(200)
                   ->header('X-Custom' => 'value')
                   ->json({ message => 'Hello' });
@@ -38,14 +39,14 @@ PAGI::Response - Fluent response builder for PAGI applications
     await $res->redirect('/login');
     await $res->error(400, "Bad Request");
 
-    # Streaming
+    # Streaming large responses
     await $res->stream(async sub ($writer) {
         await $writer->write("chunk1");
         await $writer->write("chunk2");
         await $writer->close();
     });
 
-    # File download
+    # File downloads
     await $res->send_file('/path/to/file.pdf', filename => 'doc.pdf');
 
 =head1 DESCRIPTION
@@ -54,9 +55,15 @@ PAGI::Response provides a fluent interface for building HTTP responses in
 raw PAGI applications. It wraps the low-level C<$send> callback and provides
 convenient methods for common response types.
 
-All chainable methods (C<status>, C<header>, C<content_type>, C<cookie>)
-return C<$self> for fluent chaining. Finisher methods (C<text>, C<html>,
-C<json>, C<redirect>, etc.) return Futures and send the response.
+B<Chainable methods> (C<status>, C<header>, C<content_type>, C<cookie>)
+return C<$self> for fluent chaining.
+
+B<Finisher methods> (C<text>, C<html>, C<json>, C<redirect>, etc.) return
+Futures and actually send the response. Once a finisher is called, the
+response is sent and cannot be modified.
+
+B<Important:> Each PAGI::Response instance can only send one response.
+Attempting to call a finisher method twice will throw an error.
 
 =head1 CONSTRUCTOR
 
@@ -195,9 +202,192 @@ Send a file as the response. Options:
 
 =back
 
+=head1 EXAMPLES
+
+=head2 Complete Raw PAGI Application
+
+    use Future::AsyncAwait;
+    use PAGI::Request;
+    use PAGI::Response;
+
+    my $app = async sub ($scope, $receive, $send) {
+        return await handle_lifespan($scope, $receive, $send)
+            if $scope->{type} eq 'lifespan';
+
+        my $req = PAGI::Request->new($scope, $receive);
+        my $res = PAGI::Response->new($send);
+
+        if ($req->method eq 'GET' && $req->path eq '/') {
+            return await $res->html('<h1>Welcome</h1>');
+        }
+
+        if ($req->method eq 'POST' && $req->path eq '/api/users') {
+            my $data = await $req->json;
+            # ... create user ...
+            return await $res->status(201)
+                             ->header('Location' => '/api/users/123')
+                             ->json({ id => 123, name => $data->{name} });
+        }
+
+        return await $res->status(404)->json({ error => 'Not Found' });
+    };
+
+=head2 Form Validation with Error Response
+
+    async sub handle_contact ($req, $send) {
+        my $res = PAGI::Response->new($send);
+        my $form = await $req->form;
+
+        my @errors;
+        my $email = $form->get('email') // '';
+        my $message = $form->get('message') // '';
+
+        push @errors, 'Email required' unless $email;
+        push @errors, 'Invalid email' unless $email =~ /@/;
+        push @errors, 'Message required' unless $message;
+
+        if (@errors) {
+            return await $res->error(422, 'Validation failed', {
+                errors => \@errors
+            });
+        }
+
+        # Process valid form...
+        return await $res->json({ success => 1 });
+    }
+
+=head2 Authentication with Cookies
+
+    async sub handle_login ($req, $send) {
+        my $res = PAGI::Response->new($send);
+        my $data = await $req->json;
+
+        my $user = authenticate($data->{email}, $data->{password});
+
+        unless ($user) {
+            return await $res->error(401, 'Invalid credentials');
+        }
+
+        my $session_id = create_session($user);
+
+        return await $res->cookie('session' => $session_id,
+                path     => '/',
+                httponly => 1,
+                secure   => 1,
+                samesite => 'Strict',
+                max_age  => 86400,  # 24 hours
+            )
+            ->json({ user => { id => $user->{id}, name => $user->{name} } });
+    }
+
+    async sub handle_logout ($req, $send) {
+        my $res = PAGI::Response->new($send);
+
+        return await $res->delete_cookie('session', path => '/')
+                         ->json({ logged_out => 1 });
+    }
+
+=head2 File Download
+
+    async sub handle_download ($req, $send) {
+        my $res = PAGI::Response->new($send);
+        my $file_id = $req->path_param('id');
+
+        my $file = get_file($file_id);
+        unless ($file && -f $file->{path}) {
+            return await $res->error(404, 'File not found');
+        }
+
+        return await $res->send_file($file->{path},
+            filename => $file->{original_name},
+        );
+    }
+
+=head2 Streaming Large Data
+
+    async sub handle_export ($req, $send) {
+        my $res = PAGI::Response->new($send);
+
+        await $res->content_type('text/csv')
+                  ->header('Content-Disposition' => 'attachment; filename="export.csv"')
+                  ->stream(async sub ($writer) {
+                      # Write CSV header
+                      await $writer->write("id,name,email\n");
+
+                      # Stream rows from database
+                      my $cursor = get_all_users_cursor();
+                      while (my $user = $cursor->next) {
+                          await $writer->write("$user->{id},$user->{name},$user->{email}\n");
+                      }
+                  });
+    }
+
+=head2 Server-Sent Events Style Streaming
+
+    async sub handle_events ($req, $send) {
+        my $res = PAGI::Response->new($send);
+
+        await $res->content_type('text/event-stream')
+                  ->header('Cache-Control' => 'no-cache')
+                  ->stream(async sub ($writer) {
+                      for my $i (1..10) {
+                          await $writer->write("data: Event $i\n\n");
+                          await some_delay(1);  # Wait 1 second
+                      }
+                  });
+    }
+
+=head2 Conditional Responses
+
+    async sub handle_resource ($req, $send) {
+        my $res = PAGI::Response->new($send);
+        my $etag = '"abc123"';
+
+        # Check If-None-Match for caching
+        my $if_none_match = $req->header('If-None-Match') // '';
+        if ($if_none_match eq $etag) {
+            return await $res->status(304)->empty();
+        }
+
+        return await $res->header('ETag' => $etag)
+                         ->header('Cache-Control' => 'max-age=3600')
+                         ->json({ data => 'expensive computation result' });
+    }
+
+=head1 WRITER OBJECT
+
+The C<stream()> method passes a writer object to its callback with these methods:
+
+=over 4
+
+=item * C<write($chunk)> - Write a chunk (returns Future)
+
+=item * C<close()> - Close the stream (returns Future)
+
+=item * C<bytes_written()> - Get total bytes written so far
+
+=back
+
+The writer automatically closes when the callback completes, but calling
+C<close()> explicitly is recommended for clarity.
+
+=head1 ERROR HANDLING
+
+All finisher methods return Futures. Errors in encoding (e.g., invalid UTF-8
+when C<strict> mode would be enabled) will cause the Future to fail.
+
+    use Syntax::Keyword::Try;
+
+    try {
+        await $res->json($data);
+    }
+    catch ($e) {
+        warn "Failed to send response: $e";
+    }
+
 =head1 SEE ALSO
 
-L<PAGI>, L<PAGI::Request>
+L<PAGI>, L<PAGI::Request>, L<PAGI::Server>
 
 =head1 AUTHOR
 
