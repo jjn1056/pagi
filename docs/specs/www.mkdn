@@ -75,6 +75,59 @@ my @flat = $http_headers->flatten;
 my @pagi = map { [$flat[$_*2], $flat[$_*2+1]] } 0 .. ($#flat/2);
 ```
 
+### Scope Extension Keys
+
+The scope hashref may contain additional keys beyond those defined in the HTTP, WebSocket, and SSE sections below. This allows middleware and applications to pass data through the request lifecycle.
+
+**Reserved prefixes:**
+
+- `pagi.*` - Reserved for PAGI spec extensions (e.g., `pagi.router`, `pagi.session`)
+- Keys without a dot prefix (e.g., `type`, `method`, `path`) - Reserved for core spec use
+
+**Custom keys:**
+
+Applications and third-party middleware SHOULD use a unique dotted prefix to avoid collisions:
+
+- `myapp.*` - Application-specific data
+- `vendorname.*` - Third-party middleware/library data
+- `companyname.projectname.*` - More specific namespacing
+
+**Allowed values:**
+
+Scope values may be any Perl data type:
+
+- Scalars, arrayrefs, hashrefs
+- Blessed objects
+- Code references
+
+**Note:** Objects in scope are NOT serializable. Do not assume scope can be passed between processes, persisted to storage, or serialized to JSON. Scope exists only for the lifetime of a single request within a single process.
+
+**Example:**
+
+```perl
+# Authentication middleware adding user info
+$scope->{'myauth.user'} = $user_object;
+$scope->{'myauth.roles'} = ['admin', 'editor'];
+$scope->{'myauth.authenticated_at'} = time();
+
+# Router middleware adding match info
+$scope->{'pagi.router'} = {
+    params => { id => '42' },
+    route  => '/users/:id',
+};
+
+# Application accessing middleware data
+my $user = $scope->{'myauth.user'};
+my $id = $scope->{'pagi.router'}{params}{id};
+```
+
+**Middleware guidelines:**
+
+- Document the keys your middleware adds to scope
+- Use consistent naming within your namespace
+- Don't modify keys outside your namespace
+- Check for key existence before assuming middleware ran
+
 ## HTTP
 
 PAGI covers HTTP/1.0, HTTP/1.1, and HTTP/2. Protocol servers assign separate scopes for requests within the same HTTP/2 connection and multiplex responses appropriately.
