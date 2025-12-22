@@ -8,6 +8,7 @@ no warnings 'experimental::signatures';
 
 use Future::AsyncAwait;
 use Carp qw(croak);
+use Encode qw(encode);
 
 our $VERSION = '0.01';
 
@@ -42,6 +43,49 @@ sub content_type ($self, $type) {
     $self->{_headers} = [grep { lc($_->[0]) ne 'content-type' } @{$self->{_headers}}];
     push @{$self->{_headers}}, ['content-type', $type];
     return $self;
+}
+
+async sub send ($self, $body = undef) {
+    croak("Response already sent") if $self->{_sent};
+    $self->{_sent} = 1;
+
+    # Send start
+    await $self->{send}->({
+        type    => 'http.response.start',
+        status  => $self->{_status},
+        headers => $self->{_headers},
+    });
+
+    # Send body
+    await $self->{send}->({
+        type => 'http.response.body',
+        body => $body,
+        more => 0,
+    });
+}
+
+async sub send_utf8 ($self, $body, %opts) {
+    my $charset = $opts{charset} // 'utf-8';
+
+    # Ensure content-type has charset
+    my $has_ct = 0;
+    for my $h (@{$self->{_headers}}) {
+        if (lc($h->[0]) eq 'content-type') {
+            $has_ct = 1;
+            unless ($h->[1] =~ /charset=/i) {
+                $h->[1] .= "; charset=$charset";
+            }
+            last;
+        }
+    }
+    unless ($has_ct) {
+        push @{$self->{_headers}}, ['content-type', "text/plain; charset=$charset"];
+    }
+
+    # Encode body
+    my $encoded = encode($charset, $body // '');
+
+    await $self->send($encoded);
 }
 
 1;
