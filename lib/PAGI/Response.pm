@@ -13,6 +13,198 @@ use JSON::MaybeXS ();
 
 our $VERSION = '0.01';
 
+=head1 NAME
+
+PAGI::Response - Fluent response builder for PAGI applications
+
+=head1 SYNOPSIS
+
+    use PAGI::Response;
+    use Future::AsyncAwait;
+
+    async sub app ($scope, $receive, $send) {
+        my $res = PAGI::Response->new($send);
+
+        # Fluent chaining
+        await $res->status(200)
+                  ->header('X-Custom' => 'value')
+                  ->json({ message => 'Hello' });
+    }
+
+    # Various response types
+    await $res->text("Hello World");
+    await $res->html("<h1>Hello</h1>");
+    await $res->json({ data => 'value' });
+    await $res->redirect('/login');
+    await $res->error(400, "Bad Request");
+
+    # Streaming
+    await $res->stream(async sub ($writer) {
+        await $writer->write("chunk1");
+        await $writer->write("chunk2");
+        await $writer->close();
+    });
+
+    # File download
+    await $res->send_file('/path/to/file.pdf', filename => 'doc.pdf');
+
+=head1 DESCRIPTION
+
+PAGI::Response provides a fluent interface for building HTTP responses in
+raw PAGI applications. It wraps the low-level C<$send> callback and provides
+convenient methods for common response types.
+
+All chainable methods (C<status>, C<header>, C<content_type>, C<cookie>)
+return C<$self> for fluent chaining. Finisher methods (C<text>, C<html>,
+C<json>, C<redirect>, etc.) return Futures and send the response.
+
+=head1 CONSTRUCTOR
+
+=head2 new
+
+    my $res = PAGI::Response->new($send);
+
+Creates a new response builder. The C<$send> parameter must be a coderef
+(the PAGI send callback).
+
+=head1 CHAINABLE METHODS
+
+These methods return C<$self> for fluent chaining.
+
+=head2 status
+
+    $res->status(404);
+
+Set the HTTP status code (100-599).
+
+=head2 header
+
+    $res->header('X-Custom' => 'value');
+
+Add a response header. Can be called multiple times to add multiple headers.
+
+=head2 content_type
+
+    $res->content_type('text/html; charset=utf-8');
+
+Set the Content-Type header, replacing any existing one.
+
+=head2 cookie
+
+    $res->cookie('session' => 'abc123',
+        max_age  => 3600,
+        path     => '/',
+        domain   => 'example.com',
+        secure   => 1,
+        httponly => 1,
+        samesite => 'Strict',
+    );
+
+Set a response cookie. Options: max_age, expires, path, domain, secure,
+httponly, samesite.
+
+=head2 delete_cookie
+
+    $res->delete_cookie('session');
+
+Delete a cookie by setting it with Max-Age=0.
+
+=head1 FINISHER METHODS
+
+These methods return Futures and send the response.
+
+=head2 text
+
+    await $res->text("Hello World");
+
+Send a plain text response with Content-Type: text/plain; charset=utf-8.
+
+=head2 html
+
+    await $res->html("<h1>Hello</h1>");
+
+Send an HTML response with Content-Type: text/html; charset=utf-8.
+
+=head2 json
+
+    await $res->json({ message => 'Hello' });
+
+Send a JSON response with Content-Type: application/json; charset=utf-8.
+
+=head2 redirect
+
+    await $res->redirect('/login');
+    await $res->redirect('/new-url', 301);
+
+Send a redirect response. Default status is 302.
+
+=head2 empty
+
+    await $res->empty();
+
+Send an empty response with status 204 No Content (or custom status if set).
+
+=head2 error
+
+    await $res->error(400, "Bad Request");
+    await $res->error(422, "Validation Failed", {
+        errors => [{ field => 'email', message => 'Invalid' }]
+    });
+
+Send a JSON error response with status and error message.
+
+=head2 send
+
+    await $res->send($bytes);
+
+Send raw bytes as the response body.
+
+=head2 send_utf8
+
+    await $res->send_utf8($text);
+    await $res->send_utf8($text, charset => 'iso-8859-1');
+
+Send UTF-8 encoded text. Adds charset to Content-Type if not present.
+
+=head2 stream
+
+    await $res->stream(async sub ($writer) {
+        await $writer->write("chunk1");
+        await $writer->write("chunk2");
+        await $writer->close();
+    });
+
+Stream response chunks via callback. The callback receives a writer object
+with C<write($chunk)>, C<close()>, and C<bytes_written()> methods.
+
+=head2 send_file
+
+    await $res->send_file('/path/to/file.pdf');
+    await $res->send_file('/path/to/file.pdf',
+        filename => 'download.pdf',
+        inline   => 1,
+    );
+
+Send a file as the response. Options:
+
+=over 4
+
+=item * filename - Set Content-Disposition attachment filename
+
+=item * inline - Use Content-Disposition: inline instead of attachment
+
+=back
+
+=head1 SEE ALSO
+
+L<PAGI>, L<PAGI::Request>
+
+=head1 AUTHOR
+
+PAGI Contributors
+
+=cut
+
 sub new ($class, $send = undef) {
     croak("send is required") unless $send;
     croak("send must be a coderef") unless ref($send) eq 'CODE';
