@@ -16,4 +16,9 @@ subtest 'constructor requires send' => sub {
     like dies { PAGI::Response->new() }, qr/send.*required/i, 'dies without send';
 };
 
+subtest 'constructor requires coderef' => sub {
+    like dies { PAGI::Response->new("not a coderef") },
+         qr/coderef/i, 'dies with non-coderef';
+};
+
 done_testing;

@@ -122,6 +122,70 @@ sub header_all {
     return $self->headers->get_all(lc($name));
 }
 
+# Send data-only event
+async sub send {
+    my ($self, $data) = @_;
+
+    croak "Cannot send on closed SSE connection" if $self->is_closed;
+
+    # Auto-start if not started
+    await $self->start unless $self->is_started;
+
+    await $self->{send}->({
+        type => 'sse.send',
+        data => $data,
+    });
+
+    return $self;
+}
+
+# Send JSON-encoded data
+async sub send_json {
+    my ($self, $data) = @_;
+
+    croak "Cannot send on closed SSE connection" if $self->is_closed;
+
+    await $self->start unless $self->is_started;
+
+    my $json = JSON::PP::encode_json($data);
+
+    await $self->{send}->({
+        type => 'sse.send',
+        data => $json,
+    });
+
+    return $self;
+}
+
+# Send full SSE event with all fields
+async sub send_event {
+    my ($self, %opts) = @_;
+
+    croak "Cannot send on closed SSE connection" if $self->is_closed;
+    croak "send_event requires 'data' parameter" unless exists $opts{data};
+
+    await $self->start unless $self->is_started;
+
+    # Auto-encode hashref/arrayref data as JSON
+    my $data = $opts{data};
+    if (ref $data) {
+        $data = JSON::PP::encode_json($data);
+    }
+
+    my $event = {
+        type => 'sse.send',
+        data => $data,
+    };
+
+    $event->{event} = $opts{event} if defined $opts{event};
+    $event->{id}    = "$opts{id}"  if defined $opts{id};
+    $event->{retry} = int($opts{retry}) if defined $opts{retry};
+
+    await $self->{send}->($event);
+
+    return $self;
+}
+
 1;
 
 __END__

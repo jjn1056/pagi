@@ -13,6 +13,7 @@ our $VERSION = '0.01';
 
 sub new ($class, $send = undef) {
     croak("send is required") unless $send;
+    croak("send must be a coderef") unless ref($send) eq 'CODE';
 
     my $self = bless {
         send    => $send,
