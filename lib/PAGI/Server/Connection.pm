@@ -1183,6 +1183,7 @@ async sub _handle_sse_request {
     my ($self, $request) = @_;
 
     $self->{sse_mode} = 1;
+    $self->_stop_idle_timer;  # SSE connections are long-lived
 
     my $scope = $self->_create_sse_scope($request);
     my $receive = $self->_create_sse_receive($request);
@@ -1414,6 +1415,8 @@ use constant WS_GUID => '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 
 async sub _handle_websocket_request {
     my ($self, $request) = @_;
+
+    $self->_stop_idle_timer;  # WebSocket connections are long-lived
 
     my $scope = $self->_create_websocket_scope($request);
     my $receive = $self->_create_websocket_receive($request);
