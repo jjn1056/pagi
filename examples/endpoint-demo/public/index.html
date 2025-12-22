@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PAGI Endpoint Demo</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            padding: 2rem;
+        }
+        h1 { color: #00d9ff; margin-bottom: 1rem; }
+        h2 { color: #888; margin: 1rem 0 0.5rem; font-size: 1rem; }
+        .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+        .card { background: #16213e; border-radius: 8px; padding: 1rem; }
+        .log {
+            background: #0f0f1a;
+            border-radius: 4px;
+            padding: 0.5rem;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.75rem;
+        }
+        .log div { padding: 2px 0; border-bottom: 1px solid #1a1a2e; }
+        input, button {
+            padding: 0.5rem;
+            border: none;
+            border-radius: 4px;
+            margin-top: 0.5rem;
+        }
+        input { background: #0f0f1a; color: #eee; flex: 1; }
+        button { background: #00d9ff; color: #000; cursor: pointer; }
+        .input-row { display: flex; gap: 0.5rem; }
+    </style>
+</head>
+<body>
+    <h1>PAGI Endpoint Demo</h1>
+
+    <div class="grid">
+        <div class="card">
+            <h2>HTTP API</h2>
+            <div id="http-log" class="log"></div>
+            <div class="input-row">
+                <input id="message" placeholder="New message...">
+                <button onclick="postMessage()">POST</button>
+            </div>
+            <button onclick="getMessages()" style="width:100%">GET /api/messages</button>
+        </div>
+
+        <div class="card">
+            <h2>WebSocket Echo</h2>
+            <div id="ws-log" class="log"></div>
+            <div class="input-row">
+                <input id="ws-input" placeholder="Send message...">
+                <button onclick="sendWS()">Send</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>SSE Events</h2>
+            <div id="sse-log" class="log"></div>
+        </div>
+    </div>
+
+    <script>
+        function log(id, msg) {
+            const el = document.getElementById(id);
+            const div = document.createElement('div');
+            div.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
+            el.insertBefore(div, el.firstChild);
+        }
+
+        // HTTP
+        async function getMessages() {
+            const res = await fetch('/api/messages');
+            const data = await res.json();
+            log('http-log', `GET: ${JSON.stringify(data)}`);
+        }
+
+        async function postMessage() {
+            const text = document.getElementById('message').value;
+            const res = await fetch('/api/messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            const data = await res.json();
+            log('http-log', `POST: ${JSON.stringify(data)}`);
+            document.getElementById('message').value = '';
+        }
+
+        // WebSocket
+        const ws = new WebSocket(`ws://${location.host}/ws/echo`);
+        ws.onopen = () => log('ws-log', 'Connected');
+        ws.onmessage = e => log('ws-log', `Received: ${e.data}`);
+        ws.onclose = () => log('ws-log', 'Disconnected');
+
+        function sendWS() {
+            const msg = document.getElementById('ws-input').value;
+            ws.send(JSON.stringify({ message: msg }));
+            log('ws-log', `Sent: ${msg}`);
+            document.getElementById('ws-input').value = '';
+        }
+
+        // SSE
+        const sse = new EventSource('/events');
+        sse.onopen = () => log('sse-log', 'Connected');
+        sse.addEventListener('connected', e => log('sse-log', `Event: ${e.data}`));
+        sse.onmessage = e => log('sse-log', `Message: ${e.data}`);
+        sse.onerror = () => log('sse-log', 'Error/Disconnected');
+
+        // Initial load
+        getMessages();
+    </script>
+</body>
+</html>
