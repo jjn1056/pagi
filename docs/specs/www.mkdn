@@ -10,6 +10,71 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 - `0.1`: Initial draft, based on ASGI 2.5, including Server-Side Events support.
 
+## Common Data Types
+
+### Headers Format
+
+Headers are represented as `ArrayRef[ArrayRef[Bytes]]` - an array of 2-element tuples where each tuple contains `[name, value]`:
+
+```perl
+headers => [
+    ['content-type', 'text/html; charset=utf-8'],
+    ['x-request-id', '12345'],
+    ['set-cookie', 'session=abc'],
+    ['set-cookie', 'tracking=xyz'],  # duplicate names allowed
+]
+```
+
+**Why tuples instead of PSGI's flat array?**
+
+PSGI uses a flat array with implicit pairs: `['Content-Type', 'text/html', 'X-Custom', 'value']`. PAGI uses explicit tuples for several reasons:
+
+1. **Clearer iteration** - Each header is a discrete unit:
+   ```perl
+   # PAGI - straightforward
+   for my $header (@$headers) {
+       my ($name, $value) = @$header;
+   }
+
+   # PSGI - requires index math
+   for (my $i = 0; $i < @$headers; $i += 2) {
+       my ($name, $value) = @{$headers}[$i, $i+1];
+   }
+   ```
+
+2. **Explicit duplicates** - Duplicate header names (common for `Set-Cookie`) are visually obvious
+
+3. **Easier manipulation** - Filtering, mapping, and transforming headers works naturally with array operations:
+   ```perl
+   # Remove all cookies
+   my @filtered = grep { $_->[0] ne 'set-cookie' } @$headers;
+
+   # Find a header
+   my ($ct) = grep { $_->[0] eq 'content-type' } @$headers;
+   ```
+
+4. **ASGI compatibility** - Matches the Python ASGI specification that PAGI is modeled on
+
+**Rules:**
+- Header names MUST be lowercase byte strings
+- Header values MUST be byte strings (opaque, not decoded)
+- Each inner arrayref MUST contain exactly 2 elements: `[name, value]`
+- Duplicate header names are permitted (required for `Set-Cookie`, etc.)
+
+**HTTP::Headers Compatibility:**
+
+PSGI's flat array format is more compatible with `HTTP::Headers->flatten()`. If you need to interoperate:
+
+```perl
+# PAGI tuples → flat array (for HTTP::Headers)
+my @flat = map { @$_ } @$pagi_headers;
+my $hh = HTTP::Headers->new(@flat);
+
+# Flat array → PAGI tuples
+my @flat = $http_headers->flatten;
+my @pagi = map { [$flat[$_*2], $flat[$_*2+1]] } 0 .. ($#flat/2);
+```
+
 ## HTTP
 
 PAGI covers HTTP/1.0, HTTP/1.1, and HTTP/2. Protocol servers assign separate scopes for requests within the same HTTP/2 connection and multiplex responses appropriately.
