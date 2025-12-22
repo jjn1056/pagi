@@ -68,6 +68,15 @@ sub _set_state {
 sub _set_closed {
     my ($self) = @_;
     $self->{_state} = 'closed';
+
+    # Stop keepalive timer if running
+    if ($self->{_keepalive_timer}) {
+        $self->{_keepalive_timer}->stop;
+        if ($self->{_loop}) {
+            $self->{_loop}->remove($self->{_keepalive_timer});
+        }
+        delete $self->{_keepalive_timer};
+    }
 }
 
 # Start the SSE stream
@@ -85,6 +94,58 @@ async sub start {
 
     await $self->{send}->($event);
     $self->_set_state('started');
+
+    return $self;
+}
+
+# Set or get the event loop
+sub set_loop {
+    my ($self, $loop) = @_;
+    $self->{_loop} = $loop;
+    return $self;
+}
+
+sub loop {
+    my ($self) = @_;
+    return $self->{_loop} if $self->{_loop};
+
+    require IO::Async::Loop;
+    $self->{_loop} = IO::Async::Loop->new;
+    return $self->{_loop};
+}
+
+# Enable/disable keepalive timer
+sub keepalive {
+    my ($self, $interval, $comment) = @_;
+    $comment //= ':keepalive';
+
+    # Stop existing timer if any
+    if ($self->{_keepalive_timer}) {
+        $self->{_keepalive_timer}->stop;
+        $self->loop->remove($self->{_keepalive_timer});
+        delete $self->{_keepalive_timer};
+    }
+
+    # If interval is 0 or undef, just disable
+    return $self unless $interval && $interval > 0;
+
+    require IO::Async::Timer::Periodic;
+    require Scalar::Util;
+
+    my $weak_self = $self;
+    Scalar::Util::weaken($weak_self);
+
+    my $timer = IO::Async::Timer::Periodic->new(
+        interval => $interval,
+        on_tick  => sub {
+            return unless $weak_self && !$weak_self->is_closed;
+            $weak_self->try_send($comment);
+        },
+    );
+
+    $self->loop->add($timer);
+    $timer->start;
+    $self->{_keepalive_timer} = $timer;
 
     return $self;
 }
