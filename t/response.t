@@ -351,4 +351,39 @@ subtest 'stream writer bytes_written' => sub {
     is $bytes, 10, 'bytes_written tracks total';
 };
 
+subtest 'error method basic' => sub {
+    my @sent;
+    my $send = sub ($msg) { push @sent, $msg; Future->done };
+    my $res = PAGI::Response->new($send);
+
+    $res->error(400, "Bad Request")->get;
+
+    is $sent[0]->{status}, 400, 'status from error';
+    my %headers = map { lc($_->[0]) => $_->[1] } @{$sent[0]->{headers}};
+    is $headers{'content-type'}, 'application/json; charset=utf-8', 'json content-type';
+
+    my $body = JSON::MaybeXS->new(utf8 => 1)->decode($sent[1]->{body});
+    is $body->{error}, 'Bad Request', 'error message in body';
+    is $body->{status}, 400, 'status in body';
+};
+
+subtest 'error with extra data' => sub {
+    my @sent;
+    my $send = sub ($msg) { push @sent, $msg; Future->done };
+    my $res = PAGI::Response->new($send);
+
+    $res->error(422, "Validation Failed", {
+        errors => [
+            { field => 'email', message => 'Invalid email' },
+        ]
+    })->get;
+
+    is $sent[0]->{status}, 422, 'status 422';
+
+    my $body = JSON::MaybeXS->new(utf8 => 1)->decode($sent[1]->{body});
+    is $body->{error}, 'Validation Failed', 'error message';
+    is scalar(@{$body->{errors}}), 1, 'errors array included';
+    is $body->{errors}[0]{field}, 'email', 'field in error';
+};
+
 done_testing;

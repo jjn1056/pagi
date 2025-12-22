@@ -208,4 +208,22 @@ async sub stream ($self, $callback) {
     await $writer->close() unless $writer->{closed};
 }
 
+async sub error ($self, $status, $message, $extra = undef) {
+    $self->{_status} = $status;
+
+    my $body = {
+        status => $status,
+        error  => $message,
+    };
+
+    # Merge extra data if provided
+    if ($extra && ref($extra) eq 'HASH') {
+        for my $key (keys %$extra) {
+            $body->{$key} = $extra->{$key};
+        }
+    }
+
+    await $self->json($body);
+}
+
 1;
