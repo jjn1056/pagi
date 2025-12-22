@@ -8,6 +8,7 @@ no warnings 'experimental::signatures';
 
 use Future::AsyncAwait;
 use Carp qw(croak);
+use Module::Load qw(load);
 
 our $VERSION = '0.01';
 
@@ -46,6 +47,22 @@ async sub dispatch ($self, $req, $res) {
     # 405 Method Not Allowed
     my @allowed = $self->allowed_methods;
     await $res->text("405 Method Not Allowed", status => 405);
+}
+
+sub to_app ($class) {
+    # Load the request/response classes
+    my $req_class = $class->request_class;
+    my $res_class = $class->response_class;
+    load($req_class);
+    load($res_class);
+
+    return async sub ($scope, $receive, $send) {
+        my $endpoint = $class->new;
+        my $req = $req_class->new($scope, $receive);
+        my $res = $res_class->new($send);
+
+        await $endpoint->dispatch($req, $res);
+    };
 }
 
 1;
