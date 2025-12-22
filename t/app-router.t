@@ -252,4 +252,17 @@ subtest 'websocket route basic' => sub {
     is $sent->[1]{body}, 'ws_echo', 'websocket handler called';
 };
 
+subtest 'sse route basic' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->sse('/events' => make_handler('sse_events', \@calls));
+    my $app = $router->to_app;
+
+    # SSE request to /events
+    my ($send, $sent) = mock_send();
+    $app->({ type => 'sse', path => '/events' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'sse route matched';
+    is $sent->[1]{body}, 'sse_events', 'sse handler called';
+};
+
 done_testing;

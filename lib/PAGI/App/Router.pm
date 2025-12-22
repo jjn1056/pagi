@@ -84,6 +84,18 @@ sub websocket {
     return $self;
 }
 
+sub sse {
+    my ($self, $path, $app) = @_;
+    my ($regex, @names) = $self->_compile_path($path);
+    push @{$self->{sse_routes}}, {
+        path  => $path,
+        regex => $regex,
+        names => \@names,
+        app   => $app,
+    };
+    return $self;
+}
+
 sub route {
     my ($self, $method, $path, $app) = @_;
 
