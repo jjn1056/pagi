@@ -12,6 +12,20 @@ Revision history for PAGI
   - Just use `$req->stash->{key}` for all request-scoped data sharing
 - **BREAKING**: Removed `$sse->set_stash()` method
 - Removed automatic copying of router state into request stash
+- **BREAKING**: Removed `on_startup` and `on_shutdown` from PAGI::Endpoint::Router
+  - Use PAGI::Lifespan wrapper for lifecycle management instead
+  - Routers are now freely composable without lifecycle concerns
+
+### Added
+
+- New `PAGI::Lifespan` module for explicit lifecycle management
+  - Wraps any PAGI app with startup/shutdown callbacks
+  - Injects app state into scope as `$scope->{'pagi.state'}`
+- `state` accessor on PAGI::Request, PAGI::WebSocket, PAGI::SSE
+  - Reads app state from scope (injected by PAGI::Lifespan)
+  - Separate from `stash` (per-request data)
+- `connection_state` accessor on PAGI::WebSocket, PAGI::SSE
+  - Renamed from `state` to avoid collision with new app state accessor
 
 ### Migration Guide
 
@@ -53,3 +67,49 @@ use external storage (Redis, database, etc.).
 **Stash Flows Downstream:** `$req->stash` is shared across all middleware, handlers,
 and subrouters for the same request. Middleware can set values that downstream
 handlers will see.
+
+**Lifecycle management (Router):**
+
+Before (lifecycle in router):
+```perl
+package MyApp;
+use parent 'PAGI::Endpoint::Router';
+
+async sub on_startup {
+    my ($self) = @_;
+    $self->state->{db} = DBI->connect(...);
+}
+
+# app.pl
+MyApp->to_app;
+```
+
+After (lifecycle via wrapper):
+```perl
+package MyApp;
+use parent 'PAGI::Endpoint::Router';
+# No on_startup/on_shutdown needed
+
+# app.pl
+use PAGI::Lifespan;
+my $router = MyApp->new;
+
+PAGI::Lifespan->wrap(
+    $router->to_app,
+    startup => async sub {
+        my ($state) = @_;
+        $state->{db} = DBI->connect(...);
+        %{$router->state} = %$state;
+    },
+);
+```
+
+Accessing state:
+```perl
+# In handlers - both work
+my $db = $self->state->{db};   # Via router instance
+my $db = $req->state->{db};    # Via request (from scope)
+
+# In subrouters - use request
+my $db = $req->state->{db};    # Always works
+```
