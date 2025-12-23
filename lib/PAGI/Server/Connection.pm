@@ -11,6 +11,7 @@ use Encode;
 use IO::Async::Timer::Countdown;
 use Time::HiRes qw(gettimeofday tv_interval);
 use PAGI::Util::AsyncFile;
+use PAGI::Background;
 
 our $VERSION = '0.001';
 
@@ -488,6 +489,7 @@ sub _create_scope {
         # Optimized: avoid hash copy when state is empty (common case)
         state        => %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
+        background   => $loop ? PAGI::Background->new($loop) : undef,
     };
 
     return $scope;
@@ -1246,6 +1248,7 @@ sub _create_sse_scope {
         # Optimized: avoid hash copy when state is empty (common case)
         state        => %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
+        background   => $loop ? PAGI::Background->new($loop) : undef,
     };
 
     return $scope;
@@ -1492,6 +1495,7 @@ sub _create_websocket_scope {
         # Optimized: avoid hash copy when state is empty (common case)
         state        => %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
+        background   => $loop ? PAGI::Background->new($loop) : undef,
     };
 
     return $scope;
