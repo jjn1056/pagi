@@ -181,4 +181,198 @@ subtest 'SSE route with method handler' => sub {
     })->()->get;
 };
 
+subtest 'lifespan startup and shutdown' => sub {
+    {
+        package TestApp::Lifespan;
+        use parent 'PAGI::Endpoint::Router';
+        use Future::AsyncAwait;
+
+        our $startup_called = 0;
+        our $shutdown_called = 0;
+        our $stash_value;
+
+        async sub on_startup {
+            my ($self) = @_;
+            $startup_called = 1;
+            $self->stash->{db} = 'connected';
+        }
+
+        async sub on_shutdown {
+            my ($self) = @_;
+            $shutdown_called = 1;
+        }
+
+        sub routes {
+            my ($self, $r) = @_;
+            $r->get('/test' => 'test_handler');
+        }
+
+        async sub test_handler {
+            my ($self, $req, $res) = @_;
+            $stash_value = $req->stash->{db};
+            await $res->text('ok');
+        }
+    }
+
+    my $app = TestApp::Lifespan->to_app;
+
+    # Test startup
+    (async sub {
+        my @lifespan_sent;
+        my $lifespan_send = sub { push @lifespan_sent, $_[0]; Future->done };
+
+        my $msg_index = 0;
+        my @lifespan_messages = (
+            { type => 'lifespan.startup' },
+            { type => 'lifespan.shutdown' },
+        );
+        my $lifespan_receive = sub {
+            my $msg = $lifespan_messages[$msg_index++];
+            Future->done($msg);
+        };
+
+        my $lifespan_scope = { type => 'lifespan' };
+
+        await $app->($lifespan_scope, $lifespan_receive, $lifespan_send);
+
+        ok($TestApp::Lifespan::startup_called, 'on_startup was called');
+        ok($TestApp::Lifespan::shutdown_called, 'on_shutdown was called');
+        is($lifespan_sent[0]{type}, 'lifespan.startup.complete', 'startup complete sent');
+        is($lifespan_sent[1]{type}, 'lifespan.shutdown.complete', 'shutdown complete sent');
+
+        # Test that stash is available to handlers
+        my @http_sent;
+        my $http_send = sub { push @http_sent, $_[0]; Future->done };
+        my $http_receive = sub { Future->done({ type => 'http.request', body => '' }) };
+
+        my $http_scope = {
+            type    => 'http',
+            method  => 'GET',
+            path    => '/test',
+            headers => [],
+        };
+
+        await $app->($http_scope, $http_receive, $http_send);
+
+        is($TestApp::Lifespan::stash_value, 'connected', 'stash from on_startup available in handler');
+    })->()->get;
+};
+
+subtest 'middleware as method names' => sub {
+    {
+        package TestApp::Middleware;
+        use parent 'PAGI::Endpoint::Router';
+        use Future::AsyncAwait;
+
+        our $auth_called = 0;
+        our $log_called = 0;
+
+        sub routes {
+            my ($self, $r) = @_;
+            $r->get('/public' => 'public_handler');
+            $r->get('/protected' => ['require_auth'] => 'protected_handler');
+            $r->get('/logged' => ['log_request', 'require_auth'] => 'protected_handler');
+        }
+
+        async sub require_auth {
+            my ($self, $req, $res, $next) = @_;
+            $auth_called = 1;
+
+            my $token = $req->header('authorization');
+            if ($token && $token eq 'Bearer valid') {
+                $req->set('user', { id => 1 });
+                await $next->();
+            } else {
+                await $res->status(401)->json({ error => 'Unauthorized' });
+            }
+        }
+
+        async sub log_request {
+            my ($self, $req, $res, $next) = @_;
+            $log_called = 1;
+            await $next->();
+        }
+
+        async sub public_handler {
+            my ($self, $req, $res) = @_;
+            await $res->text('public');
+        }
+
+        async sub protected_handler {
+            my ($self, $req, $res) = @_;
+            my $user = $req->get('user');
+            await $res->json({ user_id => $user->{id} });
+        }
+    }
+
+    my $app = TestApp::Middleware->to_app;
+
+    # Test public route (no middleware)
+    (async sub {
+        my @sent;
+        my $send = sub { push @sent, $_[0]; Future->done };
+        my $receive = sub { Future->done({ type => 'http.request', body => '' }) };
+
+        await $app->({ type => 'http', method => 'GET', path => '/public', headers => [] },
+                     $receive, $send);
+
+        is($sent[1]{body}, 'public', 'public route works');
+    })->()->get;
+
+    # Test protected route without auth
+    (async sub {
+        my @sent;
+        $TestApp::Middleware::auth_called = 0;
+
+        my $send = sub { push @sent, $_[0]; Future->done };
+        my $receive = sub { Future->done({ type => 'http.request', body => '' }) };
+
+        await $app->({ type => 'http', method => 'GET', path => '/protected', headers => [] },
+                     $receive, $send);
+
+        ok($TestApp::Middleware::auth_called, 'auth middleware was called');
+        is($sent[0]{status}, 401, 'returns 401 without auth');
+    })->()->get;
+
+    # Test protected route with auth
+    (async sub {
+        my @sent;
+        $TestApp::Middleware::auth_called = 0;
+
+        my $send = sub { push @sent, $_[0]; Future->done };
+        my $receive = sub { Future->done({ type => 'http.request', body => '' }) };
+
+        await $app->({
+            type    => 'http',
+            method  => 'GET',
+            path    => '/protected',
+            headers => [['authorization', 'Bearer valid']],
+        }, $receive, $send);
+
+        is($sent[0]{status}, 200, 'returns 200 with auth');
+        like($sent[1]{body}, qr/"user_id"/, 'returns user data');
+    })->()->get;
+
+    # Test middleware chaining
+    (async sub {
+        my @sent;
+        $TestApp::Middleware::auth_called = 0;
+        $TestApp::Middleware::log_called = 0;
+
+        my $send = sub { push @sent, $_[0]; Future->done };
+        my $receive = sub { Future->done({ type => 'http.request', body => '' }) };
+
+        await $app->({
+            type    => 'http',
+            method  => 'GET',
+            path    => '/logged',
+            headers => [['authorization', 'Bearer valid']],
+        }, $receive, $send);
+
+        ok($TestApp::Middleware::log_called, 'log middleware was called');
+        ok($TestApp::Middleware::auth_called, 'auth middleware was called');
+        is($sent[0]{status}, 200, 'handler was reached');
+    })->()->get;
+};
+
 done_testing;
