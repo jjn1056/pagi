@@ -20,8 +20,8 @@ sub routes {
 
 async sub get_info {
     my ($self, $req, $res) = @_;
+    $req->state->{metrics}{requests}++;
 
-    # Access app state via $req->state (injected by PAGI::Lifespan)
     my $config = $req->state->{config};
 
     await $res->json({
@@ -33,11 +33,13 @@ async sub get_info {
 
 async sub list_users {
     my ($self, $req, $res) = @_;
+    $req->state->{metrics}{requests}++;
     await $res->json(\@USERS);
 }
 
 async sub get_user {
     my ($self, $req, $res) = @_;
+    $req->state->{metrics}{requests}++;
 
     my $id = $req->param('id');
     my ($user) = grep { $_->{id} == $id } @USERS;
@@ -51,6 +53,7 @@ async sub get_user {
 
 async sub create_user {
     my ($self, $req, $res) = @_;
+    $req->state->{metrics}{requests}++;
 
     my $data = await $req->json;
 

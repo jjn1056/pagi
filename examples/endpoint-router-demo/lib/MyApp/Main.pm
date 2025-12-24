@@ -32,6 +32,9 @@ sub routes {
 async sub home {
     my ($self, $req, $res) = @_;
 
+    # Count HTTP requests
+    $req->state->{metrics}{requests}++;
+
     # Access config via $req->state (populated by Lifespan startup)
     my $config = $req->state->{config};
 
@@ -323,7 +326,6 @@ async sub sse_metrics {
     }
 
     await $sse->every(2, async sub {
-        $metrics->{requests}++;
         $metrics->{sse_seq}++;
 
         await $sse->send_event(
