@@ -67,4 +67,48 @@ subtest 'path_param does not include query params' => sub {
     is($req->query('foo'), 'bar', 'query() returns query param');
 };
 
+subtest 'path_param_strict mode' => sub {
+    # Save original config
+    my $orig_strict = PAGI::Request->config->{path_param_strict};
+
+    # Test non-strict mode (default) - returns empty without dying
+    PAGI::Request->configure(path_param_strict => 0);
+    my $scope_no_params = { type => 'http', method => 'GET', headers => [] };
+    my $req = PAGI::Request->new($scope_no_params);
+
+    is($req->path_params, {}, 'non-strict: path_params returns empty hashref');
+    is($req->path_param('id'), undef, 'non-strict: path_param returns undef');
+
+    # Test strict mode - dies when path_params not in scope
+    PAGI::Request->configure(path_param_strict => 1);
+    $req = PAGI::Request->new($scope_no_params);
+
+    like(
+        dies { $req->path_params },
+        qr/path_params not set in scope/,
+        'strict: path_params dies when not set'
+    );
+
+    like(
+        dies { $req->path_param('id') },
+        qr/path_params not set in scope/,
+        'strict: path_param dies when not set'
+    );
+
+    # Strict mode should NOT die when path_params IS set
+    my $scope_with_params = {
+        type => 'http',
+        method => 'GET',
+        headers => [],
+        path_params => { id => '42' },
+    };
+    $req = PAGI::Request->new($scope_with_params);
+
+    is($req->path_params, { id => '42' }, 'strict: path_params works when set');
+    is($req->path_param('id'), '42', 'strict: path_param works when set');
+
+    # Restore original config
+    PAGI::Request->configure(path_param_strict => $orig_strict);
+};
+
 done_testing;

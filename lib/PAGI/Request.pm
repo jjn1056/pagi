@@ -15,11 +15,12 @@ use PAGI::Request::BodyStream;
 
 # Class-level configuration defaults
 our %CONFIG = (
-    max_body_size   => 10 * 1024 * 1024,   # 10MB total request body
-    max_part_size   => 1 * 1024 * 1024,    # 1MB per form field (non-file)
-    max_upload_size => 10 * 1024 * 1024,   # 10MB per file upload
-    max_files       => 20,
-    max_fields      => 1000,
+    max_body_size     => 10 * 1024 * 1024,   # 10MB total request body
+    max_part_size     => 1 * 1024 * 1024,    # 1MB per form field (non-file)
+    max_upload_size   => 10 * 1024 * 1024,   # 10MB per file upload
+    max_files         => 20,
+    max_fields        => 1000,
+    path_param_strict => 0,                  # Die if path_params not in scope
     spool_threshold => 64 * 1024,           # 64KB
     temp_dir        => $ENV{TMPDIR} // '/tmp',
 );
@@ -290,13 +291,22 @@ sub basic_auth {
 # Stored in scope->{path_params} for router-agnostic access
 sub path_params {
     my $self = shift;
-    return $self->{scope}{path_params} // {};
+    my $params = $self->{scope}{path_params};
+    if (!defined $params && $CONFIG{path_param_strict}) {
+        croak "path_params not set in scope (no router configured?). "
+            . "Set PAGI::Request->configure(path_param_strict => 0) to allow this.";
+    }
+    return $params // {};
 }
 
 sub path_param {
     my ($self, $name) = @_;
-    my $params = $self->{scope}{path_params} // {};
-    return $params->{$name};
+    my $params = $self->{scope}{path_params};
+    if (!defined $params && $CONFIG{path_param_strict}) {
+        croak "path_params not set in scope (no router configured?). "
+            . "Set PAGI::Request->configure(path_param_strict => 0) to allow this.";
+    }
+    return ($params // {})->{$name};
 }
 
 # Per-request storage for middleware/handlers
@@ -579,13 +589,14 @@ work with C<$scope> and C<$receive> directly.
 =head2 configure
 
     PAGI::Request->configure(
-        max_body_size   => 10 * 1024 * 1024,  # 10MB total body
-        max_part_size   => 1 * 1024 * 1024,   # 1MB per form field
-        max_upload_size => 10 * 1024 * 1024,  # 10MB per file upload
-        spool_threshold => 64 * 1024,          # 64KB
+        max_body_size     => 10 * 1024 * 1024,  # 10MB total body
+        max_part_size     => 1 * 1024 * 1024,   # 1MB per form field
+        max_upload_size   => 10 * 1024 * 1024,  # 10MB per file upload
+        spool_threshold   => 64 * 1024,         # 64KB
+        path_param_strict => 0,                 # Die if path_params not in scope
     );
 
-Set class-level defaults for body/upload handling.
+Set class-level defaults for body/upload handling and path parameters.
 
 =over 4
 
@@ -606,6 +617,15 @@ Applies to parts with a filename in Content-Disposition.
 =item spool_threshold
 
 Size at which multipart data is spooled to disk. Default: 64KB.
+
+=item path_param_strict
+
+When set to 1, C<path_params> and C<path_param> will die if
+C<< $scope->{path_params} >> is not defined (i.e., no router has set it).
+Default: 0 (return empty hashref/undef silently).
+
+This is useful for catching configuration errors where you expect a router
+but one isn't configured. See L</Strict Mode> for details.
 
 =back
 
@@ -715,7 +735,8 @@ any router can populate this field.
 
     my $params = $req->path_params;  # hashref
 
-Get all path parameters as a hashref.
+Get all path parameters as a hashref. Returns an empty hashref if no router
+has set path parameters.
 
     # Route: /users/:id/posts/:post_id
     # URL: /users/42/posts/100
@@ -731,6 +752,29 @@ Get a single path parameter by name. Returns C<undef> if not found.
     # Route: /users/:id
     # URL: /users/42
     my $id = $req->path_param('id');  # '42'
+
+=head2 Strict Mode
+
+By default, C<path_params> and C<path_param> return empty values if no router
+has set C<< $scope->{path_params} >>. This is the safest behavior for middleware
+and handlers that may run with or without a router.
+
+If you want to catch configuration errors early, enable strict mode:
+
+    PAGI::Request->configure(path_param_strict => 1);
+
+With strict mode enabled, calling C<path_params> or C<path_param> when
+C<< $scope->{path_params} >> is undefined will die with an error message.
+This helps catch bugs where you expect a router but one isn't configured.
+
+    # Strict mode: dies if no router set path_params
+    PAGI::Request->configure(path_param_strict => 1);
+
+    my $id = $req->path_param('id');
+    # Dies: "path_params not set in scope (no router configured?)"
+
+The default is C<path_param_strict =E<gt> 0> (non-strict), which matches
+Starlette's behavior of returning an empty dict when path_params is not set.
 
 =head1 COOKIES
 
