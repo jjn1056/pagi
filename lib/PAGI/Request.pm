@@ -15,8 +15,9 @@ use PAGI::Request::BodyStream;
 
 # Class-level configuration defaults
 our %CONFIG = (
-    max_body_size   => 10 * 1024 * 1024,   # 10MB
-    max_upload_size => 10 * 1024 * 1024,   # 10MB per file
+    max_body_size   => 10 * 1024 * 1024,   # 10MB total request body
+    max_part_size   => 1 * 1024 * 1024,    # 1MB per form field (non-file)
+    max_upload_size => 10 * 1024 * 1024,   # 10MB per file upload
     max_files       => 20,
     max_fields      => 1000,
     spool_threshold => 64 * 1024,           # 64KB
@@ -399,7 +400,7 @@ async sub form {
 
     # Extract multipart options before checking for unknown opts
     my %multipart_opts;
-    for my $key (qw(max_part_size spool_threshold max_files max_fields temp_dir)) {
+    for my $key (qw(max_part_size max_upload_size spool_threshold max_files max_fields temp_dir)) {
         $multipart_opts{$key} = delete $opts{$key} if exists $opts{$key};
     }
     croak("Unknown options to form: " . join(', ', keys %opts)) if %opts;
@@ -466,6 +467,7 @@ async sub _parse_multipart_form {
         boundary        => $boundary,
         receive         => $self->{receive},
         max_part_size   => $opts{max_part_size},
+        max_upload_size => $opts{max_upload_size},
         spool_threshold => $opts{spool_threshold},
         max_files       => $opts{max_files},
         max_fields      => $opts{max_fields},
@@ -581,11 +583,35 @@ work with C<$scope> and C<$receive> directly.
 =head2 configure
 
     PAGI::Request->configure(
-        max_body_size   => 10 * 1024 * 1024,  # 10MB
+        max_body_size   => 10 * 1024 * 1024,  # 10MB total body
+        max_part_size   => 1 * 1024 * 1024,   # 1MB per form field
+        max_upload_size => 10 * 1024 * 1024,  # 10MB per file upload
         spool_threshold => 64 * 1024,          # 64KB
     );
 
 Set class-level defaults for body/upload handling.
+
+=over 4
+
+=item max_body_size
+
+Maximum total request body size. Enforced by the server.
+
+=item max_part_size
+
+Maximum size for non-file form fields in multipart requests. Default: 1MB.
+Protects against oversized text submissions.
+
+=item max_upload_size
+
+Maximum size for file uploads in multipart requests. Default: 10MB.
+Applies to parts with a filename in Content-Disposition.
+
+=item spool_threshold
+
+Size at which multipart data is spooled to disk. Default: 64KB.
+
+=back
 
 =head2 config
 
