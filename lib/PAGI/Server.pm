@@ -16,6 +16,21 @@ use PAGI::Server::Protocol::HTTP1;
 
 our $VERSION = '0.001';
 
+# Check TLS module availability (cached at load time for banner display)
+our $TLS_AVAILABLE;
+BEGIN {
+    $TLS_AVAILABLE = eval {
+        require IO::Async::SSL;
+        require IO::Socket::SSL;
+        1;
+    } ? 1 : 0;
+}
+
+sub has_tls { return $TLS_AVAILABLE }
+
+# Windows doesn't support Unix signals - signal handling is conditional
+use constant WIN32 => $^O eq 'MSWin32';
+
 =encoding utf8
 
 =head1 NAME
@@ -47,6 +62,47 @@ in the PAGI specification.
 This is NOT a production server - it prioritizes spec compliance and code
 clarity over performance optimization. It serves as the canonical reference
 for how PAGI servers should behave.
+
+
+=head1 WINDOWS SUPPORT
+
+PAGI::Server has B<experimental and limited> support for Windows. It may work
+for local development and testing, but there are significant limitations:
+
+=head2 Limitations
+
+=over 4
+
+=item * B<No graceful shutdown via signals>
+
+Windows does not support Unix signals (SIGTERM, SIGINT, etc.). The server will
+still respond to Ctrl+C in a console, but programmatic graceful shutdown via
+signals is not available. The server will stop, but in-flight requests may not
+complete cleanly.
+
+=item * B<Single-process mode only>
+
+Multi-worker mode (C<workers =E<gt> N>) will not work on Windows. Perl
+C<fork()> is emulated via threads on Windows, which is incompatible with the
+IO::Async event loop model. Always use the default single-process mode.
+
+=item * B<No dynamic worker management>
+
+Signals for worker control (TTIN, TTOU, HUP) are not available on Windows.
+
+=back
+
+=head2 Recommendation
+
+For Windows development, the server should work fine for testing your PAGI
+applications in single-process mode. For production deployments, use Linux
+or another Unix-like operating system.
+
+=head2 Contributing
+
+We welcome pull requests from Windows developers to improve Windows support.
+If you encounter issues or have fixes, please open an issue or PR on GitHub.
+
 
 =head1 CONSTRUCTOR
 
@@ -96,6 +152,11 @@ Bind port. Default: 5000
 =item ssl => \%config
 
 Optional TLS configuration with keys: cert_file, key_file, ca_file, verify_client
+
+=item disable_tls => $bool
+
+Force-disable TLS even if ssl config is provided. Useful for testing
+TLS configuration parsing without actually enabling TLS. Default: false.
 
 =item extensions => \%extensions
 
@@ -484,6 +545,7 @@ sub _init {
     $self->{max_ws_frame_size} = delete $params->{max_ws_frame_size} // 65536;  # Max WebSocket frame size in bytes (64KB default)
     $self->{max_connections}     = delete $params->{max_connections} // 0;  # 0 = auto-detect
     $self->{disable_sendfile}    = delete $params->{disable_sendfile} // 0;  # Disable sendfile() syscall for file responses
+    $self->{disable_tls}         = delete $params->{disable_tls} // 0;  # Disable TLS support (for testing)
 
     $self->{running}     = 0;
     $self->{bound_port}  = undef;
@@ -599,17 +661,29 @@ sub _sendfile_status_string {
     return $available ? 'on' : 'off (Sys::Sendfile not installed)';
 }
 
+# Returns a human-readable TLS status string for the startup banner
+sub _tls_status_string {
+    my ($self) = @_;
+
+    if ($self->{disable_tls}) {
+        return $TLS_AVAILABLE ? 'disabled' : 'n/a (disabled)';
+    }
+    if ($self->{tls_enabled}) {
+        return 'on';
+    }
+    return $TLS_AVAILABLE ? 'available' : 'not installed';
+}
+
 # Check if TLS modules are available
 sub _check_tls_available {
     my ($self) = @_;
 
-    my $ssl_available = eval {
-        require IO::Async::SSL;
-        require IO::Socket::SSL;
-        1;
-    };
+    # Allow forcing TLS off for testing
+    if ($self->{disable_tls}) {
+        die "TLS is disabled via disable_tls option\n";
+    }
 
-    return 1 if $ssl_available;
+    return 1 if $TLS_AVAILABLE;
 
     die <<"END_TLS_ERROR";
 TLS support requested but required modules not installed.
@@ -733,23 +807,27 @@ async sub _listen_singleworker {
     $self->{running} = 1;
 
     # Set up signal handlers for graceful shutdown (single-worker mode)
-    my $shutdown_triggered = 0;
-    my $shutdown_handler = sub {
-        return if $shutdown_triggered;
-        $shutdown_triggered = 1;
-        $self->shutdown->on_done(sub {
-            $self->loop->stop;
-        })->retain;
-    };
-    $self->loop->watch_signal(TERM => $shutdown_handler);
-    $self->loop->watch_signal(INT => $shutdown_handler);
+    # Note: Windows doesn't support Unix signals, so this is skipped there
+    unless (WIN32) {
+        my $shutdown_triggered = 0;
+        my $shutdown_handler = sub {
+            return if $shutdown_triggered;
+            $shutdown_triggered = 1;
+            $self->shutdown->on_done(sub {
+                $self->loop->stop;
+            })->retain;
+        };
+        $self->loop->watch_signal(TERM => $shutdown_handler);
+        $self->loop->watch_signal(INT => $shutdown_handler);
+    }
 
     my $scheme = $self->{tls_enabled} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
     my $max_conn = $self->effective_max_connections;
     my $sendfile_status = $self->_sendfile_status_string;
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, sendfile: $sendfile_status)");
+    my $tls_status = $self->_tls_status_string;
+    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, sendfile: $sendfile_status, tls: $tls_status)");
 
     return $self;
 }
@@ -799,20 +877,25 @@ sub _listen_multiworker {
     my $mode = $reuseport ? 'reuseport' : 'shared-socket';
     my $max_conn = $self->effective_max_connections;
     my $sendfile_status = $self->_sendfile_status_string;
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, sendfile: $sendfile_status)");
+    my $tls_status = $self->_tls_status_string;
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, sendfile: $sendfile_status, tls: $tls_status)");
 
     # Set up signal handlers using IO::Async's watch_signal (replaces _setup_parent_signals)
+    # Note: Windows doesn't support Unix signals, so this is skipped there
+    # (Multi-worker mode won't work on Windows anyway due to fork() limitations)
     my $loop = $self->loop;
-    $loop->watch_signal(TERM => sub { $self->_initiate_multiworker_shutdown });
-    $loop->watch_signal(INT  => sub { $self->_initiate_multiworker_shutdown });
-    # HUP = graceful restart (replace all workers)
-    $loop->watch_signal(HUP => sub { $self->_graceful_restart });
+    unless (WIN32) {
+        $loop->watch_signal(TERM => sub { $self->_initiate_multiworker_shutdown });
+        $loop->watch_signal(INT  => sub { $self->_initiate_multiworker_shutdown });
+        # HUP = graceful restart (replace all workers)
+        $loop->watch_signal(HUP => sub { $self->_graceful_restart });
 
-    # TTIN = increase workers by 1
-    $loop->watch_signal(TTIN => sub { $self->_increase_workers });
+        # TTIN = increase workers by 1
+        $loop->watch_signal(TTIN => sub { $self->_increase_workers });
 
-    # TTOU = decrease workers by 1
-    $loop->watch_signal(TTOU => sub { $self->_decrease_workers });
+        # TTOU = decrease workers by 1
+        $loop->watch_signal(TTOU => sub { $self->_decrease_workers });
+    }
 
     # Fork the workers
     for my $i (1 .. $workers) {
@@ -1004,14 +1087,17 @@ sub _run_as_worker {
 
     # Set up graceful shutdown on SIGTERM using IO::Async's signal watching
     # (raw $SIG handlers don't work reliably when the loop is running)
-    my $shutdown_triggered = 0;
-    $loop->watch_signal(TERM => sub {
-        return if $shutdown_triggered;
-        $shutdown_triggered = 1;
-        $worker_server->shutdown->on_done(sub {
-            $loop->stop;
-        })->retain;
-    });
+    # Note: Windows doesn't support Unix signals, so this is skipped there
+    unless (WIN32) {
+        my $shutdown_triggered = 0;
+        $loop->watch_signal(TERM => sub {
+            return if $shutdown_triggered;
+            $shutdown_triggered = 1;
+            $worker_server->shutdown->on_done(sub {
+                $loop->stop;
+            })->retain;
+        });
+    }
 
     # Run lifespan startup using a proper async wrapper
     my $startup_done = 0;
