@@ -1,9 +1,6 @@
 package PAGI::Request::Negotiate;
 use strict;
 use warnings;
-use v5.32;
-use feature 'signatures';
-no warnings 'experimental::signatures';
 
 our $VERSION = '0.01';
 
@@ -90,7 +87,8 @@ Specificity ordering: exact types > type/* > */*
 
 =cut
 
-sub parse_accept ($class, $header) {
+sub parse_accept {
+    my ($class, $header) = @_;
     # No Accept header means accept everything
     return (['*/*', 1]) unless defined $header && length $header;
 
@@ -138,7 +136,8 @@ sub parse_accept ($class, $header) {
 
 # Calculate specificity score for sorting
 # Returns: 0 for */*, 1 for type/*, 2 for type/subtype
-sub _specificity ($type) {
+sub _specificity {
+    my ($type) = @_;
     return 0 if $type eq '*/*';
     return 1 if $type =~ m{^[^/]+/\*$};
     return 2;
@@ -157,7 +156,8 @@ The returned value is from the C<@supported> array (preserves shortcuts).
 
 =cut
 
-sub best_match ($class, $supported, $accept_header) {
+sub best_match {
+    my ($class, $supported, $accept_header) = @_;
     return unless $supported && @$supported;
 
     # Parse Accept header
@@ -193,7 +193,8 @@ Both type and pattern are compared case-insensitively.
 
 =cut
 
-sub type_matches ($class, $type, $pattern) {
+sub type_matches {
+    my ($class, $type, $pattern) = @_;
     $type = lc($type);
     $pattern = lc($pattern);
 
@@ -242,7 +243,8 @@ Unknown shortcuts are prefixed with 'application/'.
 
 =cut
 
-sub normalize_type ($class, $type) {
+sub normalize_type {
+    my ($class, $type) = @_;
     return $type if $type =~ m{/};
     return $TYPE_SHORTCUTS{lc($type)} // "application/$type";
 }
@@ -259,7 +261,8 @@ Returns false if the type has quality=0 (explicitly rejected).
 
 =cut
 
-sub accepts_type ($class, $accept_header, $type) {
+sub accepts_type {
+    my ($class, $accept_header, $type) = @_;
     $type = $class->normalize_type($type);
 
     my @accepted = $class->parse_accept($accept_header);
@@ -290,7 +293,8 @@ The type can be a full MIME type or a shortcut.
 
 =cut
 
-sub quality_for_type ($class, $accept_header, $type) {
+sub quality_for_type {
+    my ($class, $accept_header, $type) = @_;
     $type = $class->normalize_type($type);
 
     my @accepted = $class->parse_accept($accept_header);

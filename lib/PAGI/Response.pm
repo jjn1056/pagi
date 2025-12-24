@@ -2,9 +2,6 @@ package PAGI::Response;
 
 use strict;
 use warnings;
-use v5.32;
-use feature 'signatures';
-no warnings 'experimental::signatures';
 
 use Future::AsyncAwait;
 use Carp qw(croak);
@@ -687,7 +684,8 @@ PAGI Contributors
 
 =cut
 
-sub new ($class, $send = undef, $scope = undef) {
+sub new {
+    my ($class, $send, $scope) = @_;
     croak("send is required") unless $send;
     croak("send must be a coderef") unless ref($send) eq 'CODE';
 
@@ -702,24 +700,28 @@ sub new ($class, $send = undef, $scope = undef) {
     return $self;
 }
 
-sub loop ($self) {
+sub loop {
+    my ($self) = @_;
     require IO::Async::Loop;
     return IO::Async::Loop->new;
 }
 
-sub status ($self, $code) {
+sub status {
+    my ($self, $code) = @_;
     croak("Status must be a number between 100-599")
         unless defined $code && $code =~ /^\d+$/ && $code >= 100 && $code <= 599;
     $self->{_status} = $code;
     return $self;
 }
 
-sub header ($self, $name, $value) {
+sub header {
+    my ($self, $name, $value) = @_;
     push @{$self->{_headers}}, [$name, $value];
     return $self;
 }
 
-sub content_type ($self, $type) {
+sub content_type {
+    my ($self, $type) = @_;
     # Remove existing content-type headers
     $self->{_headers} = [grep { lc($_->[0]) ne 'content-type' } @{$self->{_headers}}];
     push @{$self->{_headers}}, ['content-type', $type];
@@ -728,12 +730,14 @@ sub content_type ($self, $type) {
 
 # Path parameters - captured from URL path by router
 # Stored in scope->{path_params} for router-agnostic access
-sub path_params ($self) {
+sub path_params {
+    my ($self) = @_;
     return {} unless $self->{scope};
     return $self->{scope}{path_params} // {};
 }
 
-sub path_param ($self, $name) {
+sub path_param {
+    my ($self, $name) = @_;
     return undef unless $self->{scope};
     my $params = $self->{scope}{path_params} // {};
     return $params->{$name};
@@ -750,12 +754,14 @@ sub path_param ($self, $name) {
 #
 # This addresses a potential concern about Request objects being ephemeral - stash
 # works correctly because it lives in scope, which IS shared across the chain.
-sub stash ($self) {
+sub stash {
+    my ($self) = @_;
     return {} unless $self->{scope};
     return $self->{scope}{'pagi.stash'} //= {};
 }
 
-async sub send ($self, $body = undef) {
+async sub send {
+    my ($self, $body) = @_;
     croak("Response already sent") if $self->{_sent};
     $self->{_sent} = 1;
 
@@ -774,7 +780,8 @@ async sub send ($self, $body = undef) {
     });
 }
 
-async sub send_utf8 ($self, $body, %opts) {
+async sub send_utf8 {
+    my ($self, $body, %opts) = @_;
     my $charset = $opts{charset} // 'utf-8';
 
     # Ensure content-type has charset
@@ -798,29 +805,35 @@ async sub send_utf8 ($self, $body, %opts) {
     await $self->send($encoded);
 }
 
-async sub text ($self, $body) {
+async sub text {
+    my ($self, $body) = @_;
     $self->content_type('text/plain; charset=utf-8');
     await $self->send_utf8($body);
 }
 
-async sub html ($self, $body) {
+async sub html {
+    my ($self, $body) = @_;
     $self->content_type('text/html; charset=utf-8');
     await $self->send_utf8($body);
 }
 
-async sub json ($self, $data) {
+async sub json {
+    my ($self, $data) = @_;
     $self->content_type('application/json; charset=utf-8');
     my $body = JSON::MaybeXS->new(utf8 => 1, canonical => 1)->encode($data);
     await $self->send($body);
 }
 
-async sub redirect ($self, $url, $status = 302) {
+async sub redirect {
+    my ($self, $url, $status) = @_;
+    $status //= 302;
     $self->{_status} = $status;
     $self->header('location', $url);
     await $self->send('');
 }
 
-async sub empty ($self) {
+async sub empty {
+    my ($self) = @_;
     # Use 204 if status hasn't been explicitly set to something other than 200
     if ($self->{_status} == 200) {
         $self->{_status} = 204;
@@ -828,7 +841,8 @@ async sub empty ($self) {
     await $self->send(undef);
 }
 
-sub cookie ($self, $name, $value, %opts) {
+sub cookie {
+    my ($self, $name, $value, %opts) = @_;
     my @parts = ("$name=$value");
 
     push @parts, "Max-Age=$opts{max_age}" if defined $opts{max_age};
@@ -845,7 +859,8 @@ sub cookie ($self, $name, $value, %opts) {
     return $self;
 }
 
-sub delete_cookie ($self, $name, %opts) {
+sub delete_cookie {
+    my ($self, $name, %opts) = @_;
     return $self->cookie($name, '',
         max_age => 0,
         path    => $opts{path},
@@ -853,7 +868,8 @@ sub delete_cookie ($self, $name, %opts) {
     );
 }
 
-sub cors ($self, %opts) {
+sub cors {
+    my ($self, %opts) = @_;
     my $origin      = $opts{origin} // '*';
     my $credentials = $opts{credentials} // 0;
     my $methods     = $opts{methods} // [qw(GET POST PUT DELETE PATCH OPTIONS)];
@@ -897,13 +913,11 @@ sub cors ($self, %opts) {
 package PAGI::Response::Writer {
     use strict;
     use warnings;
-    use v5.32;
-    use feature 'signatures';
-    no warnings 'experimental::signatures';
     use Future::AsyncAwait;
     use Carp qw(croak);
 
-    sub new ($class, $send) {
+    sub new {
+        my ($class, $send) = @_;
         return bless {
             send => $send,
             bytes_written => 0,
@@ -911,7 +925,8 @@ package PAGI::Response::Writer {
         }, $class;
     }
 
-    async sub write ($self, $chunk) {
+    async sub write {
+        my ($self, $chunk) = @_;
         croak("Writer already closed") if $self->{closed};
         $self->{bytes_written} += length($chunk // '');
         await $self->{send}->({
@@ -921,7 +936,8 @@ package PAGI::Response::Writer {
         });
     }
 
-    async sub close ($self) {
+    async sub close {
+        my ($self) = @_;
         return if $self->{closed};
         $self->{closed} = 1;
         await $self->{send}->({
@@ -931,14 +947,16 @@ package PAGI::Response::Writer {
         });
     }
 
-    sub bytes_written ($self) {
+    sub bytes_written {
+        my ($self) = @_;
         return $self->{bytes_written};
     }
 }
 
 package PAGI::Response;
 
-async sub stream ($self, $callback) {
+async sub stream {
+    my ($self, $callback) = @_;
     croak("Response already sent") if $self->{_sent};
     $self->{_sent} = 1;
 
@@ -957,7 +975,8 @@ async sub stream ($self, $callback) {
     await $writer->close() unless $writer->{closed};
 }
 
-async sub error ($self, $status, $message, $extra = undef) {
+async sub error {
+    my ($self, $status, $message, $extra) = @_;
     $self->{_status} = $status;
 
     my $body = {
@@ -996,12 +1015,14 @@ my %MIME_TYPES = (
     '.woff2'=> 'font/woff2',
 );
 
-sub _mime_type ($path) {
+sub _mime_type {
+    my ($path) = @_;
     my ($ext) = $path =~ /(\.[^.]+)$/;
     return $MIME_TYPES{lc($ext // '')} // 'application/octet-stream';
 }
 
-async sub send_file ($self, $path, %opts) {
+async sub send_file {
+    my ($self, $path, %opts) = @_;
     croak("File not found: $path") unless -f $path;
     croak("Cannot read file: $path") unless -r $path;
 

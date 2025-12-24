@@ -1,9 +1,6 @@
 package PAGI::Request::Upload;
 use strict;
 use warnings;
-use v5.32;
-use feature 'signatures';
-no warnings 'experimental::signatures';
 
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -16,7 +13,8 @@ use Carp qw(croak);
 our $VERSION = '0.01';
 
 # Constructor
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
     my $self = bless {
         field_name   => $args{field_name}   // croak("field_name is required"),
         filename     => $args{filename}     // '',
@@ -42,14 +40,15 @@ sub new ($class, %args) {
 }
 
 # Accessors
-sub field_name ($self)   { $self->{field_name} }
-sub filename ($self)     { $self->{filename} }
-sub content_type ($self) { $self->{content_type} }
-sub size ($self)         { $self->{size} }
-sub temp_path ($self)    { $self->{temp_path} }
+sub field_name   { my ($self) = @_; $self->{field_name} }
+sub filename     { my ($self) = @_; $self->{filename} }
+sub content_type { my ($self) = @_; $self->{content_type} }
+sub size         { my ($self) = @_; $self->{size} }
+sub temp_path    { my ($self) = @_; $self->{temp_path} }
 
 # Basename - strips Windows and Unix paths
-sub basename ($self) {
+sub basename {
+    my ($self) = @_;
     my $filename = $self->{filename};
     return '' unless $filename;
 
@@ -60,20 +59,24 @@ sub basename ($self) {
 }
 
 # Predicates
-sub is_empty ($self) {
+sub is_empty {
+    my ($self) = @_;
     return $self->{size} == 0;
 }
 
-sub is_in_memory ($self) {
+sub is_in_memory {
+    my ($self) = @_;
     return defined($self->{data});
 }
 
-sub is_on_disk ($self) {
+sub is_on_disk {
+    my ($self) = @_;
     return defined($self->{temp_path});
 }
 
 # Content access - slurp
-sub slurp ($self) {
+sub slurp {
+    my ($self) = @_;
     if ($self->is_in_memory) {
         return $self->{data};
     } elsif ($self->is_on_disk) {
@@ -87,7 +90,8 @@ sub slurp ($self) {
 }
 
 # Content access - filehandle
-sub fh ($self) {
+sub fh {
+    my ($self) = @_;
     if ($self->is_in_memory) {
         open my $fh, '<', \$self->{data}
             or croak("Cannot create filehandle from memory: $!");
@@ -101,7 +105,8 @@ sub fh ($self) {
 }
 
 # Copy upload to destination using async I/O
-async sub copy_to ($self, $destination) {
+async sub copy_to {
+    my ($self, $destination) = @_;
     # Ensure destination directory exists
     my ($name, $dir) = fileparse($destination);
     if ($dir && !-d $dir) {
@@ -127,7 +132,8 @@ async sub copy_to ($self, $destination) {
 }
 
 # Move upload to destination using async I/O
-async sub move_to ($self, $destination) {
+async sub move_to {
+    my ($self, $destination) = @_;
     # Ensure destination directory exists
     my ($name, $dir) = fileparse($destination);
     if ($dir && !-d $dir) {
@@ -163,12 +169,14 @@ async sub move_to ($self, $destination) {
 }
 
 # Alias for move_to
-async sub save_to ($self, $destination) {
+async sub save_to {
+    my ($self, $destination) = @_;
     await $self->move_to($destination);
 }
 
 # Discard the upload
-sub discard ($self) {
+sub discard {
+    my ($self) = @_;
     return if $self->{_cleaned_up};
 
     if ($self->is_on_disk && -f $self->{temp_path}) {
@@ -181,7 +189,8 @@ sub discard ($self) {
 }
 
 # Destructor - cleanup temp files
-sub DESTROY ($self) {
+sub DESTROY {
+    my ($self) = @_;
     $self->discard;
 }
 

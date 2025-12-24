@@ -2,9 +2,6 @@ package PAGI::Request::BodyStream;
 
 use strict;
 use warnings;
-use v5.32;
-use feature 'signatures';
-no warnings 'experimental::signatures';
 
 use Future::AsyncAwait;
 use IO::Async::Loop;
@@ -114,7 +111,8 @@ is exceeded (default: 'max_bytes').
 
 =cut
 
-sub new ($class, %args) {
+sub new {
+    my ($class, %args) = @_;
     my $receive = $args{receive} // croak("receive is required");
 
     my $self = bless {
@@ -150,7 +148,8 @@ Throws an exception if C<max_bytes> is exceeded.
 
 =cut
 
-async sub next_chunk ($self) {
+async sub next_chunk {
+    my ($self) = @_;
     return undef if $self->{_done};
     return undef if $self->{_error};
 
@@ -202,7 +201,8 @@ Returns the total number of raw bytes read so far (before any decoding).
 
 =cut
 
-sub bytes_read ($self) {
+sub bytes_read {
+    my ($self) = @_;
     return $self->{_bytes_read};
 }
 
@@ -214,7 +214,8 @@ Returns true if the stream has been exhausted (no more chunks available).
 
 =cut
 
-sub is_done ($self) {
+sub is_done {
+    my ($self) = @_;
     return $self->{_done};
 }
 
@@ -226,7 +227,8 @@ Returns any error that occurred during streaming, or undef.
 
 =cut
 
-sub error ($self) {
+sub error {
+    my ($self) = @_;
     return $self->{_error};
 }
 
@@ -246,7 +248,8 @@ written to a file.
 
 =cut
 
-async sub stream_to_file ($self, $path) {
+async sub stream_to_file {
+    my ($self, $path) = @_;
     croak("path is required") unless defined $path;
     croak("stream_to_file() cannot be used with decode option - use stream_to() instead")
         if $self->{decode};
@@ -289,7 +292,8 @@ Returns a Future that resolves to the number of bytes processed.
 
 =cut
 
-async sub stream_to ($self, $callback) {
+async sub stream_to {
+    my ($self, $callback) = @_;
     croak("callback is required") unless $callback;
 
     my $bytes_processed = 0;
@@ -320,7 +324,9 @@ sequences at boundaries.
 
 =cut
 
-sub _decode_chunk ($self, $chunk, $flush = 0) {
+sub _decode_chunk {
+    my ($self, $chunk, $flush) = @_;
+    $flush //= 0;
     my $encoding = $self->{decode};
     return $chunk unless $encoding;
 
