@@ -56,6 +56,179 @@ pagi-server hello.pl --port 5000
 curl http://localhost:5000/
 ```
 
+#### 1.4 Understanding the Event Loop: Blocking vs Non-Blocking
+
+PAGI is built on an **event loop** model. Understanding this is crucial for writing correct async code.
+
+**The Single-Threaded Event Loop:**
+```
+┌─────────────────────────────────────────────────┐
+│                  Event Loop                      │
+│                                                  │
+│   ┌──────┐   ┌──────┐   ┌──────┐   ┌──────┐    │
+│   │ Req1 │   │ Req2 │   │ Req3 │   │ Req4 │    │
+│   └──┬───┘   └──┬───┘   └──┬───┘   └──┬───┘    │
+│      │          │          │          │         │
+│      ▼          ▼          ▼          ▼         │
+│   [await]    [await]    [await]    [await]      │
+│      │          │          │          │         │
+│      └──────────┴──────────┴──────────┘         │
+│                     │                            │
+│              All run concurrently                │
+│              by yielding at await                │
+└─────────────────────────────────────────────────┘
+```
+
+When you `await` something (database query, HTTP call, timer), the event loop:
+1. Suspends your handler
+2. Runs other handlers that are ready
+3. Resumes your handler when the await completes
+
+**Non-Blocking (GOOD):**
+```perl
+async sub handler {
+    my ($scope, $receive, $send) = @_;
+
+    # These yield to the event loop - other requests can run
+    my $data = await $db->query_async("SELECT ...");
+    await $http_client->post_async($url, $payload);
+    await IO::Async::Loop->new->delay_future(after => 1);
+
+    # ...send response
+}
+```
+
+**Blocking (BAD - Freezes entire server):**
+```perl
+async sub handler {
+    my ($scope, $receive, $send) = @_;
+
+    # DANGER: These block the event loop!
+    # NO other requests can be processed during this time.
+
+    sleep 5;                        # Blocks for 5 seconds
+    my $data = $dbh->selectrow();   # Sync DB call blocks
+    my $res = LWP::UserAgent->get(); # Sync HTTP blocks
+    my $hash = bcrypt($password);   # CPU-intensive blocks
+
+    # ...send response
+}
+```
+
+**Why Blocking is Bad:**
+
+With 1000 concurrent connections and a handler that blocks for 100ms:
+- **Blocking:** 1000 × 100ms = 100 seconds to serve all
+- **Non-blocking:** ~100ms total (all run concurrently)
+
+**Three Solutions for Blocking Work:**
+
+1. **Use async libraries** (best for I/O):
+   ```perl
+   # Instead of DBI, use async driver
+   my $result = await $async_db->query(...);
+
+   # Instead of LWP, use async HTTP
+   my $res = await $http_client->get_async($url);
+   ```
+
+2. **Use IO::Async::Function** (for CPU-bound or sync libraries):
+   ```perl
+   # Runs in a subprocess - doesn't block event loop
+   my $worker = IO::Async::Function->new(
+       code => sub {
+           my ($password) = @_;
+           return bcrypt($password);  # Blocks in child, not parent
+       },
+   );
+   $loop->add($worker);
+
+   my $hash = await $worker->call(args => [$password]);
+   ```
+
+3. **Use worker mode** (for mixed workloads):
+   ```bash
+   pagi-server app.pl --workers 4
+   ```
+
+#### 1.5 Worker Mode
+
+PAGI::Server (and other compliant servers) can run in **worker mode**, forking multiple processes to handle requests.
+
+**Single Process (default):**
+```
+┌─────────────────────────────────────┐
+│           Main Process              │
+│                                     │
+│   Event Loop handles ALL requests   │
+│   One blocking call = everyone waits│
+└─────────────────────────────────────┘
+```
+
+**Worker Mode (--workers N):**
+```
+┌─────────────────────────────────────┐
+│           Master Process            │
+│         (accepts connections)       │
+└───────────────┬─────────────────────┘
+                │
+    ┌───────────┼───────────┐
+    ▼           ▼           ▼
+┌───────┐   ┌───────┐   ┌───────┐
+│Worker1│   │Worker2│   │Worker3│
+│       │   │       │   │       │
+│ Event │   │ Event │   │ Event │
+│ Loop  │   │ Loop  │   │ Loop  │
+└───────┘   └───────┘   └───────┘
+```
+
+**When to use worker mode:**
+
+| Situation | Recommendation |
+|-----------|----------------|
+| Pure async I/O (all await) | Single process is fine |
+| Some blocking library calls | Workers help isolate blocking |
+| CPU-intensive work | Workers + IO::Async::Function |
+| Maximum throughput | Workers = CPU cores |
+| Memory-heavy apps | Fewer workers (each forks memory) |
+
+**Running with workers:**
+```bash
+# 4 worker processes
+pagi-server app.pl --workers 4
+
+# Auto-detect CPU cores
+pagi-server app.pl --workers auto
+```
+
+**Important: Worker Isolation**
+
+Each worker has its own:
+- Memory space (variables not shared)
+- Event loop
+- Database connections
+- State (`$self->state` in Endpoint::Router)
+
+For shared state across workers, use external storage:
+- Redis (fast, in-memory)
+- Database (persistent)
+- Memcached (distributed cache)
+
+```perl
+# WRONG - only visible to one worker
+my $counter = 0;
+$router->get('/count' => async sub {
+    $counter++;  # Each worker has its own $counter!
+    await $res->text($counter);
+});
+
+# RIGHT - shared via Redis
+$router->get('/count' => async sub {
+    my $counter = await $redis->incr('counter');
+    await $res->text($counter);
+});
+```
+
 ---
 
 ### Part 2: Understanding Raw PAGI
@@ -143,6 +316,120 @@ async sub app {
     }
 }
 ```
+
+#### 2.6 Streaming Responses
+```perl
+async sub app {
+    my ($scope, $receive, $send) = @_;
+
+    # Start response with Transfer-Encoding: chunked
+    await $send->({
+        type => 'http.response.start',
+        status => 200,
+        headers => [['content-type', 'text/plain']],
+    });
+
+    # Send body in chunks (more_body => 1 means more coming)
+    for my $i (1..5) {
+        await $send->({
+            type => 'http.response.body',
+            body => "Chunk $i\n",
+            more_body => 1,
+        });
+        await IO::Async::Loop->new->delay_future(after => 1);
+    }
+
+    # Final chunk (more_body => 0 or omitted)
+    await $send->({
+        type => 'http.response.body',
+        body => "Done!\n",
+    });
+}
+```
+
+#### 2.7 Lifespan Protocol (Application Lifecycle)
+
+The lifespan protocol lets your app run startup/shutdown code:
+
+```perl
+async sub app {
+    my ($scope, $receive, $send) = @_;
+
+    if ($scope->{type} eq 'lifespan') {
+        # Handle lifecycle events
+        while (1) {
+            my $event = await $receive->();
+
+            if ($event->{type} eq 'lifespan.startup') {
+                # Initialize resources (DB connections, caches, etc.)
+                eval {
+                    $db = DBI->connect(...);
+                    await $send->({ type => 'lifespan.startup.complete' });
+                };
+                if ($@) {
+                    await $send->({
+                        type => 'lifespan.startup.failed',
+                        message => $@,
+                    });
+                }
+            }
+            elsif ($event->{type} eq 'lifespan.shutdown') {
+                # Cleanup resources
+                $db->disconnect if $db;
+                await $send->({ type => 'lifespan.shutdown.complete' });
+                last;
+            }
+        }
+        return;
+    }
+
+    # Normal HTTP/WebSocket/SSE handling...
+    if ($scope->{type} eq 'http') {
+        # $db is available here from lifespan startup
+    }
+}
+```
+
+**Note:** PAGI::Endpoint::Router handles this automatically via `on_startup` and `on_shutdown` methods.
+
+#### 2.8 UTF-8 Handling
+
+PAGI uses bytes for all I/O. You must encode/decode UTF-8 yourself:
+
+```perl
+use Encode qw(encode decode);
+
+async sub app {
+    my ($scope, $receive, $send) = @_;
+
+    # Path is already decoded for convenience
+    my $path = $scope->{path};           # Decoded: /café
+    my $raw  = $scope->{raw_path};       # Raw bytes: /caf%C3%A9
+
+    # Query string is raw bytes - decode if needed
+    my $query = decode('UTF-8', $scope->{query_string});
+
+    # Request body is raw bytes
+    my $event = await $receive->();
+    my $json_text = decode('UTF-8', $event->{body});
+    my $data = decode_json($json_text);
+
+    # Response body must be bytes
+    my $response = encode('UTF-8', "Héllo Wörld! 日本語");
+
+    await $send->({
+        type => 'http.response.start',
+        status => 200,
+        headers => [['content-type', 'text/plain; charset=utf-8']],
+    });
+    await $send->({
+        type => 'http.response.body',
+        body => $response,  # Must be bytes!
+    });
+}
+```
+
+**Tip:** PAGI::Request and PAGI::Response handle encoding automatically for `json()` and `text()` methods.
 
 ---
 
@@ -737,6 +1024,209 @@ is($msg, 'Echo: hello');
 await $ws->close;
 
 done_testing;
+```
+
+#### 7.5 Form Handling
+```perl
+use PAGI::Request;
+use PAGI::Response;
+
+$router->get('/contact' => async sub {
+    my ($scope, $receive, $send) = @_;
+    my $res = PAGI::Response->new($send);
+
+    await $res->html(<<'HTML');
+<form method="POST" action="/contact">
+    <input name="name" required>
+    <input name="email" type="email" required>
+    <textarea name="message"></textarea>
+    <button type="submit">Send</button>
+</form>
+HTML
+});
+
+$router->post('/contact' => async sub {
+    my ($scope, $receive, $send) = @_;
+    my $req = PAGI::Request->new($scope, $receive);
+    my $res = PAGI::Response->new($send);
+
+    # Parse URL-encoded form
+    my $form = await $req->form;
+    my $name = $form->{name};
+    my $email = $form->{email};
+    my $message = $form->{message};
+
+    # Validate
+    unless ($name && $email && $message) {
+        return await $res->error(400, 'All fields required');
+    }
+
+    # Process...
+    await $res->redirect('/thank-you');
+});
+```
+
+**File Uploads (multipart/form-data):**
+```perl
+$router->post('/upload' => async sub {
+    my ($scope, $receive, $send) = @_;
+    my $req = PAGI::Request->new($scope, $receive);
+    my $res = PAGI::Response->new($send);
+
+    my $uploads = await $req->uploads;
+
+    for my $upload (@$uploads) {
+        my $filename = $upload->filename;
+        my $size = $upload->size;
+        my $type = $upload->content_type;
+
+        # Save to disk
+        $upload->save_to("/uploads/$filename");
+
+        # Or get content directly
+        my $content = $upload->content;
+    }
+
+    await $res->json({ uploaded => scalar @$uploads });
+});
+```
+
+#### 7.6 TLS/HTTPS
+
+**Running with TLS:**
+```bash
+pagi-server app.pl --port 5000 \
+    --tls-cert /path/to/cert.pem \
+    --tls-key /path/to/key.pem
+```
+
+**Accessing TLS metadata in your app:**
+```perl
+async sub app {
+    my ($scope, $receive, $send) = @_;
+
+    # Check if connection is secure
+    my $scheme = $scope->{scheme};  # 'https' or 'http'
+
+    # TLS details (when available)
+    if (my $tls = $scope->{tls}) {
+        my $version = $tls->{version};      # 'TLSv1.3'
+        my $cipher = $tls->{cipher};        # 'TLS_AES_256_GCM_SHA384'
+        my $client_cert = $tls->{client_cert};  # If client cert auth
+    }
+
+    # Require HTTPS
+    if ($scheme ne 'https') {
+        my $res = PAGI::Response->new($send);
+        return await $res->redirect("https://$host$path", 301);
+    }
+
+    # ... handle request
+}
+```
+
+**Using HTTPS redirect middleware:**
+```perl
+use PAGI::Middleware::HTTPSRedirect;
+
+$router->use(PAGI::Middleware::HTTPSRedirect->new);
+```
+
+#### 7.7 WebSocket Chat Example
+
+A real-world WebSocket chat pattern:
+
+```perl
+use PAGI::WebSocket;
+
+# In-memory room storage (use Redis for multi-worker)
+my %rooms;
+
+$router->websocket('/chat/:room' => async sub {
+    my ($scope, $receive, $send) = @_;
+    my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+    my $room = $scope->{'pagi.params'}{room};
+
+    await $ws->accept;
+
+    # Join room
+    $rooms{$room} //= [];
+    push @{$rooms{$room}}, $ws;
+
+    # Announce join
+    broadcast($room, { type => 'join', count => scalar @{$rooms{$room}} });
+
+    await $ws->each_json(sub {
+        my ($msg) = @_;
+        # Broadcast to all in room
+        broadcast($room, { type => 'message', text => $msg->{text} });
+    });
+
+    # On disconnect - remove from room
+    $ws->on_close(sub {
+        @{$rooms{$room}} = grep { $_ != $ws } @{$rooms{$room}};
+        broadcast($room, { type => 'leave', count => scalar @{$rooms{$room}} });
+    });
+});
+
+sub broadcast {
+    my ($room, $data) = @_;
+    for my $ws (@{$rooms{$room} // []}) {
+        $ws->try_send_json($data);
+    }
+}
+```
+
+#### 7.8 SSE Dashboard Example
+
+Real-time dashboard updates:
+
+```perl
+use PAGI::SSE;
+
+# Shared state (use Redis pub/sub for multi-worker)
+my @subscribers;
+
+$router->sse('/dashboard/events' => async sub {
+    my ($scope, $receive, $send) = @_;
+    my $sse = PAGI::SSE->new($scope, $receive, $send);
+
+    await $sse->start;
+    push @subscribers, $sse;
+
+    # Keepalive every 15 seconds
+    $sse->keepalive(15);
+
+    # Clean up on disconnect
+    $sse->on_close(sub {
+        @subscribers = grep { $_ != $sse } @subscribers;
+    });
+
+    # Block until disconnect
+    await $sse->wait_for_disconnect;
+});
+
+# Called from elsewhere to push updates
+sub notify_all {
+    my ($event, $data) = @_;
+    for my $sse (@subscribers) {
+        $sse->try_send_json($data, event => $event);
+    }
+}
+
+# Example: POST endpoint triggers SSE update
+$router->post('/api/metrics' => async sub {
+    my ($scope, $receive, $send) = @_;
+    my $req = PAGI::Request->new($scope, $receive);
+    my $res = PAGI::Response->new($send);
+
+    my $data = await $req->json;
+
+    # Push to all SSE subscribers
+    notify_all('metrics', $data);
+
+    await $res->status(201)->json({ ok => 1 });
+});
 ```
 
 ---
