@@ -66,42 +66,24 @@ for how PAGI servers should behave.
 
 =head1 WINDOWS SUPPORT
 
-PAGI::Server has B<experimental and limited> support for Windows. It may work
-for local development and testing, but there are significant limitations:
+B<PAGI::Server does not support Windows.>
 
-=head2 Limitations
+The server relies on Unix-specific features that are not available on Windows:
 
 =over 4
 
-=item * B<No graceful shutdown via signals>
+=item * B<Unix signals> - SIGTERM, SIGINT, SIGHUP for graceful shutdown and worker management
 
-Windows does not support Unix signals (SIGTERM, SIGINT, etc.). The server will
-still respond to Ctrl+C in a console, but programmatic graceful shutdown via
-signals is not available. The server will stop, but in-flight requests may not
-complete cleanly.
+=item * B<fork()> - Multi-worker mode requires real process forking, not thread emulation
 
-=item * B<Single-process mode only>
-
-Multi-worker mode (C<workers =E<gt> N>) will not work on Windows. Perl
-C<fork()> is emulated via threads on Windows, which is incompatible with the
-IO::Async event loop model. Always use the default single-process mode.
-
-=item * B<No dynamic worker management>
-
-Signals for worker control (TTIN, TTOU, HUP) are not available on Windows.
+=item * B<IO::Async internals> - The event loop has Unix-specific optimizations
 
 =back
 
-=head2 Recommendation
-
-For Windows development, the server should work fine for testing your PAGI
-applications in single-process mode. For production deployments, use Linux
-or another Unix-like operating system.
-
-=head2 Contributing
-
-We welcome pull requests from Windows developers to improve Windows support.
-If you encounter issues or have fixes, please open an issue or PR on GitHub.
+For Windows development, consider using WSL (Windows Subsystem for Linux) to
+run PAGI::Server in a Linux environment. The PAGI specification and middleware
+components can still be developed and unit-tested on Windows, but the reference
+server implementation requires a Unix-like operating system.
 
 
 =head1 CONSTRUCTOR
