@@ -58,15 +58,16 @@ sub state {
     return $self->{scope}{'pagi.state'} // {};
 }
 
-# Route parameter accessors (read from scope)
-sub params {
+# Path parameter accessors - captured from URL path by router
+# Stored in scope->{path_params} for router-agnostic access
+sub path_params {
     my ($self) = @_;
-    return $self->{scope}{'pagi.router'}{params} // {};
+    return $self->{scope}{path_params} // {};
 }
 
-sub param {
+sub path_param {
     my ($self, $name) = @_;
-    my $params = $self->{scope}{'pagi.router'}{params} // {};
+    my $params = $self->{scope}{path_params} // {};
     return $params->{$name};
 }
 
@@ -837,19 +838,21 @@ to shared application state. Returns empty hashref if not set.
 Note: This is separate from C<stash> (per-connection data) and
 C<connection_state> (internal WebSocket state).
 
-=head2 param
+=head2 path_param
 
-    my $id = $ws->param('id');
+    my $id = $ws->path_param('id');
 
-Returns a route parameter by name. Route parameters are set by the router
-in C<< $scope->{'pagi.router'}{params} >> when matching path patterns
-like C</chat/:room>.
+Returns a path parameter by name. Path parameters are captured from the URL
+path by a router and stored in C<< $scope->{path_params} >>.
 
-=head2 params
+    # Route: /chat/:room
+    my $room = $ws->path_param('room');
 
-    my $params = $ws->params;  # { room => 'general', id => '42' }
+=head2 path_params
 
-Returns hashref of all route parameters from scope.
+    my $params = $ws->path_params;  # { room => 'general', id => '42' }
+
+Returns hashref of all path parameters from scope.
 
 =head1 LIFECYCLE METHODS
 

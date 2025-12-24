@@ -333,7 +333,7 @@ PAGI::Endpoint::Router - Class-based router with wrapped handlers
 
     async sub get_user {
         my ($self, $req, $res) = @_;
-        my $id = $req->param('id');            # Route parameter
+        my $id = $req->path_param('id');       # Route parameter
         await $res->json({ id => $id });
     }
 

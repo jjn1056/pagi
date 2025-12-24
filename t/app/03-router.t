@@ -100,7 +100,7 @@ subtest 'Path parameters' => sub {
         my $router = PAGI::App::Router->new;
         $router->get('/users/:id' => async sub  {
         my ($scope, $receive, $send) = @_;
-            $captured_params = $scope->{'pagi.router'}{params};
+            $captured_params = $scope->{path_params};
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         });
@@ -123,7 +123,7 @@ subtest 'Path parameters' => sub {
         my $router = PAGI::App::Router->new;
         $router->get('/users/:user_id/posts/:post_id' => async sub  {
         my ($scope, $receive, $send) = @_;
-            $captured_params = $scope->{'pagi.router'}{params};
+            $captured_params = $scope->{path_params};
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         });
@@ -147,7 +147,7 @@ subtest 'Path parameters' => sub {
         my $router = PAGI::App::Router->new;
         $router->get('/files/*filepath' => async sub  {
         my ($scope, $receive, $send) = @_;
-            $captured_params = $scope->{'pagi.router'}{params};
+            $captured_params = $scope->{path_params};
             await $send->({ type => 'http.response.start', status => 200, headers => [] });
             await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
         });

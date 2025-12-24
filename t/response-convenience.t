@@ -18,26 +18,26 @@ my $scope = { type => 'http' };
 subtest 'param and params read from scope' => sub {
     my $scope_with_params = {
         type => 'http',
-        'pagi.router' => { params => { id => '42', action => 'edit' } },
+        path_params => { id => '42', action => 'edit' },
     };
     my $res = PAGI::Response->new($send, $scope_with_params);
 
-    is($res->param('id'), '42', 'param returns route param from scope');
-    is($res->param('action'), 'edit', 'param returns another param');
-    is($res->param('missing'), undef, 'param returns undef for missing');
-    is($res->params, { id => '42', action => 'edit' }, 'params returns all');
+    is($res->path_param('id'), '42', 'param returns route param from scope');
+    is($res->path_param('action'), 'edit', 'param returns another param');
+    is($res->path_param('missing'), undef, 'param returns undef for missing');
+    is($res->path_params, { id => '42', action => 'edit' }, 'params returns all');
 };
 
 subtest 'param returns undef when no route params' => sub {
     my $res = PAGI::Response->new($send, $scope);
-    is($res->param('anything'), undef, 'param returns undef when no params');
-    is($res->params, {}, 'params returns empty hash');
+    is($res->path_param('anything'), undef, 'param returns undef when no params');
+    is($res->path_params, {}, 'params returns empty hash');
 };
 
 subtest 'param returns undef when no scope provided' => sub {
     my $res = PAGI::Response->new($send);
-    is($res->param('anything'), undef, 'param returns undef when no scope');
-    is($res->params, {}, 'params returns empty hash when no scope');
+    is($res->path_param('anything'), undef, 'param returns undef when no scope');
+    is($res->path_params, {}, 'params returns empty hash when no scope');
 };
 
 subtest 'backward compatibility - constructor works without scope' => sub {
@@ -57,35 +57,32 @@ subtest 'backward compatibility - constructor works without scope' => sub {
 subtest 'params with complex route params' => sub {
     my $scope_complex = {
         type => 'http',
-        'pagi.router' => {
-            params => {
-                user_id => '123',
-                post_id => '456',
-                format  => 'json',
-            }
+        path_params => {
+            user_id => '123',
+            post_id => '456',
+            format  => 'json',
         },
     };
     my $res = PAGI::Response->new($send, $scope_complex);
 
-    is($res->param('user_id'), '123', 'user_id param');
-    is($res->param('post_id'), '456', 'post_id param');
-    is($res->param('format'), 'json', 'format param');
+    is($res->path_param('user_id'), '123', 'user_id param');
+    is($res->path_param('post_id'), '456', 'post_id param');
+    is($res->path_param('format'), 'json', 'format param');
 
-    my $all_params = $res->params;
+    my $all_params = $res->path_params;
     is($all_params->{user_id}, '123', 'all params has user_id');
     is($all_params->{post_id}, '456', 'all params has post_id');
     is($all_params->{format}, 'json', 'all params has format');
 };
 
-subtest 'params when pagi.router exists but params missing' => sub {
+subtest 'params when path_params key missing' => sub {
     my $scope_no_params = {
         type => 'http',
-        'pagi.router' => {},
     };
     my $res = PAGI::Response->new($send, $scope_no_params);
 
-    is($res->param('anything'), undef, 'param returns undef');
-    is($res->params, {}, 'params returns empty hash');
+    is($res->path_param('anything'), undef, 'param returns undef');
+    is($res->path_params, {}, 'params returns empty hash');
 };
 
 done_testing;

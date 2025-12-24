@@ -116,7 +116,7 @@ PAGI::Endpoint::HTTP - Class-based HTTP endpoint handler
 
     async sub delete {
         my ($self, $req, $res) = @_;
-        my $id = $req->param('id');
+        my $id = $req->path_param('id');
         delete_user($id);
         await $res->status(204)->empty;
     }

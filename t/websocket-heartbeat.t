@@ -52,13 +52,13 @@ subtest 'param method for route parameters' => sub {
         type    => 'websocket',
         path    => '/test',
         headers => [],
-        'pagi.router' => { params => { id => '42', name => 'test' } },
+        path_params => { id => '42', name => 'test' },
     };
     my $ws = PAGI::WebSocket->new($scope_with_params, $receive, $send);
 
-    is($ws->param('id'), '42', 'param returns route parameter');
-    is($ws->param('name'), 'test', 'param returns another route parameter');
-    is($ws->param('missing'), undef, 'param returns undef for missing');
+    is($ws->path_param('id'), '42', 'param returns route parameter');
+    is($ws->path_param('name'), 'test', 'param returns another route parameter');
+    is($ws->path_param('missing'), undef, 'param returns undef for missing');
 };
 
 subtest 'params method returns all route parameters' => sub {
@@ -66,18 +66,18 @@ subtest 'params method returns all route parameters' => sub {
         type    => 'websocket',
         path    => '/test',
         headers => [],
-        'pagi.router' => { params => { foo => 'bar', baz => 'qux' } },
+        path_params => { foo => 'bar', baz => 'qux' },
     };
     my $ws = PAGI::WebSocket->new($scope_with_params, $receive, $send);
 
-    my $params = $ws->params;
+    my $params = $ws->path_params;
     is($params, { foo => 'bar', baz => 'qux' }, 'params returns all route params');
 };
 
 subtest 'param returns undef when no route params in scope' => sub {
     my $ws = PAGI::WebSocket->new($scope, $receive, $send);
-    is($ws->param('anything'), undef, 'param returns undef when no params');
-    is($ws->params, {}, 'params returns empty hash when no params');
+    is($ws->path_param('anything'), undef, 'param returns undef when no params');
+    is($ws->path_params, {}, 'params returns empty hash when no params');
 };
 
 done_testing;

@@ -47,7 +47,7 @@ subtest 'HTTP route with method handler' => sub {
 
         async sub get_user {
             my ($self, $req, $res) = @_;
-            my $id = $req->param('id');
+            my $id = $req->path_param('id');
             await $res->json({ id => $id });
         }
     }
@@ -111,7 +111,7 @@ subtest 'WebSocket route with method handler' => sub {
             die "Expected PAGI::WebSocket" unless $ws->isa('PAGI::WebSocket');
 
             # Check route params work
-            my $room = $ws->param('room');
+            my $room = $ws->path_param('room');
             die "Expected room param" unless $room eq 'test-room';
 
             await $ws->accept;
@@ -153,7 +153,7 @@ subtest 'SSE route with method handler' => sub {
 
             die "Expected PAGI::SSE" unless $sse->isa('PAGI::SSE');
 
-            my $channel = $sse->param('channel');
+            my $channel = $sse->path_param('channel');
             die "Expected channel param" unless $channel eq 'news';
 
             await $sse->send_event(event => 'connected', data => { channel => $channel });

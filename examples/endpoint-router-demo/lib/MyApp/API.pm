@@ -41,7 +41,7 @@ async sub get_user {
     my ($self, $req, $res) = @_;
     $req->state->{metrics}{requests}++;
 
-    my $id = $req->param('id');
+    my $id = $req->path_param('id');
     my ($user) = grep { $_->{id} == $id } @USERS;
 
     if ($user) {

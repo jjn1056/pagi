@@ -57,7 +57,7 @@ sub _rooms_handler {
 sub _room_history_handler {
     return async sub {
         my ($scope, $receive, $send) = @_;
-        my $room_name = $scope->{'pagi.router'}{params}{name};
+        my $room_name = $scope->{path_params}{name};
         my $room = get_room($room_name);
         if ($room) {
             my $data = get_room_messages($room_name, 100);
@@ -71,7 +71,7 @@ sub _room_history_handler {
 sub _room_users_handler {
     return async sub {
         my ($scope, $receive, $send) = @_;
-        my $room_name = $scope->{'pagi.router'}{params}{name};
+        my $room_name = $scope->{path_params}{name};
         my $room = get_room($room_name);
         if ($room) {
             my $data = get_room_users($room_name);
@@ -244,7 +244,7 @@ Returns list of all rooms with user counts.
 =item GET /api/room/:name/history
 
 Returns message history for a room. The C<:name> parameter is captured
-by the router and available in C<< $scope->{'pagi.router'}{params}{name} >>.
+by the router and available in C<< $scope->{path_params}{name} >>.
 
 =item GET /api/room/:name/users
 

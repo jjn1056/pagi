@@ -73,17 +73,17 @@ subtest 'param returns route parameters from scope' => sub {
         path         => '/test',
         query_string => '',
         headers      => [],
-        'pagi.router' => { params => { id => '123', action => 'edit' } },
+        path_params => { id => '123', action => 'edit' },
     };
 
     my $req = PAGI::Request->new($scope_with_route_params, $receive);
 
-    is($req->param('id'), '123', 'param returns route param from scope');
-    is($req->param('action'), 'edit', 'param returns another param');
-    is($req->param('missing'), undef, 'param returns undef for missing');
+    is($req->path_param('id'), '123', 'param returns route param from scope');
+    is($req->path_param('action'), 'edit', 'param returns another param');
+    is($req->path_param('missing'), undef, 'param returns undef for missing');
 };
 
-subtest 'param falls back to query params' => sub {
+subtest 'path_param only returns path params, not query params' => sub {
     my $scope_with_query = {
         type         => 'http',
         method       => 'GET',
@@ -94,13 +94,15 @@ subtest 'param falls back to query params' => sub {
 
     my $req = PAGI::Request->new($scope_with_query, $receive);
 
-    # No route params in scope, should fall back to query
-    is($req->param('foo'), 'bar', 'param falls back to query param');
+    # path_param only returns path params, not query params
+    is($req->path_param('foo'), undef, 'path_param returns undef when no path params');
+    is($req->query('foo'), 'bar', 'query() returns query param');
 
-    # With route params in scope, route param takes precedence
-    $scope_with_query->{'pagi.router'}{params} = { foo => 'route_value' };
-    is($req->param('foo'), 'route_value', 'route param takes precedence');
-    is($req->param('baz'), 'qux', 'other query params still accessible');
+    # With route params in scope, path_param returns them
+    $scope_with_query->{path_params} = { foo => 'route_value' };
+    is($req->path_param('foo'), 'route_value', 'path_param returns path param');
+    is($req->path_param('baz'), undef, 'path_param does not fall back to query');
+    is($req->query('baz'), 'qux', 'query() returns query param');
 };
 
 done_testing;

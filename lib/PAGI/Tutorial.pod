@@ -667,9 +667,9 @@ The structure of C<$event> depends on the connection type and what's happening.
 For HTTP requests, you receive body chunks:
 
   {
-      type => 'http.request.body',
+      type => 'http.request',
       body => '{"name":"John"}',  # Raw bytes
-      more_body => 0,             # 0 = last chunk, 1 = more coming
+      more => 0,                  # 0 = last chunk (default), 1 = more coming
   }
 
 For WebSocket, you receive messages and disconnect events:
@@ -775,7 +775,7 @@ Let's build a complete HTTP request handler that reads the request body and echo
       while (1) {
           my $event = await $receive->();
           $body .= $event->{body} if defined $event->{body};
-          last unless $event->{more_body};  # Stop when no more chunks
+          last unless $event->{more};  # Stop when no more chunks
       }
 
       # Prepare response body
@@ -791,11 +791,10 @@ Let's build a complete HTTP request handler that reads the request body and echo
           ],
       });
 
-      # Send response body
+      # Send response body (more => 0 is the default, so can be omitted)
       await $send->({
           type => 'http.response.body',
           body => $response_body,
-          more_body => 0,  # This is the last (and only) chunk
       });
   }
 
@@ -815,11 +814,11 @@ Key points:
 
 =over 4
 
-=item * Always check C<more_body> to know when the request body is complete
+=item * Always check C<more> to know when the request body is complete
 
 =item * Send C<http.response.start> before sending any body
 
-=item * Set C<more_body =E<gt> 0> on the final body chunk
+=item * C<more =E<gt> 0> is the default for final chunks (can be omitted)
 
 =item * The request body is raw bytes (you may need to decode it)
 
@@ -1030,7 +1029,7 @@ You can stream HTTP response bodies by sending multiple C<http.response.body> ev
           await $send->({
               type => 'http.response.body',
               body => "Chunk $i\n",
-              more_body => 1,  # More chunks coming
+              more => 1,  # More chunks coming
           });
 
           # Wait 1 second between chunks
@@ -1043,11 +1042,10 @@ You can stream HTTP response bodies by sending multiple C<http.response.body> ev
           await $timer->future;
       }
 
-      # Send final chunk
+      # Send final chunk (more => 0 is the default, so can be omitted)
       await $send->({
           type => 'http.response.body',
           body => "Done!\n",
-          more_body => 0,  # This is the last chunk
       });
   }
 
@@ -1071,9 +1069,9 @@ Key points:
 
 =item * Use C<transfer-encoding: chunked> or omit C<content-length>
 
-=item * Set C<more_body =E<gt> 1> on all chunks except the last
+=item * Set C<more =E<gt> 1> on all chunks except the last
 
-=item * Set C<more_body =E<gt> 0> on the final chunk
+=item * Omit C<more> on the final chunk (defaults to 0)
 
 =item * Useful for large files, real-time data, or progressive rendering
 
@@ -1292,7 +1290,7 @@ Response bodies must be encoded to bytes:
       while (1) {
           my $event = await $receive->();
           $body_bytes .= $event->{body} if defined $event->{body};
-          last unless $event->{more_body};
+          last unless $event->{more};
       }
       my $body_text = decode_utf8($body_bytes);  # Decode to string
 
@@ -2689,8 +2687,8 @@ Use C<:param> syntax for named parameters in routes:
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
 
-      # Access parameter via $req->param()
-      my $id = $req->param('id');
+      # Access path parameter via $req->path_param()
+      my $id = $req->path_param('id');
 
       await $res->json({ id => $id, name => 'User ' . $id });
   });
@@ -2701,8 +2699,8 @@ Use C<:param> syntax for named parameters in routes:
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
 
-      my $post_id = $req->param('post_id');
-      my $comment_id = $req->param('comment_id');
+      my $post_id = $req->path_param('post_id');
+      my $comment_id = $req->path_param('comment_id');
 
       await $res->json({
           post_id => $post_id,
@@ -2712,7 +2710,7 @@ Use C<:param> syntax for named parameters in routes:
 
   $router->to_app;
 
-Parameters are stored in C<$scope-E<gt>{'pagi.params'}> and accessed via C<$req-E<gt>param($name)>.
+Parameters are stored in C<$scope-E<gt>{path_params}> and accessed via C<$req-E<gt>path_param($name)>.
 
 =head3 Wildcard Routes
 
@@ -2733,8 +2731,8 @@ Use C<*name> syntax to capture multiple path segments:
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
 
-      # Access wildcard via $req->param()
-      my $path = $req->param('path');
+      # Access wildcard via $req->path_param()
+      my $path = $req->path_param('path');
 
       # /files/docs/readme.txt -> path = 'docs/readme.txt'
       # /files/images/logo.png -> path = 'images/logo.png'
@@ -3002,7 +3000,7 @@ Access path parameters via C<$req-E<gt>param()>:
   async sub get_user {
       my ($self, $req, $res) = @_;
 
-      my $id = $req->param('id');
+      my $id = $req->path_param('id');
 
       await $res->json({
           id => $id,
@@ -3013,8 +3011,8 @@ Access path parameters via C<$req-E<gt>param()>:
   async sub get_comment {
       my ($self, $req, $res) = @_;
 
-      my $post_id = $req->param('post_id');
-      my $comment_id = $req->param('comment_id');
+      my $post_id = $req->path_param('post_id');
+      my $comment_id = $req->path_param('comment_id');
 
       await $res->json({
           post_id => $post_id,
@@ -3063,8 +3061,8 @@ WebSocket handlers receive C<($self, $ws)>:
   async sub handle_chat {
       my ($self, $ws) = @_;
 
-      # Access path parameter
-      my $room = $ws->scope->{'pagi.params'}{room};
+      # Access path parameter via $ws->path_param()
+      my $room = $ws->path_param('room');
 
       await $ws->accept;
       await $ws->send_text("Joined room: $room");
@@ -3321,7 +3319,7 @@ Create modular applications by mounting sub-routers:
 
   async sub get_user {
       my ($self, $req, $res) = @_;
-      my $id = $req->param('id');
+      my $id = $req->path_param('id');
       await $res->json({ id => $id, name => "User $id" });
   }
 
@@ -3423,7 +3421,7 @@ Here's a complete working example demonstrating all features:
 
   async sub get_user {
       my ($self, $req, $res) = @_;
-      my $id = $req->param('id');
+      my $id = $req->path_param('id');
       my ($user) = grep { $_->{id} == $id } @{$self->state->{users}};
       return await $res->status(404)->json({ error => 'Not found' })
           unless $user;

@@ -256,10 +256,8 @@ sub to_app {
                     }
                     my $new_scope = {
                         %$scope,
-                        'pagi.router' => {
-                            params => \%params,
-                            route  => $route->{path},
-                        },
+                        path_params => \%params,
+                        'pagi.router' => { route => $route->{path} },
                     };
                     await $route->{_handler}->($new_scope, $receive, $send);
                     return;
@@ -294,10 +292,8 @@ sub to_app {
                     }
                     my $new_scope = {
                         %$scope,
-                        'pagi.router' => {
-                            params => \%params,
-                            route  => $route->{path},
-                        },
+                        path_params => \%params,
+                        'pagi.router' => { route => $route->{path} },
                     };
                     await $route->{_handler}->($new_scope, $receive, $send);
                     return;
@@ -341,10 +337,8 @@ sub to_app {
 
                     my $new_scope = {
                         %$scope,
-                        'pagi.router' => {
-                            params => \%params,
-                            route  => $route->{path},
-                        },
+                        path_params => \%params,
+                        'pagi.router' => { route => $route->{path} },
                     };
 
                     await $route->{_handler}->($new_scope, $receive, $send);
@@ -575,10 +569,15 @@ Mount middleware runs before any sub-router middleware:
 
 =head1 SCOPE ADDITIONS
 
-The matched route adds C<pagi.router> to scope:
+The router adds the following to scope when a route matches:
 
-    $scope->{'pagi.router'}{params}  # Captured parameters
+    $scope->{path_params}            # Captured path parameters (hashref)
     $scope->{'pagi.router'}{route}   # Matched route pattern
+
+Path parameters use a router-agnostic key (C<path_params>) so that
+L<PAGI::Request>, L<PAGI::Response>, L<PAGI::WebSocket>, and L<PAGI::SSE>
+can access them via C<< ->path_param('name') >> regardless of which
+router implementation populated them.
 
 For mounted apps, C<root_path> is updated to include the mount prefix.
 

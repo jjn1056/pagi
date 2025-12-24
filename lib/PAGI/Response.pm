@@ -118,21 +118,20 @@ httponly, samesite.
 
 Delete a cookie by setting it with Max-Age=0.
 
-=head2 param
+=head2 path_param
 
-    my $id = $res->param('id');
+    my $id = $res->path_param('id');
 
-Returns a route parameter by name. Route parameters are read from
-C<< $scope->{'pagi.router'}{params} >>. Returns C<undef> if the parameter
-is not found or if no scope was provided to the constructor.
+Returns a path parameter by name. Path parameters are captured from the URL
+path by a router and stored in C<< $scope->{path_params} >>. Returns C<undef>
+if the parameter is not found or if no scope was provided.
 
-=head2 params
+=head2 path_params
 
-    my $params = $res->params;
+    my $params = $res->path_params;
 
-Returns hashref of all route parameters from scope. Returns an empty
-hashref if no route parameters exist or if no scope was provided to
-the constructor.
+Returns hashref of all path parameters from scope. Returns an empty hashref
+if no path parameters exist or if no scope was provided.
 
 =head2 cors
 
@@ -428,7 +427,7 @@ use L<PAGI::App::File> instead:
 
     async sub handle_download ($req, $send) {
         my $res = PAGI::Response->new($send);
-        my $file_id = $req->param('id');
+        my $file_id = $req->path_param('id');
 
         my $file = get_file($file_id); # Be sure to clean $file
         unless ($file && -f $file->{path}) {
@@ -708,15 +707,16 @@ sub content_type ($self, $type) {
     return $self;
 }
 
-# Route parameters - read from scope (set by router)
-sub params ($self) {
+# Path parameters - captured from URL path by router
+# Stored in scope->{path_params} for router-agnostic access
+sub path_params ($self) {
     return {} unless $self->{scope};
-    return $self->{scope}{'pagi.router'}{params} // {};
+    return $self->{scope}{path_params} // {};
 }
 
-sub param ($self, $name) {
+sub path_param ($self, $name) {
     return undef unless $self->{scope};
-    my $params = $self->{scope}{'pagi.router'}{params} // {};
+    my $params = $self->{scope}{path_params} // {};
     return $params->{$name};
 }
 

@@ -286,21 +286,17 @@ sub basic_auth {
     return (undef, undef);
 }
 
-# Path params (read from scope)
-sub params {
+# Path parameters - captured from URL path by router
+# Stored in scope->{path_params} for router-agnostic access
+sub path_params {
     my $self = shift;
-    return $self->{scope}{'pagi.router'}{params} // {};
+    return $self->{scope}{path_params} // {};
 }
 
-sub param {
+sub path_param {
     my ($self, $name) = @_;
-    # Check scope route params first
-    my $route_params = $self->{scope}{'pagi.router'}{params} // {};
-    if (exists $route_params->{$name}) {
-        return $route_params->{$name};
-    }
-    # Fall back to query params
-    return $self->query($name);
+    my $params = $self->{scope}{path_params} // {};
+    return $params->{$name};
 }
 
 # Per-request storage for middleware/handlers
@@ -711,19 +707,30 @@ Shortcut for C<< $req->query_params->get($name) >>.
 
 =head1 PATH PARAMETERS
 
-=head2 params
+Path parameters are captured from the URL path by a router (e.g., L<PAGI::App::Router>)
+and stored in C<< $scope->{path_params} >>. This is a router-agnostic interface -
+any router can populate this field.
 
-    my $params = $req->params;  # hashref
+=head2 path_params
 
-Get path parameters (set by router).
+    my $params = $req->path_params;  # hashref
 
-=head2 param
+Get all path parameters as a hashref.
 
-    my $id = $req->param('id');
+    # Route: /users/:id/posts/:post_id
+    # URL: /users/42/posts/100
+    my $params = $req->path_params;
+    # { id => '42', post_id => '100' }
 
-Returns a route parameter by name. Route parameters are read from
-C<< $scope->{'pagi.router'}{params} >>. Falls back to query parameters
-if no route parameter matches.
+=head2 path_param
+
+    my $id = $req->path_param('id');
+
+Get a single path parameter by name. Returns C<undef> if not found.
+
+    # Route: /users/:id
+    # URL: /users/42
+    my $id = $req->path_param('id');  # '42'
 
 =head1 COOKIES
 

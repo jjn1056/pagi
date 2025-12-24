@@ -53,7 +53,7 @@ subtest 'basic routing' => sub {
     $app->({ method => 'GET', path => '/users/42' }, sub { Future->done }, $send)->get;
     is $sent->[0]{status}, 200, 'GET /users/42 - status 200';
     is $sent->[1]{body}, 'get_user', 'GET /users/42 - correct handler';
-    is $calls[0]{scope}{'pagi.router'}{params}{id}, '42', 'captured :id param';
+    is $calls[0]{scope}{path_params}{id}, '42', 'captured :id param';
 
     # POST /users
     ($send, $sent) = mock_send();
@@ -96,7 +96,7 @@ subtest 'wildcard parameter' => sub {
     my ($send, $sent) = mock_send();
     $app->({ method => 'GET', path => '/files/docs/readme.txt' }, sub { Future->done }, $send)->get;
     is $sent->[0]{status}, 200, 'wildcard matched';
-    is $calls[0]{scope}{'pagi.router'}{params}{path}, 'docs/readme.txt', 'wildcard captured rest of path';
+    is $calls[0]{scope}{path_params}{path}, 'docs/readme.txt', 'wildcard captured rest of path';
 };
 
 subtest 'mount basic' => sub {
@@ -133,7 +133,7 @@ subtest 'mount basic' => sub {
     $app->({ method => 'GET', path => '/api/users/42' }, sub { Future->done }, $send)->get;
     is $sent->[1]{body}, 'api_user', 'mounted /api/users/:id works';
     is $calls[0]{scope}{path}, '/users/42', 'path stripped correctly';
-    is $calls[0]{scope}{'pagi.router'}{params}{id}, '42', 'params captured in mounted router';
+    is $calls[0]{scope}{path_params}{id}, '42', 'params captured in mounted router';
 };
 
 subtest 'mount exact prefix match' => sub {
@@ -274,7 +274,7 @@ subtest 'websocket route with params' => sub {
     my ($send, $sent) = mock_send();
     $app->({ type => 'websocket', path => '/ws/chat/general' }, sub { Future->done }, $send)->get;
     is $sent->[0]{status}, 200, 'websocket with param matched';
-    is $calls[0]{scope}{'pagi.router'}{params}{room}, 'general', 'captured :room param';
+    is $calls[0]{scope}{path_params}{room}, 'general', 'captured :room param';
 };
 
 subtest 'sse route with params' => sub {
@@ -286,7 +286,7 @@ subtest 'sse route with params' => sub {
     my ($send, $sent) = mock_send();
     $app->({ type => 'sse', path => '/events/notifications' }, sub { Future->done }, $send)->get;
     is $sent->[0]{status}, 200, 'sse with param matched';
-    is $calls[0]{scope}{'pagi.router'}{params}{channel}, 'notifications', 'captured :channel param';
+    is $calls[0]{scope}{path_params}{channel}, 'notifications', 'captured :channel param';
 };
 
 subtest 'mixed protocol routing' => sub {

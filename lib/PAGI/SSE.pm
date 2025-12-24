@@ -54,15 +54,16 @@ sub state {
     return $self->{scope}{'pagi.state'} // {};
 }
 
-# Route parameter accessors (read from scope)
-sub params {
+# Path parameter accessors - captured from URL path by router
+# Stored in scope->{path_params} for router-agnostic access
+sub path_params {
     my ($self) = @_;
-    return $self->{scope}{'pagi.router'}{params} // {};
+    return $self->{scope}{path_params} // {};
 }
 
-sub param {
+sub path_param {
     my ($self, $name) = @_;
-    my $params = $self->{scope}{'pagi.router'}{params} // {};
+    my $params = $self->{scope}{path_params} // {};
     return $params->{$name};
 }
 
@@ -662,18 +663,18 @@ processing the same request.
 B<Note:> For worker-level state (database connections, config), use
 C<< $sse->state >> to access application state injected by PAGI::Lifespan.
 
-=head2 param
+=head2 path_param
 
-    my $channel = $sse->param('channel');
+    my $channel = $sse->path_param('channel');
 
-Returns a route parameter by name. Route parameters are read from
-C<< $scope->{'pagi.router'}{params} >>.
+Returns a path parameter by name. Path parameters are captured from the URL
+path by a router and stored in C<< $scope->{path_params} >>.
 
-=head2 params
+=head2 path_params
 
-    my $params = $sse->params;
+    my $params = $sse->path_params;
 
-Returns hashref of all route parameters from scope.
+Returns hashref of all path parameters from scope.
 
 =head2 state
 

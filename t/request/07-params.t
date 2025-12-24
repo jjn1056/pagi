@@ -12,62 +12,59 @@ subtest 'params from scope' => sub {
         method  => 'GET',
         path    => '/users/42/posts/100',
         headers => [],
-        # Router sets params in pagi.router
+        # Router sets path_params directly in scope (router-agnostic)
+        path_params => { user_id => '42', post_id => '100' },
         'pagi.router' => {
-            params => { user_id => '42', post_id => '100' },
             route  => '/users/:user_id/posts/:post_id',
         },
     };
 
     my $req = PAGI::Request->new($scope);
 
-    is($req->params, { user_id => '42', post_id => '100' }, 'params returns hashref');
-    is($req->param('user_id'), '42', 'param() gets single value');
-    is($req->param('post_id'), '100', 'param() another value');
-    is($req->param('missing'), undef, 'missing param is undef');
+    is($req->path_params, { user_id => '42', post_id => '100' }, 'params returns hashref');
+    is($req->path_param('user_id'), '42', 'param() gets single value');
+    is($req->path_param('post_id'), '100', 'param() another value');
+    is($req->path_param('missing'), undef, 'missing param is undef');
 };
 
 subtest 'params set via scope' => sub {
-    # Simulating how router sets params in scope before handler is called
+    # Simulating how router sets path_params in scope before handler is called
     my $scope = {
         type => 'http',
         method => 'GET',
         headers => [],
-        'pagi.router' => {
-            params => { id => '123', slug => 'hello-world' },
-        },
+        path_params => { id => '123', slug => 'hello-world' },
     };
     my $req = PAGI::Request->new($scope);
 
-    is($req->param('id'), '123', 'param from scope');
-    is($req->param('slug'), 'hello-world', 'another param');
+    is($req->path_param('id'), '123', 'param from scope');
+    is($req->path_param('slug'), 'hello-world', 'another param');
 };
 
 subtest 'no params' => sub {
     my $scope = { type => 'http', method => 'GET', headers => [] };
     my $req = PAGI::Request->new($scope);
 
-    is($req->params, {}, 'empty params by default');
-    is($req->param('anything'), undef, 'missing returns undef');
+    is($req->path_params, {}, 'empty params by default');
+    is($req->path_param('anything'), undef, 'missing returns undef');
 };
 
-subtest 'param falls back to query params' => sub {
+subtest 'path_param does not include query params' => sub {
     my $scope = {
         type => 'http',
         method => 'GET',
         headers => [],
         query_string => 'foo=bar&baz=qux',
-        'pagi.router' => {
-            params => { id => '42' },
-        },
+        path_params => { id => '42' },
     };
     my $req = PAGI::Request->new($scope);
 
-    # Route param takes precedence
-    is($req->param('id'), '42', 'route param exists');
-    # Falls back to query param when route param not found
-    is($req->param('foo'), 'bar', 'falls back to query param');
-    is($req->param('baz'), 'qux', 'another query param');
+    # path_param only returns path params, not query params
+    is($req->path_param('id'), '42', 'path param exists');
+    is($req->path_param('foo'), undef, 'query param not returned by path_param');
+    is($req->path_param('baz'), undef, 'query params accessed via query method');
+    # Query params should be accessed via $req->query('foo')
+    is($req->query('foo'), 'bar', 'query() returns query param');
 };
 
 done_testing;
