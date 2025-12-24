@@ -4,7 +4,7 @@ This directory contains progressively more advanced PAGI examples. Each subdirec
 
 ## Requirements
 - Perl 5.18+ with `Future::AsyncAwait` and `IO::Async`
-- A PAGI-capable server or the ability to plug these coderefs into your own harness (`bin/pagi-server-ref` runs everything in this directory using `lib/PAGI/Server/Ref.pm`)
+- Run examples with: `pagi-server examples/01-hello-http/app.pl --port 5000`
 
 Examples assume you understand the core spec (`docs/specs/main.mkdn`) plus the relevant protocol documents.
 
