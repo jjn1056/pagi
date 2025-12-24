@@ -1,7 +1,5 @@
 =encoding UTF-8
 
-ttt ♥♥♥
-
 =head1 NAME
 
 PAGI::Tutorial - A comprehensive guide to building async web applications with PAGI
