@@ -105,12 +105,13 @@ PAGI::Lifespan - Wrap a PAGI app with lifecycle management
     my $app = PAGI::Lifespan->wrap(
         $router->to_app,
         startup => async sub {
-            # Populate router state directly (like Starlette's app.state)
-            $router->state->{db} = DBI->connect(...);
-            $router->state->{config} = { app_name => 'MyApp' };
+            my ($state) = @_;  # State hash injected into every request
+            $state->{db} = DBI->connect(...);
+            $state->{config} = { app_name => 'MyApp' };
         },
         shutdown => async sub {
-            $router->state->{db}->disconnect;
+            my ($state) = @_;
+            $state->{db}->disconnect;
         },
     );
 
@@ -122,9 +123,20 @@ injects application state into the scope for all requests.
 
 =head2 State Flow
 
-During startup, populate the router's state directly with database
-connections, caches, configuration, etc. This is similar to how
-Starlette uses C<app.state>.
+The C<startup> and C<shutdown> callbacks receive a C<$state> hashref
+as their first argument. Populate this with database connections,
+caches, configuration, etc. This is similar to how Starlette's
+lifespan context manager yields state to C<request.state>.
+
+    startup => async sub {
+        my ($state) = @_;
+        $state->{db} = await connect_to_database();
+        $state->{cache} = Cache::Redis->new(...);
+    },
+    shutdown => async sub {
+        my ($state) = @_;
+        $state->{db}->disconnect;
+    },
 
 For every request, this state is injected into the scope as
 C<$scope-E<gt>{'pagi.state'}>. This makes it accessible via:
@@ -138,10 +150,13 @@ C<$scope-E<gt>{'pagi.state'}>. This makes it accessible via:
 =head2 new
 
     my $lifespan = PAGI::Lifespan->new(
-        app      => $pagi_app,      # Required
-        startup  => async sub { },  # Optional
-        shutdown => async sub { },  # Optional
+        app      => $pagi_app,                      # Required
+        startup  => async sub { my ($state) = @_; },  # Optional
+        shutdown => async sub { my ($state) = @_; },  # Optional
     );
+
+Both C<startup> and C<shutdown> callbacks receive the shared state
+hashref as their first argument.
 
 =head2 wrap
 

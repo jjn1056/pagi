@@ -32,8 +32,8 @@ sub routes {
 async sub home {
     my ($self, $req, $res) = @_;
 
-    # Access config via $self->state (worker-local)
-    my $config = $self->state->{config};
+    # Access config via $req->state (populated by Lifespan startup)
+    my $config = $req->state->{config};
 
     my $html = <<"HTML";
 <!DOCTYPE html>
@@ -273,8 +273,8 @@ async sub ws_echo {
     await $ws->accept;
     $ws->start_heartbeat(25);
 
-    # Access worker-local metrics via $self->state
-    my $metrics = $self->state->{metrics};
+    # Access metrics via $ws->state (populated by Lifespan startup)
+    my $metrics = $ws->state->{metrics};
     $metrics->{ws_active}++;
 
     $ws->on_close(sub {
@@ -292,8 +292,8 @@ async sub ws_echo {
 async sub sse_metrics {
     my ($self, $sse) = @_;
 
-    # Access worker-local metrics via $self->state
-    my $metrics = $self->state->{metrics};
+    # Access metrics via $sse->state (populated by Lifespan startup)
+    my $metrics = $sse->state->{metrics};
 
     # Track sequence number for reconnection detection
     # In production, you'd store this per-client or use timestamps

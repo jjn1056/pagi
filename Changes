@@ -97,19 +97,21 @@ my $router = MyApp->new;
 PAGI::Lifespan->wrap(
     $router->to_app,
     startup => async sub {
-        my ($state) = @_;
+        my ($state) = @_;  # State hash injected into every request
         $state->{db} = DBI->connect(...);
-        %{$router->state} = %$state;
+        $state->{config} = { app_name => 'MyApp' };
+    },
+    shutdown => async sub {
+        my ($state) = @_;
+        $state->{db}->disconnect;
     },
 );
 ```
 
-Accessing state:
+Accessing state in handlers:
 ```perl
-# In handlers - both work
-my $db = $self->state->{db};   # Via router instance
-my $db = $req->state->{db};    # Via request (from scope)
-
-# In subrouters - use request
-my $db = $req->state->{db};    # Always works
+# Via request, websocket, or sse
+my $db = $req->state->{db};
+my $db = $ws->state->{db};
+my $db = $sse->state->{db};
 ```

@@ -35,12 +35,13 @@ subtest 'app routes work with lifespan' => sub {
     my $app = PAGI::Lifespan->wrap(
         $router->to_app,
         startup => async sub {
-            # Populate router state directly (like Starlette's app.state)
-            $router->state->{config} = {
+            my ($state) = @_;
+            # Populate state - injected into every request via $req->state
+            $state->{config} = {
                 app_name => 'Endpoint Router Demo',
                 version  => '1.0.0',
             };
-            $router->state->{metrics} = {
+            $state->{metrics} = {
                 requests  => 0,
                 ws_active => 0,
             };
