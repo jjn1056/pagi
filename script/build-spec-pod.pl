@@ -33,6 +33,30 @@ my @SPEC_FILES = qw(
     tls.mkdn
 );
 
+# Mapping from .mkdn filenames to POD module names
+my %MKDN_TO_POD = (
+    'main.mkdn'     => 'PAGI::Spec',
+    'www.mkdn'      => 'PAGI::Spec::Www',
+    'lifespan.mkdn' => 'PAGI::Spec::Lifespan',
+    'tls.mkdn'      => 'PAGI::Spec::Tls',
+);
+
+# Convert markdown-style links to POD L<> links
+sub convert_mkdn_links {
+    my ($pod) = @_;
+
+    # Convert links like L<HTTP, WebSocket and SSE|www.mkdn> to L<HTTP, WebSocket and SSE|PAGI::Spec::Www>
+    for my $mkdn (keys %MKDN_TO_POD) {
+        my $pod_module = $MKDN_TO_POD{$mkdn};
+        # Handle L<text|file.mkdn> format
+        $pod =~ s/L<([^|>]+)\|\Q$mkdn\E>/L<$1|$pod_module>/g;
+        # Handle plain L<file.mkdn> format
+        $pod =~ s/L<\Q$mkdn\E>/L<$pod_module>/g;
+    }
+
+    return $pod;
+}
+
 # Ensure output directories exist
 make_path("$OUTPUT_BASE/PAGI") unless -d "$OUTPUT_BASE/PAGI";
 make_path($OUTPUT_DIR) unless -d $OUTPUT_DIR;
@@ -65,6 +89,9 @@ for my $file (@SPEC_FILES) {
 
     # Ensure pod is at least an empty string
     $pod //= '';
+
+    # Convert .mkdn links to POD L<> links
+    $pod = convert_mkdn_links($pod);
 
     # Determine output filename
     my $basename = $file;
