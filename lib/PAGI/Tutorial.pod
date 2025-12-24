@@ -117,7 +117,7 @@ Let's create a simple "Hello, World!" application. Create a file called C<hello.
       my ($scope, $receive, $send) = @_;
 
       # Only handle HTTP requests (server also sends lifespan events)
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       # Send the response status and headers
       await $send->({
@@ -190,7 +190,7 @@ Let's modify the app to show what's in C<$scope>:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $body = Dumper($scope);
 
@@ -736,7 +736,7 @@ Let's build a complete HTTP request handler that reads the request body and echo
       my ($scope, $receive, $send) = @_;
 
       # Only handle HTTP requests
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       # Read the entire request body
       my $body = '';
@@ -805,7 +805,7 @@ WebSocket enables bidirectional real-time communication. Here's a simple echo se
       my ($scope, $receive, $send) = @_;
 
       # Only handle WebSocket connections
-      return unless $scope->{type} eq 'websocket';
+      die "Expected websocket scope" unless $scope->{type} eq 'websocket';
 
       # Accept the WebSocket connection
       await $send->({
@@ -882,7 +882,7 @@ Server-Sent Events allow the server to push updates to clients over HTTP. Here's
       my ($scope, $receive, $send) = @_;
 
       # Only handle SSE connections
-      return unless $scope->{type} eq 'sse';
+      die "Expected sse scope" unless $scope->{type} eq 'sse';
 
       my $loop = IO::Async::Loop->new;
 
@@ -977,7 +977,7 @@ You can stream HTTP response bodies by sending multiple C<http.response.body> ev
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $loop = IO::Async::Loop->new;
 
@@ -1191,7 +1191,7 @@ Query strings are raw bytes. You must decode them yourself:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       # Parse query string manually
       my $query = $scope->{query_string} // '';
@@ -1259,7 +1259,7 @@ Response bodies must be encoded to bytes:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       # 1. Path is already decoded
       my $path = $scope->{path};  # UTF-8 string
@@ -1401,7 +1401,7 @@ L<PAGI::Response> provides a fluent interface for building HTTP responses. Inste
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       # Create a response builder
       my $res = PAGI::Response->new($send);
@@ -1426,7 +1426,7 @@ L<PAGI::Response> provides methods for common response types:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $res = PAGI::Response->new($send);
       my $path = $scope->{path};
@@ -1480,7 +1480,7 @@ Use chainable methods to set status and headers before sending:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $res = PAGI::Response->new($send);
 
@@ -1518,7 +1518,7 @@ Chainable methods:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $res = PAGI::Response->new($send);
 
@@ -1553,7 +1553,7 @@ Chainable methods:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $res = PAGI::Response->new($send);
       my $path = $scope->{path};
@@ -1587,7 +1587,7 @@ Chainable methods:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $res = PAGI::Response->new($send);
       my $path = $scope->{path};
@@ -1640,7 +1640,7 @@ For large responses or real-time data, use C<stream()>:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $loop = IO::Async::Loop->new;
       my $res = PAGI::Response->new($send);
@@ -1695,7 +1695,7 @@ Send files efficiently without loading them into memory:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $res = PAGI::Response->new($send);
 
@@ -1732,7 +1732,7 @@ L<PAGI::Request> parses HTTP requests and provides convenient accessors for head
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       # Create request and response objects
       my $req = PAGI::Request->new($scope, $receive);
@@ -1756,7 +1756,7 @@ The C<new()> method takes both C<$scope> and C<$receive> from your PAGI app.
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
@@ -1808,7 +1808,7 @@ Available methods:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
@@ -1846,7 +1846,7 @@ Query parameters are automatically decoded from URL encoding and UTF-8:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
@@ -1886,7 +1886,7 @@ Test it:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
@@ -1918,7 +1918,7 @@ L<PAGI::Request> provides async methods for parsing different body types:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
@@ -2003,7 +2003,7 @@ L<PAGI::Request> handles multipart file uploads:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
@@ -2083,7 +2083,7 @@ The stash is a per-request storage area for sharing data between middleware and 
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'http';
+      die "Expected http scope" unless $scope->{type} eq 'http';
 
       my $req = PAGI::Request->new($scope, $receive);
       my $res = PAGI::Response->new($send);
@@ -2115,7 +2115,7 @@ L<PAGI::WebSocket> simplifies WebSocket connections. Instead of manually handlin
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'websocket';
+      die "Expected websocket scope" unless $scope->{type} eq 'websocket';
 
       # Create WebSocket helper
       my $ws = PAGI::WebSocket->new($scope, $receive, $send);
@@ -2141,7 +2141,7 @@ A simple echo server that receives text messages and sends them back:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'websocket';
+      die "Expected websocket scope" unless $scope->{type} eq 'websocket';
 
       my $ws = PAGI::WebSocket->new($scope, $receive, $send);
       await $ws->accept;
@@ -2172,7 +2172,7 @@ See C<examples/04-websocket-echo/> and C<examples/websocket-echo-v2/> for comple
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'websocket';
+      die "Expected websocket scope" unless $scope->{type} eq 'websocket';
 
       my $ws = PAGI::WebSocket->new($scope, $receive, $send);
       await $ws->accept;
@@ -2207,7 +2207,7 @@ See C<examples/04-websocket-echo/> and C<examples/websocket-echo-v2/> for comple
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'websocket';
+      die "Expected websocket scope" unless $scope->{type} eq 'websocket';
 
       my $ws = PAGI::WebSocket->new($scope, $receive, $send);
       await $ws->accept;
@@ -2239,7 +2239,7 @@ Process each message with a callback:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'websocket';
+      die "Expected websocket scope" unless $scope->{type} eq 'websocket';
 
       my $ws = PAGI::WebSocket->new($scope, $receive, $send);
       await $ws->accept;
@@ -2270,7 +2270,7 @@ Process each message with a callback:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'websocket';
+      die "Expected websocket scope" unless $scope->{type} eq 'websocket';
 
       my $ws = PAGI::WebSocket->new($scope, $receive, $send);
 
@@ -2310,7 +2310,7 @@ Like L<PAGI::Request>, WebSocket has a stash for per-connection data:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'websocket';
+      die "Expected websocket scope" unless $scope->{type} eq 'websocket';
 
       my $ws = PAGI::WebSocket->new($scope, $receive, $send);
       await $ws->accept;
@@ -2344,7 +2344,7 @@ L<PAGI::SSE> simplifies Server-Sent Events (SSE) for server-to-client streaming.
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'sse';
+      die "Expected sse scope" unless $scope->{type} eq 'sse';
 
       # Create SSE helper
       my $sse = PAGI::SSE->new($scope, $receive, $send);
@@ -2368,7 +2368,7 @@ L<PAGI::SSE> simplifies Server-Sent Events (SSE) for server-to-client streaming.
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'sse';
+      die "Expected sse scope" unless $scope->{type} eq 'sse';
 
       my $sse = PAGI::SSE->new($scope, $receive, $send);
       await $sse->start;
@@ -2419,7 +2419,7 @@ Send structured data as JSON:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'sse';
+      die "Expected sse scope" unless $scope->{type} eq 'sse';
 
       my $sse = PAGI::SSE->new($scope, $receive, $send);
       await $sse->start;
@@ -2453,7 +2453,7 @@ Send events on a schedule using C<every()>:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'sse';
+      die "Expected sse scope" unless $scope->{type} eq 'sse';
 
       my $sse = PAGI::SSE->new($scope, $receive, $send);
       await $sse->start;
@@ -2486,7 +2486,7 @@ Keep connections alive by sending periodic comments:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'sse';
+      die "Expected sse scope" unless $scope->{type} eq 'sse';
 
       my $sse = PAGI::SSE->new($scope, $receive, $send);
       await $sse->start;
@@ -2516,7 +2516,7 @@ Detect when the client disconnects:
   async sub app {
       my ($scope, $receive, $send) = @_;
 
-      return unless $scope->{type} eq 'sse';
+      die "Expected sse scope" unless $scope->{type} eq 'sse';
 
       my $sse = PAGI::SSE->new($scope, $receive, $send);
 
