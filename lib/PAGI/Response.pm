@@ -258,16 +258,19 @@ Send an empty response with status 204 No Content (or custom status if set).
 
 =head2 send
 
-    await $res->send($bytes);
+    await $res->send($text);
+    await $res->send($text, charset => 'iso-8859-1');
 
-Send raw bytes as the response body.
+Send text, encoding it to UTF-8 (or specified charset). Adds charset to
+Content-Type if not present. This is the high-level method for sending
+text responses.
 
-=head2 send_utf8
+=head2 send_raw
 
-    await $res->send_utf8($text);
-    await $res->send_utf8($text, charset => 'iso-8859-1');
+    await $res->send_raw($bytes);
 
-Send UTF-8 encoded text. Adds charset to Content-Type if not present.
+Send raw bytes as the response body without any encoding. Use this for
+binary data or when you've already encoded the content yourself.
 
 =head2 stream
 
@@ -749,7 +752,7 @@ sub stash {
     return $self->{scope}{'pagi.stash'} //= {};
 }
 
-async sub send {
+async sub send_raw {
     my ($self, $body) = @_;
     croak("Response already sent") if $self->{_sent};
     $self->{_sent} = 1;
@@ -769,7 +772,7 @@ async sub send {
     });
 }
 
-async sub send_utf8 {
+async sub send {
     my ($self, $body, %opts) = @_;
     my $charset = $opts{charset} // 'utf-8';
 
@@ -791,26 +794,26 @@ async sub send_utf8 {
     # Encode body
     my $encoded = encode($charset, $body // '', FB_CROAK);
 
-    await $self->send($encoded);
+    await $self->send_raw($encoded);
 }
 
 async sub text {
     my ($self, $body) = @_;
     $self->content_type('text/plain; charset=utf-8');
-    await $self->send_utf8($body);
+    await $self->send($body);
 }
 
 async sub html {
     my ($self, $body) = @_;
     $self->content_type('text/html; charset=utf-8');
-    await $self->send_utf8($body);
+    await $self->send($body);
 }
 
 async sub json {
     my ($self, $data) = @_;
     $self->content_type('application/json; charset=utf-8');
     my $body = JSON::MaybeXS->new(utf8 => 1, canonical => 1)->encode($data);
-    await $self->send($body);
+    await $self->send_raw($body);
 }
 
 async sub redirect {
@@ -818,7 +821,7 @@ async sub redirect {
     $status //= 302;
     $self->{_status} = $status;
     $self->header('location', $url);
-    await $self->send('');
+    await $self->send_raw('');
 }
 
 async sub empty {
@@ -827,7 +830,7 @@ async sub empty {
     if ($self->{_status} == 200) {
         $self->{_status} = 204;
     }
-    await $self->send(undef);
+    await $self->send_raw(undef);
 }
 
 sub cookie {

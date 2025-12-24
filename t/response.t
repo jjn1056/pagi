@@ -89,13 +89,13 @@ subtest 'status rejects invalid codes' => sub {
     like dies { $res->status(600) }, qr/100-599/i, 'rejects > 599';
 };
 
-subtest 'send method' => sub {
+subtest 'send_raw method' => sub {
     my @sent;
     my $send = sub ($msg) { push @sent, $msg; Future->done };
     my $res = PAGI::Response->new($send);
 
     $res->status(200)->header('x-test' => 'value');
-    $res->send("Hello")->get;
+    $res->send_raw("Hello")->get;
 
     is scalar(@sent), 2, 'two messages sent';
     is $sent[0]->{type}, 'http.response.start', 'first is start';
@@ -105,12 +105,12 @@ subtest 'send method' => sub {
     is $sent[1]->{more}, 0, 'more is false';
 };
 
-subtest 'send_utf8 method' => sub {
+subtest 'send method encodes UTF-8' => sub {
     my @sent;
     my $send = sub ($msg) { push @sent, $msg; Future->done };
     my $res = PAGI::Response->new($send);
 
-    $res->send_utf8("café")->get;
+    $res->send("café")->get;
 
     # Should be UTF-8 encoded bytes
     is $sent[1]->{body}, "caf\xc3\xa9", 'UTF-8 encoded';
@@ -124,8 +124,8 @@ subtest 'cannot send twice' => sub {
     my $send = sub { Future->done };
     my $res = PAGI::Response->new($send);
 
-    $res->send("first")->get;
-    like dies { $res->send("second")->get }, qr/already sent/i, 'dies on second send';
+    $res->send_raw("first")->get;
+    like dies { $res->send_raw("second")->get }, qr/already sent/i, 'dies on second send';
 };
 
 subtest 'text method' => sub {
