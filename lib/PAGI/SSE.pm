@@ -42,7 +42,8 @@ sub http_version { shift->{scope}{http_version} // '1.1' }
 sub client       { shift->{scope}{client} }
 sub server       { shift->{scope}{server} }
 
-# Per-connection storage (lives in scope, flows through subrouters)
+# Per-connection storage - lives in scope, shared across Request/Response/WebSocket/SSE
+# See PAGI::Request for detailed design notes on why stash is scope-based.
 sub stash {
     my ($self) = @_;
     return $self->{scope}{'pagi.stash'} //= {};

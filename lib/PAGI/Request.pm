@@ -309,8 +309,17 @@ sub path_param {
     return ($params // {})->{$name};
 }
 
-# Per-request storage for middleware/handlers
-# Lives in scope so it flows through to subrouters and middleware
+# Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
+#
+# DESIGN NOTE: Stash is intentionally scope-based, not object-based. When middleware
+# creates a shallow copy of scope ({ %$scope, key => val }), the inner 'pagi.stash'
+# hashref is preserved by reference. This means:
+#   1. All Request/Response objects created from the same scope chain share stash
+#   2. Middleware modifications to stash are visible to downstream handlers
+#   3. The stash "transcends" the middleware chain via scope, not via object identity
+#
+# This addresses a potential concern about Request objects being ephemeral - stash
+# works correctly because it lives in scope, which IS shared across the chain.
 sub stash {
     my $self = shift;
     return $self->{scope}{'pagi.stash'} //= {};
@@ -941,11 +950,31 @@ Decode Basic auth credentials.
     $req->stash->{user} = $current_user;
     my $user = $req->stash->{user};
 
-Returns the per-request stash hashref. The stash lives in the request
-scope (C<< $scope->{'pagi.stash'} >>) and is shared across ALL middleware,
-handlers, and subrouters processing the same request.
+Returns the per-request stash hashref for sharing data between middleware
+and handlers. The stash is also accessible via C<< $res->stash >>,
+C<< $ws->stash >>, and C<< $sse->stash >> for consistency.
 
-This enables middleware to pass data downstream:
+=head3 How Stash Works
+
+The stash lives in C<< $scope->{'pagi.stash'} >>, not in the Request object
+itself. This is an important design choice:
+
+=over 4
+
+=item * B<Scope-based, not object-based> - Request/Response objects are
+ephemeral (each middleware/handler may create its own), but stash persists
+because it lives in scope.
+
+=item * B<Survives shallow copies> - When middleware creates a modified scope
+(C<< { %$scope, key => val } >>), the stash hashref is preserved by reference.
+All objects in the chain see the same stash.
+
+=item * B<Shared across the chain> - Middleware sets values, handlers read them,
+subrouters inherit them. The stash "flows through" via scope sharing.
+
+=back
+
+=head3 Example
 
     # In auth middleware
     async sub require_auth {
@@ -954,17 +983,18 @@ This enables middleware to pass data downstream:
         await $next->();
     }
 
-    # In handler (same request) - sees the user
+    # In handler - sees the user (even though it's a different $req object)
     async sub get_profile {
         my ($self, $req, $res) = @_;
         my $user = $req->stash->{user};  # Set by middleware
         await $res->json($user);
     }
 
-    # In subrouter handler - also sees the user
-    async sub api_handler {
+    # Can also read via Response
+    async sub another_handler {
         my ($self, $req, $res) = @_;
-        my $user = $req->stash->{user};  # Still available!
+        my $user = $res->stash->{user};  # Same stash!
+        await $res->json($user);
     }
 
 B<Note:> For worker-level state (database connections, config), use
