@@ -1081,6 +1081,10 @@ Key points:
 
 The lifespan protocol allows your application to initialize resources on startup and clean them up on shutdown.
 
+B<Important:> In worker mode (C<--workers N>), each worker runs lifespan independently after forking. This means each worker initializes its own database connections, cache handles, etc. This is actually good - most database connections can't be shared across forks anyway.
+
+Use package-level variables (C<my $db;> outside the sub) to share resources between lifespan and request handlers within the same process. You cannot pass data via C<$scope> because each request gets a separate scope hash.
+
   use strict;
   use warnings;
   use Future::AsyncAwait;
