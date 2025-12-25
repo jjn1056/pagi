@@ -1,7 +1,11 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001003 - 2025-12-24
+  - Fixes to the code that generates the POD version of the specification
+    to try and fix UTF8 and other formatting issues.
+
 0.001002 - 2025-12-24
-  - Initial release
+  - Initial release. See README.md for a starting point
 
 0.001001 - 2025-12-17
   - Placeholder release
