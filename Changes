@@ -1,5 +1,10 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001004 - 2025-12-24
+  - More fixes to the code that generates the POD version of the specification
+    in improve readability
+  - exclude test and example libs from the CPAN indexer.
+    
 0.001003 - 2025-12-24
   - Fixes to the code that generates the POD version of the specification
     to try and fix UTF8 and other formatting issues.
