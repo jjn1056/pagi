@@ -1860,6 +1860,57 @@ sub _can_use_sendfile {
     return 1;
 }
 
+# Wait for socket to become writable (non-blocking, with timeout)
+# Used by sendfile loop when socket buffer is full (EAGAIN condition)
+# Returns a Future that resolves when socket is writable or fails on timeout/error
+use constant SENDFILE_WRITE_TIMEOUT => 30;  # seconds
+
+sub _wait_for_writable {
+    my ($self, $socket) = @_;
+
+    my $loop = $self->{server} ? $self->{server}->loop : undef;
+    die "No event loop available for _wait_for_writable" unless $loop;
+
+    # Check if connection is already closed
+    return Future->fail('Connection closed') if $self->{closed};
+
+    my $write_ready_f = $loop->new_future;
+    my $watching = 0;
+
+    # Set up write readiness watch
+    $loop->watch_io(
+        handle => $socket,
+        on_write_ready => sub {
+            return unless $watching;  # Guard against double-fire
+            $watching = 0;
+            $loop->unwatch_io(handle => $socket, on_write_ready => 1);
+            $write_ready_f->done unless $write_ready_f->is_ready;
+        },
+    );
+    $watching = 1;
+
+    # Set up timeout to prevent infinite wait
+    my $timeout_f = $loop->delay_future(after => SENDFILE_WRITE_TIMEOUT)->then(sub {
+        Future->fail('sendfile write timeout after ' . SENDFILE_WRITE_TIMEOUT . ' seconds');
+    });
+
+    # Race between write ready and timeout
+    my $result_f = Future->wait_any($write_ready_f, $timeout_f);
+
+    # Ensure cleanup on completion (success, failure, or cancellation)
+    $result_f->on_ready(sub {
+        if ($watching) {
+            $watching = 0;
+            eval { $loop->unwatch_io(handle => $socket, on_write_ready => 1) };
+        }
+        # Cancel whichever future didn't complete
+        $write_ready_f->cancel unless $write_ready_f->is_ready;
+        $timeout_f->cancel unless $timeout_f->is_ready;
+    });
+
+    return $result_f;
+}
+
 # Async file response - prioritizes speed based on file size:
 #   1. Small files (<=64KB): direct in-process read (fastest for small files)
 #   2. Large files with sendfile: zero-copy kernel transfer (fastest for large files)
@@ -1902,19 +1953,45 @@ async sub _send_file_response {
 
         # sendfile may not send all bytes in one call, loop until done
         # Sys::Sendfile expects filehandles, not file descriptor numbers
+        # On non-blocking sockets, sendfile returns 0 when buffer is full (EAGAIN)
         my $sent = 0;
+        my $sendfile_error;
+
         while ($sent < $length) {
+            # Check if connection was closed during transfer
+            if ($self->{closed}) {
+                $sendfile_error = "Connection closed during sendfile";
+                last;
+            }
+
             my $to_send = $length - $sent;
             my $current_offset = $offset + $sent;
             my $result = sendfile($socket, $fh, $to_send, $current_offset);
+
             if (!defined $result || $result < 0) {
-                close $fh;
-                die "sendfile failed: $!";
+                $sendfile_error = "sendfile failed: $!";
+                last;
             }
+
             $sent += $result;
-            last if $result == 0;  # EOF
+
+            # Handle EAGAIN: sendfile returned 0 but we haven't sent everything
+            # This happens on non-blocking sockets when the send buffer is full
+            # Wait for socket to become writable before retrying (with timeout)
+            if ($result == 0 && $sent < $length) {
+                my $wait_ok = eval { await $self->_wait_for_writable($socket); 1 };
+                if (!$wait_ok) {
+                    $sendfile_error = $@ || "Failed waiting for socket writability";
+                    last;
+                }
+                next;
+            }
+
+            last if $result == 0;  # True EOF (shouldn't happen if length is correct)
         }
+
         close $fh;
+        die $sendfile_error if $sendfile_error;
     }
     else {
         # Worker pool path - non-blocking chunked reads for large files

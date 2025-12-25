@@ -600,6 +600,62 @@ C<Sys::Sendfile> is available and conditions permit (non-TLS, non-chunked),
 the server uses C<sendfile()> for zero-copy I/O. Otherwise, a worker pool
 handles file I/O asynchronously to avoid blocking the event loop.
 
+=head2 Sendfile Caveats and Production Recommendations
+
+B<Warning:> The C<sendfile()> syscall behaves differently across operating
+systems (Linux, FreeBSD, macOS, etc.). While we've implemented workarounds
+for known issues (such as FreeBSD's non-blocking socket behavior), edge
+cases may exist on untested platforms or kernel versions.
+
+B<If you plan to serve static files in production, we strongly recommend:>
+
+=over 4
+
+=item 1. B<Delegate static file serving to nginx or a CDN>
+
+For production deployments, place nginx (or another reverse proxy) in front
+of PAGI::Server and let it handle static files directly. This provides:
+
+=over 4
+
+=item * Battle-tested sendfile implementation
+
+=item * Efficient caching and compression
+
+=item * Protection from slow client attacks
+
+=item * HTTP/2 and HTTP/3 support
+
+=back
+
+Example nginx configuration:
+
+    location /static/ {
+        alias /var/www/static/;
+        expires 30d;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+    }
+
+=item 2. B<Test thoroughly on your target platform>
+
+If you must serve files directly from PAGI::Server, test extensively under
+realistic load conditions on your exact production OS and kernel version.
+
+=item 3. B<Consider disabling sendfile>
+
+If you encounter issues, use C<< disable_sendfile => 1 >> to fall back to
+the worker pool method, which is more portable but slightly slower:
+
+    my $server = PAGI::Server->new(
+        app => $app,
+        disable_sendfile => 1,
+    );
+
+=back
+
 =head1 ENABLING TLS SUPPORT
 
 PAGI::Server supports HTTPS/TLS connections, but requires additional modules
