@@ -1123,9 +1123,15 @@ async sub _listen_singleworker {
         my $shutdown_handler = sub {
             return if $shutdown_triggered;
             $shutdown_triggered = 1;
-            $self->shutdown->on_done(sub {
-                $self->loop->stop;
-            })->retain;
+            $self->adopt_future(
+                $self->shutdown->on_done(sub {
+                    $self->loop->stop;
+                })->on_fail(sub {
+                    my ($error) = @_;
+                    $self->_log(error => "Shutdown error: $error");
+                    $self->loop->stop;  # Still stop even on error
+                })
+            );
         };
         $self->loop->watch_signal(TERM => $shutdown_handler);
         $self->loop->watch_signal(INT => $shutdown_handler);
@@ -1403,9 +1409,15 @@ sub _run_as_worker {
         $loop->watch_signal(TERM => sub {
             return if $shutdown_triggered;
             $shutdown_triggered = 1;
-            $worker_server->shutdown->on_done(sub {
-                $loop->stop;
-            })->retain;
+            $worker_server->adopt_future(
+                $worker_server->shutdown->on_done(sub {
+                    $loop->stop;
+                })->on_fail(sub {
+                    my ($error) = @_;
+                    $worker_server->_log(error => "Worker shutdown error: $error");
+                    $loop->stop;  # Still stop even on error
+                })
+            );
         });
     }
 
@@ -1413,7 +1425,7 @@ sub _run_as_worker {
     my $startup_done = 0;
     my $startup_error;
 
-    (async sub {
+    my $startup_future = (async sub {
         eval {
             my $startup_result = await $worker_server->_run_lifespan_startup;
             if (!$startup_result->{success}) {
@@ -1425,7 +1437,10 @@ sub _run_as_worker {
         }
         $startup_done = 1;
         $loop->stop if $startup_error;  # Stop loop on error
-    })->()->retain;
+    })->();
+
+    # Use adopt_future instead of retain
+    $worker_server->adopt_future($startup_future);
 
     # Run the loop briefly to let async startup complete
     $loop->loop_once while !$startup_done;
@@ -1618,9 +1633,15 @@ sub _on_request_complete {
         $self->{_max_requests_shutdown_triggered} = 1;
         $self->_log(info => "Worker $$: reached max_requests ($self->{max_requests}), shutting down");
         # Initiate graceful shutdown (finish current connections, then exit)
-        $self->shutdown->on_done(sub {
-            $self->loop->stop;
-        })->retain;
+        $self->adopt_future(
+            $self->shutdown->on_done(sub {
+                $self->loop->stop;
+            })->on_fail(sub {
+                my ($error) = @_;
+                $self->_log(error => "Worker $$: max_requests shutdown error: $error");
+                $self->loop->stop;  # Still stop even on error
+            })
+        );
     }
 }
 
@@ -1719,7 +1740,8 @@ async sub _run_lifespan_startup {
 
     # Keep the app future so we can trigger shutdown later
     $self->{lifespan_app_future} = $app_future;
-    $app_future->retain;
+    # Use adopt_future instead of retain for proper error handling
+    $self->adopt_future($app_future);
 
     # Wait for startup complete (with timeout)
     my $result = await $startup_complete;
