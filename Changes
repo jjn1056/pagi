@@ -1,7 +1,10 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001006 - 2025-12-24
+  - More broken dist metadata fixes
+
 0.001005 - 2025-12-24
-  - tryinng to get the indexer to ignore my test libs
+  - trying to get the indexer to ignore my test libs
 
 0.001004 - 2025-12-24
   - More fixes to the code that generates the POD version of the specification
