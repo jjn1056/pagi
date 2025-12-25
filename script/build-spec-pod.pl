@@ -75,11 +75,12 @@ for my $file (@SPEC_FILES) {
     close $fh;
 
     # Convert to POD (suppress warnings from Markdown::Pod internals)
+    # Use GitHub dialect for better fenced code block handling
     my $pod;
     {
         local $SIG{__WARN__} = sub { };  # Suppress warnings during conversion
         eval {
-            $pod = $m2p->markdown_to_pod(markdown => $markdown);
+            $pod = $m2p->markdown_to_pod(markdown => $markdown, dialect => 'GitHub');
         };
         if ($@ || !defined $pod) {
             warn "Warning: Failed to convert $file: $@\n";
