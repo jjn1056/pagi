@@ -10,11 +10,7 @@ While work has been done to support asynchronous response handling in PSGI (the 
 
 Considering the above and the fact that similar specifications have existed for several years now for other languages, the time has arrived to create a fully asynchronous webserver gateway interface specification for Perl.
 
----
-
-Perl does not natively support Python’s `async/await` pattern, but we can achieve similar functionality using **Futures** (from `Future.pm`) and **IO::Async** (from `IO::Async::Loop`). Below is how we translate key ASGI components into Perl.
-
----
+Perl does not natively support Python's `async/await` pattern, but we can achieve similar functionality using **Futures** (from `Future.pm`) and **IO::Async** (from `IO::Async::Loop`). Below is how we translate key ASGI components into Perl.
 
 ## Abstract
 
