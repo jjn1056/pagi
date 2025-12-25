@@ -178,12 +178,20 @@ subtest 'Multi-worker terminates on SIGTERM' => sub {
 };
 
 subtest 'No zombie worker processes after shutdown' => sub {
-    # This test uses lsof which may not be available on all systems (e.g., OpenBSD uses fstat)
-    # Skip if lsof is not available or we're in automated testing on non-Linux
+    # This test uses lsof which is unreliable across different environments:
+    # - Not installed on some systems (OpenBSD uses fstat, minimal containers lack it)
+    # - Permission issues in sandboxed/container environments
+    # - Different PATH configurations on CI systems
+    # Skip under automated testing - signal handling is already tested by subtests 1 & 2
+    if ($ENV{AUTOMATED_TESTING} || $ENV{NONINTERACTIVE_TESTING}) {
+        plan skip_all => 'lsof-based test skipped under automated testing';
+        return;
+    }
+
     my $has_lsof = `which lsof 2>/dev/null`;
     chomp($has_lsof);
-    if (!$has_lsof || ($ENV{AUTOMATED_TESTING} && $^O !~ /linux/i)) {
-        plan skip_all => 'lsof not available or unreliable on this platform';
+    if (!$has_lsof) {
+        plan skip_all => 'lsof not available on this system';
         return;
     }
 
