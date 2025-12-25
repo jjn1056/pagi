@@ -354,7 +354,6 @@ sub body_stream {
         receive    => $self->{receive},
         max_bytes  => $max_bytes,
         limit_name => $limit_name,
-        loop       => $opts{loop},
         decode     => $opts{decode},
         strict     => $opts{strict},
     );
@@ -808,7 +807,6 @@ Get a single cookie value.
         max_bytes => 10 * 1024 * 1024,  # 10MB limit
         decode    => 'UTF-8',            # Decode to UTF-8
         strict    => 1,                  # Strict UTF-8 decoding
-        loop      => $loop,              # IO::Async::Loop instance
     );
 
 Returns a L<PAGI::Request::BodyStream> for streaming body consumption. This is
@@ -824,8 +822,6 @@ B<Options:>
 =item * C<decode> - Encoding to decode chunks to (typically 'UTF-8').
 
 =item * C<strict> - If true, throw on invalid UTF-8. Default: false (use replacement chars).
-
-=item * C<loop> - IO::Async::Loop instance for async file operations.
 
 =back
 

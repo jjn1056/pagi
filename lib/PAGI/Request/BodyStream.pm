@@ -83,7 +83,6 @@ you cannot use those methods.
         max_bytes  => 10485760,      # Optional: max body size
         decode     => 'UTF-8',       # Optional: decode to UTF-8
         strict     => 1,             # Optional: strict UTF-8 (croak on invalid)
-        loop       => $loop,         # Optional: IO::Async::Loop instance
         limit_name => 'body_size',   # Optional: name for limit error message
     );
 
@@ -99,9 +98,6 @@ Creates a new body stream.
 
 =item * C<strict> - Optional. If true, throw on invalid UTF-8. If false (default),
 use replacement characters.
-
-=item * C<loop> - Optional. IO::Async::Loop instance for async file operations.
-If not provided, a new loop will be created when needed.
 
 =item * C<limit_name> - Optional. Name to use in error message when max_bytes
 is exceeded (default: 'max_bytes').
@@ -119,7 +115,6 @@ sub new {
         max_bytes     => $args{max_bytes},
         decode        => $args{decode},
         strict        => $args{strict} // 0,
-        loop          => $args{loop},
         limit_name    => $args{limit_name} // 'max_bytes',
         _bytes_read   => 0,
         _done         => 0,
@@ -253,7 +248,7 @@ async sub stream_to_file {
     croak("stream_to_file() cannot be used with decode option - use stream_to() instead")
         if $self->{decode};
 
-    my $loop = $self->{loop} // IO::Async::Loop->new;
+    my $loop = IO::Async::Loop->new;
     my $bytes_written = 0;
 
     # We need to write chunks as we receive them

@@ -25,10 +25,6 @@ have happened.
 
 Thank you, Matt. The Perl community misses you.
 
-=head1 VERSION
-
-Version 0.001002 (Beta)
-
 =head1 SYNOPSIS
 
     # Raw PAGI application
