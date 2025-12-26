@@ -563,32 +563,24 @@ sub _send_json_sync {
 
 __END__
 
-=head1 NAME
+# NAME
 
 ChatApp::WebSocket - WebSocket chat handler with session management
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Handles WebSocket connections for real-time chat functionality.
 Supports session resumption for reliable presence.
 
-=head2 Session Management
+## Session Management
 
 Clients should:
 - Store sessionId in localStorage
 - Send sessionId on reconnection
 - Send lastMsgId for message catch-up
 
-=head2 Connection Parameters
+## Connection Parameters
 
-=over
-
-=item session - Session ID for resume
-
-=item name - Username (for new sessions)
-
-=item lastMsgId - Last received message ID (for catch-up)
-
-=back
-
-=cut
+- **session** - Session ID for resume
+- **name** - Username (for new sessions)
+- **lastMsgId** - Last received message ID (for catch-up)

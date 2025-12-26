@@ -407,29 +407,19 @@ sub _job_summary {
 
 __END__
 
-=head1 NAME
+# NAME
 
 JobRunner::Queue - Job queue state management
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Centralized in-memory storage for all job state. Handles job lifecycle,
 progress tracking, and broadcasting updates to subscribers.
 
-=head2 Job Statuses
+## Job Statuses
 
-=over
-
-=item pending - In queue, waiting to be picked up
-
-=item running - Currently executing
-
-=item completed - Finished successfully
-
-=item failed - Finished with error
-
-=item cancelled - Aborted by user
-
-=back
-
-=cut
+- **pending** - In queue, waiting to be picked up
+- **running** - Currently executing
+- **completed** - Finished successfully
+- **failed** - Finished with error
+- **cancelled** - Aborted by user

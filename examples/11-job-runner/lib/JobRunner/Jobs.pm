@@ -361,26 +361,17 @@ sub _delay {
 
 __END__
 
-=head1 NAME
+# NAME
 
 JobRunner::Jobs - Job type definitions and execution
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Defines available job types, their parameters, and execution logic.
 
-=head2 Job Types
+## Job Types
 
-=over
-
-=item countdown - Count down from N seconds with progress updates
-
-=item prime - Find all prime numbers up to N
-
-=item fibonacci - Calculate Fibonacci sequence up to N terms
-
-=item echo - Echo a message back after a delay
-
-=back
-
-=cut
+- **countdown** - Count down from N seconds with progress updates
+- **prime** - Find all prime numbers up to N
+- **fibonacci** - Calculate Fibonacci sequence up to N terms
+- **echo** - Echo a message back after a delay

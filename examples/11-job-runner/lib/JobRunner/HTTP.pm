@@ -286,32 +286,20 @@ sub _json_response {
 
 __END__
 
-=head1 NAME
+# NAME
 
 JobRunner::HTTP - REST API and static file handler
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Handles HTTP requests for the Job Runner application.
 
-=head2 API Endpoints
+## API Endpoints
 
-=over
-
-=item GET /api/stats - Queue and worker statistics
-
-=item GET /api/job-types - Available job types
-
-=item GET /api/jobs - List all jobs
-
-=item POST /api/jobs - Create a new job
-
-=item GET /api/jobs/:id - Get job details
-
-=item DELETE /api/jobs/:id - Cancel a job
-
-=item POST /api/jobs/clear-completed - Clear finished jobs
-
-=back
-
-=cut
+- **GET /api/stats** - Queue and worker statistics
+- **GET /api/job-types** - Available job types
+- **GET /api/jobs** - List all jobs
+- **POST /api/jobs** - Create a new job
+- **GET /api/jobs/:id** - Get job details
+- **DELETE /api/jobs/:id** - Cancel a job
+- **POST /api/jobs/clear-completed** - Clear finished jobs

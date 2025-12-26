@@ -507,37 +507,24 @@ async sub _broadcast_to_room {
 
 __END__
 
-=head1 NAME
+# NAME
 
 ChatApp::WebSocket - WebSocket chat handler using PAGI::WebSocket
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 This module handles WebSocket connections for real-time chat using the
 PAGI::WebSocket convenience wrapper. Compare with the original at
-C<examples/10-chat-showcase/lib/ChatApp/WebSocket.pm> to see how
+`examples/10-chat-showcase/lib/ChatApp/WebSocket.pm` to see how
 PAGI::WebSocket simplifies the code.
 
-=head2 Key Improvements
+## Key Improvements
 
-=over
+- **No manual protocol handling** - `$ws->accept` replaces waiting for websocket.connect and sending websocket.accept
+- **Clean disconnect handling** - `$ws->on_close` callback runs on any disconnect, no need to handle websocket.disconnect in the message loop
+- **JSON methods** - `$ws->send_json` and `$ws->each_json` handle encoding/decoding automatically
+- **try_send_json** - Safe send that returns false on closed connection instead of throwing
 
-=item * B<No manual protocol handling> - C<< $ws->accept >> replaces waiting for
-websocket.connect and sending websocket.accept
+# SEE ALSO
 
-=item * B<Clean disconnect handling> - C<< $ws->on_close >> callback runs on any
-disconnect, no need to handle websocket.disconnect in the message loop
-
-=item * B<JSON methods> - C<< $ws->send_json >> and C<< $ws->each_json >> handle
-encoding/decoding automatically
-
-=item * B<try_send_json> - Safe send that returns false on closed connection
-instead of throwing
-
-=back
-
-=head1 SEE ALSO
-
-L<PAGI::WebSocket>, L<examples/10-chat-showcase/lib/ChatApp/WebSocket.pm>
-
-=cut
+PAGI::WebSocket, examples/10-chat-showcase/lib/ChatApp/WebSocket.pm

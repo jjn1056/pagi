@@ -153,27 +153,27 @@ sub _execute_job_async {
 
 __END__
 
-=head1 NAME
+# NAME
 
 JobRunner::Worker - Async job execution engine
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Polls the job queue and executes jobs asynchronously up to a configurable
 concurrency limit.
 
-=head2 Usage
+## Usage
 
-    use JobRunner::Worker qw(start_worker stop_worker get_worker_stats);
+```perl
+use JobRunner::Worker qw(start_worker stop_worker get_worker_stats);
 
-    # Start worker with max 3 concurrent jobs
-    start_worker($loop, 3);
+# Start worker with max 3 concurrent jobs
+start_worker($loop, 3);
 
-    # Get worker status
-    my $stats = get_worker_stats();
-    # { active => 2, capacity => 3, processed => 15, is_running => 1 }
+# Get worker status
+my $stats = get_worker_stats();
+# { active => 2, capacity => 3, processed => 15, is_running => 1 }
 
-    # Stop worker (wait for current jobs to finish)
-    stop_worker();
-
-=cut
+# Stop worker (wait for current jobs to finish)
+stop_worker();
+```

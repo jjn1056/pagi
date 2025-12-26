@@ -209,34 +209,17 @@ async sub _send_500 {
 
 __END__
 
-=head1 NAME
+# NAME
 
 ChatApp::HTTP - HTTP request handler for the chat application
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Handles HTTP requests including static file serving and API endpoints.
 
-=head2 API Endpoints
+## API Endpoints
 
-=over
-
-=item GET /api/rooms
-
-Returns list of all rooms with user counts.
-
-=item GET /api/room/:name/history
-
-Returns message history for a room.
-
-=item GET /api/room/:name/users
-
-Returns list of users in a room.
-
-=item GET /api/stats
-
-Returns server statistics.
-
-=back
-
-=cut
+- **GET /api/rooms** - Returns list of all rooms with user counts.
+- **GET /api/room/:name/history** - Returns message history for a room.
+- **GET /api/room/:name/users** - Returns list of users in a room.
+- **GET /api/stats** - Returns server statistics.

@@ -234,54 +234,31 @@ async sub _send_json {
 
 __END__
 
-=head1 NAME
+# NAME
 
 JobRunner::WebSocket - Real-time queue management via WebSocket
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Provides real-time queue updates and admin commands via WebSocket.
 
-=head2 Server -> Client Messages
+## Server -> Client Messages
 
-=over
+- **queue_state** - Full queue state on connect
+- **job_created** - New job added to queue
+- **job_started** - Job started executing
+- **job_progress** - Job progress update
+- **job_completed** - Job completed successfully
+- **job_failed** - Job failed
+- **job_cancelled** - Job was cancelled
+- **jobs_cleared** - Completed jobs cleared
+- **ping** - Server heartbeat
 
-=item queue_state - Full queue state on connect
+## Client -> Server Messages
 
-=item job_created - New job added to queue
-
-=item job_started - Job started executing
-
-=item job_progress - Job progress update
-
-=item job_completed - Job completed successfully
-
-=item job_failed - Job failed
-
-=item job_cancelled - Job was cancelled
-
-=item jobs_cleared - Completed jobs cleared
-
-=item ping - Server heartbeat
-
-=back
-
-=head2 Client -> Server Messages
-
-=over
-
-=item create_job - Create new job { job_type, params }
-
-=item cancel_job - Cancel job { job_id }
-
-=item clear_completed - Clear completed jobs
-
-=item get_state - Request full state
-
-=item get_job_types - Request job types
-
-=item ping/pong - Heartbeat
-
-=back
-
-=cut
+- **create_job** - Create new job { job_type, params }
+- **cancel_job** - Cancel job { job_id }
+- **clear_completed** - Clear completed jobs
+- **get_state** - Request full state
+- **get_job_types** - Request job types
+- **ping/pong** - Heartbeat

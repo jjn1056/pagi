@@ -176,32 +176,22 @@ async sub _send_final_event {
 
 __END__
 
-=head1 NAME
+# NAME
 
 JobRunner::SSE - Server-Sent Events for job progress streaming
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Provides real-time progress streaming for individual jobs via SSE.
 
-=head2 Endpoint
+## Endpoint
 
 GET /api/jobs/:id/progress
 
-=head2 Events
+## Events
 
-=over
-
-=item status - Initial job status on connection
-
-=item progress - Progress update { percent, message }
-
-=item complete - Job completed successfully { status, result, duration }
-
-=item failed - Job failed { status, error }
-
-=item cancelled - Job was cancelled { status }
-
-=back
-
-=cut
+- **status** - Initial job status on connection
+- **progress** - Progress update { percent, message }
+- **complete** - Job completed successfully { status, result, duration }
+- **failed** - Job failed { status, error }
+- **cancelled** - Job was cancelled { status }

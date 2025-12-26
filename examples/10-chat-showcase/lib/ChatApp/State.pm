@@ -508,11 +508,11 @@ init_default_rooms();
 
 __END__
 
-=head1 NAME
+# NAME
 
 ChatApp::State - Shared state management for the chat application
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 This module manages all shared state for the multi-user chat application,
 including sessions (users), rooms, messages, and SSE subscribers.
@@ -521,5 +521,3 @@ Key features:
 - Session-based identity (persists across reconnections)
 - 30-second grace period before broadcasting "user left"
 - Message catch-up support for reconnections
-
-=cut

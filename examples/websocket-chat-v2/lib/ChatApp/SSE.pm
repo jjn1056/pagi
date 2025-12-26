@@ -164,43 +164,23 @@ async sub _send_stats {
 
 __END__
 
-=head1 NAME
+# NAME
 
 ChatApp::SSE - Server-Sent Events handler for system notifications
 
-=head1 DESCRIPTION
+# DESCRIPTION
 
 Handles SSE connections for real-time system-wide event broadcasting.
 
-=head2 Event Types
+## Event Types
 
-=over
+- **user_connected** - A user has connected to the chat.
+- **user_disconnected** - A user has disconnected from the chat.
+- **room_created** - A new room has been created.
+- **room_deleted** - An empty room has been deleted.
+- **stats** - Server statistics (sent every 10 seconds).
 
-=item user_connected
+## Catch-Up Support
 
-A user has connected to the chat.
-
-=item user_disconnected
-
-A user has disconnected from the chat.
-
-=item room_created
-
-A new room has been created.
-
-=item room_deleted
-
-An empty room has been deleted.
-
-=item stats
-
-Server statistics (sent every 10 seconds).
-
-=back
-
-=head2 Catch-Up Support
-
-Clients can send the C<Last-Event-ID> header to receive missed events
+Clients can send the `Last-Event-ID` header to receive missed events
 since the specified ID.
-
-=cut
