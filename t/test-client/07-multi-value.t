@@ -315,6 +315,40 @@ subtest 'sse - with multi-value headers' => sub {
     });
 };
 
+# Regression test: headers as arrayref with form should not crash
+subtest 'form with headers as arrayref of pairs' => sub {
+    my $client = PAGI::Test::Client->new(app => $echo_app);
+    my $res = $client->post('/submit',
+        headers => [['X-Custom', 'value1'], ['X-Other', 'value2']],
+        form => { name => 'John' },
+    );
+
+    my $data = $res->json;
+    is($data->{body}, 'name=John', 'form body encoded correctly');
+    my @custom = find_headers($data->{headers}, 'x-custom');
+    my @other = find_headers($data->{headers}, 'x-other');
+    is(\@custom, ['value1'], 'custom header preserved');
+    is(\@other, ['value2'], 'other header preserved');
+    # Content-Type should be added
+    my @ct = find_headers($data->{headers}, 'content-type');
+    is(\@ct, ['application/x-www-form-urlencoded'], 'content-type header added');
+};
+
+# Regression test: headers as arrayref with json should not crash
+subtest 'json with headers as arrayref of pairs' => sub {
+    my $client = PAGI::Test::Client->new(app => $echo_app);
+    my $res = $client->post('/api',
+        headers => [['X-Auth', 'token123']],
+        json => { key => 'value' },
+    );
+
+    my $data = $res->json;
+    my @auth = find_headers($data->{headers}, 'x-auth');
+    is(\@auth, ['token123'], 'auth header preserved');
+    my @ct = find_headers($data->{headers}, 'content-type');
+    is(\@ct, ['application/json'], 'content-type header added');
+};
+
 subtest 'invalid input - not hash or arrayref' => sub {
     my $client = PAGI::Test::Client->new(app => $echo_app);
 

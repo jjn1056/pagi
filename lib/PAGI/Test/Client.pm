@@ -62,9 +62,8 @@ sub _request {
     if (exists $opts{json}) {
         require JSON::MaybeXS;
         $opts{body} = JSON::MaybeXS::encode_json($opts{json});
-        $opts{headers} //= {};
-        $opts{headers}{'Content-Type'} //= 'application/json';
-        $opts{headers}{'Content-Length'} = length($opts{body});
+        _set_header(\$opts{headers}, 'Content-Type', 'application/json', 0);
+        _set_header(\$opts{headers}, 'Content-Length', length($opts{body}), 1);
     }
     # Handle form option (supports multi-value)
     elsif (exists $opts{form}) {
@@ -76,14 +75,12 @@ sub _request {
             push @encoded, "$key=$val";
         }
         $opts{body} = join('&', @encoded);
-        $opts{headers} //= {};
-        $opts{headers}{'Content-Type'} //= 'application/x-www-form-urlencoded';
-        $opts{headers}{'Content-Length'} = length($opts{body});
+        _set_header(\$opts{headers}, 'Content-Type', 'application/x-www-form-urlencoded', 0);
+        _set_header(\$opts{headers}, 'Content-Length', length($opts{body}), 1);
     }
     # Add Content-Length for raw body if not already set
     elsif (defined $opts{body}) {
-        $opts{headers} //= {};
-        $opts{headers}{'Content-Length'} //= length($opts{body});
+        _set_header(\$opts{headers}, 'Content-Length', length($opts{body}), 0);
     }
 
     # Build scope
@@ -452,6 +449,40 @@ sub _url_encode {
 # Normalize various input formats to arrayref of [key, value] pairs.
 # Supports:
 #   - Hash with scalar values: { key => 'value' }
+# Set a header on a headers structure (hashref or arrayref of pairs).
+# If $replace is true, replaces existing value. Otherwise only sets if not present.
+sub _set_header {
+    my ($headers_ref, $name, $value, $replace) = @_;
+    $replace //= 0;
+
+    if (!defined $$headers_ref) {
+        $$headers_ref = { $name => $value };
+        return;
+    }
+
+    if (ref($$headers_ref) eq 'HASH') {
+        if ($replace) {
+            $$headers_ref->{$name} = $value;
+        } else {
+            $$headers_ref->{$name} //= $value;
+        }
+    } elsif (ref($$headers_ref) eq 'ARRAY') {
+        # Check if header already exists (case-insensitive)
+        my $found_idx;
+        for my $i (0 .. $#{$$headers_ref}) {
+            if (lc($$headers_ref->[$i][0]) eq lc($name)) {
+                $found_idx = $i;
+                last;
+            }
+        }
+        if (defined $found_idx) {
+            $$headers_ref->[$found_idx][1] = $value if $replace;
+        } else {
+            push @{$$headers_ref}, [$name, $value];
+        }
+    }
+}
+
 #   - Hash with arrayref values: { key => ['v1', 'v2'] }
 #   - Arrayref of pairs: [['key', 'v1'], ['key', 'v2']]
 # Returns arrayref of [key, value] pairs.
