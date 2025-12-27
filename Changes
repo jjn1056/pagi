@@ -4,8 +4,6 @@
   - BREAKING: Removed sendfile() from PAGI::Server - use PAGI::Middleware::XSendfile
     with nginx/Apache X-Sendfile/X-Accel-Redirect instead for large file serving
   - Added handle_ranges option to PAGI::App::File for byte-range request support
-  - Fixed multi-worker Ctrl-C handling: lifespan.shutdown now runs for all workers
-    (workers ignore SIGINT so parent can coordinate graceful shutdown via SIGTERM)
   - Added FreeBSD CI testing
   - Documentation fixes for phantom module references
 
