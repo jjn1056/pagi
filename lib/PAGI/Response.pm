@@ -273,7 +273,18 @@ Send a JSON response with Content-Type: application/json; charset=utf-8.
     await $res->redirect('/login');
     await $res->redirect('/new-url', 301);
 
-Send a redirect response. Default status is 302.
+Send a redirect response with an empty body. Default status is 302.
+
+B<Note:> This method sends the response but does NOT stop Perl execution.
+Use C<return> after redirect if you have more code below:
+
+    await $res->redirect('/login');
+    return;  # Important! Code below would still run otherwise
+
+B<Why no body?> While RFC 7231 suggests including a short HTML body with a
+hyperlink for clients that don't auto-follow redirects, all modern browsers
+and HTTP clients ignore redirect bodies. If you need a body for legacy
+compatibility, use the lower-level C<$send-E<gt>()> calls directly.
 
 =head2 empty
 
