@@ -867,6 +867,96 @@ See the C<ssl> option in L</CONSTRUCTOR> for details on:
 
 =back
 
+=head1 SIGNAL HANDLING
+
+PAGI::Server responds to Unix signals for process management. Signal behavior
+differs between single-worker and multi-worker modes.
+
+=head2 Supported Signals
+
+=over 4
+
+=item B<SIGTERM> - Graceful shutdown
+
+Initiates graceful shutdown. The server stops accepting new connections,
+waits for active requests to complete (up to C<shutdown_timeout> seconds),
+then exits. In multi-worker mode, SIGTERM is forwarded to all workers.
+
+    kill -TERM <pid>
+
+=item B<SIGINT> - Graceful shutdown (Ctrl-C)
+
+Same behavior as SIGTERM. Triggered by Ctrl-C in the terminal. In multi-worker
+mode, the parent process catches SIGINT and coordinates shutdown of all workers
+to ensure proper lifespan.shutdown handling.
+
+    kill -INT <pid>
+    # or press Ctrl-C in terminal
+
+=item B<SIGHUP> - Graceful restart (multi-worker only)
+
+Performs a zero-downtime restart by spawning new workers before terminating
+old ones. Useful for deploying new code without dropping connections.
+
+    kill -HUP <pid>
+
+In single-worker mode, SIGHUP is logged but ignored (no graceful restart
+possible without multiple workers).
+
+=item B<SIGTTIN> - Increase worker count (multi-worker only)
+
+Spawns an additional worker process. Use this to scale up capacity dynamically.
+
+    kill -TTIN <pid>
+
+=item B<SIGTTOU> - Decrease worker count (multi-worker only)
+
+Gracefully terminates one worker process. The minimum worker count is 1;
+sending SIGTTOU when only one worker remains has no effect.
+
+    kill -TTOU <pid>
+
+=back
+
+=head2 Signal Handling in Multi-Worker Mode
+
+When running with C<< workers => N >> (where N > 1):
+
+=over 4
+
+=item * Parent process manages the worker pool
+
+=item * Workers handle requests; parent handles signals
+
+=item * SIGTERM/SIGINT to parent triggers coordinated shutdown of all workers
+
+=item * Each worker runs lifespan.shutdown before exiting
+
+=item * Workers that crash are automatically respawned
+
+=back
+
+=head2 Examples
+
+B<Zero-downtime deployment:>
+
+    # Deploy new code, then signal graceful restart
+    kill -HUP $(cat /var/run/pagi.pid)
+
+B<Scale workers based on load:>
+
+    # Add workers during peak hours
+    kill -TTIN $(cat /var/run/pagi.pid)
+    kill -TTIN $(cat /var/run/pagi.pid)
+
+    # Remove workers during quiet periods
+    kill -TTOU $(cat /var/run/pagi.pid)
+
+B<Graceful shutdown for maintenance:>
+
+    # Stop accepting new connections, drain existing ones
+    kill -TERM $(cat /var/run/pagi.pid)
+
 =cut
 
 sub _init {
