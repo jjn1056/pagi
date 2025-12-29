@@ -20,7 +20,14 @@
 use strict;
 use warnings;
 use Future::AsyncAwait;
-use Future::IO;
+
+# Try to load Future::IO for loop-agnostic sleep, fall back to immediate if not available
+my $HAS_FUTURE_IO = eval { require Future::IO; 1 };
+
+sub maybe_sleep {
+    my ($seconds) = @_;
+    return $HAS_FUTURE_IO ? Future::IO->sleep($seconds) : Future->done;
+}
 
 use PAGI::App::Router;
 use PAGI::Response;
@@ -44,7 +51,7 @@ async sub send_welcome_email {
 
     # This is NON-BLOCKING - yields to event loop while "waiting"
     # In real code: await $http_client->post_async($email_api, ...)
-    await Future::IO->sleep(2);
+    await maybe_sleep(2);
 
     warn "[async] Email sent to $email!\n";
 }
@@ -53,7 +60,7 @@ async sub send_welcome_email {
 async sub log_to_analytics {
     my ($event, $data) = @_;
     warn "[async] Logging '$event' to analytics...\n";
-    await Future::IO->sleep(1);
+    await maybe_sleep(1);
     warn "[async] Analytics logged!\n";
 }
 

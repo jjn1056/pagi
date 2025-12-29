@@ -1,7 +1,14 @@
 use strict;
 use warnings;
 use Future::AsyncAwait;
-use Future::IO;
+
+# Try to load Future::IO for loop-agnostic sleep, fall back to immediate if not available
+my $HAS_FUTURE_IO = eval { require Future::IO; 1 };
+
+sub maybe_sleep {
+    my ($seconds) = @_;
+    return $HAS_FUTURE_IO ? Future::IO->sleep($seconds) : Future->done;
+}
 
 async sub watch_sse_disconnect {
     my ($receive) = @_;
@@ -32,7 +39,7 @@ async sub app {
 
     for my $msg (@events) {
         last if $disconnect->is_ready;
-        await Future::IO->sleep(1);
+        await maybe_sleep(1);
         await $send->({ type => 'sse.send', %$msg });
     }
 
