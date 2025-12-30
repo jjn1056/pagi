@@ -27,12 +27,13 @@ sub new {
     return $scope->{'pagi.sse'} if $scope->{'pagi.sse'};
 
     my $self = bless {
-        scope     => $scope,
-        receive   => $receive,
-        send      => $send,
-        _state    => 'pending',  # pending -> started -> closed
-        _on_close => [],
-        _on_error => [],
+        scope             => $scope,
+        receive           => $receive,
+        send              => $send,
+        _state            => 'pending',  # pending -> started -> closed
+        _on_close         => [],
+        _on_error         => [],
+        _disconnect_reason => undef,     # Set when disconnect received
     }, $class;
 
     # Cache in scope for reuse (weakened to avoid circular reference leak)
@@ -89,6 +90,13 @@ sub is_started {
 sub is_closed {
     my $self = shift;
     return $self->{_state} eq 'closed';
+}
+
+# Disconnect reason - why the connection closed
+# Common values: 'client_closed', 'write_error', 'send_timeout', 'idle_timeout'
+sub disconnect_reason {
+    my $self = shift;
+    return $self->{_disconnect_reason};
 }
 
 # Internal state setters
@@ -361,9 +369,11 @@ async sub _run_close_callbacks {
     return if $self->{_close_callbacks_ran};
     $self->{_close_callbacks_ran} = 1;
 
+    my $reason = $self->{_disconnect_reason} // 'unknown';
+
     for my $cb (@{$self->{_on_close}}) {
         eval {
-            my $r = $cb->($self);
+            my $r = $cb->($self, $reason);
             if (blessed($r) && $r->isa('Future')) {
                 await $r;
             }
@@ -397,6 +407,7 @@ async sub run {
         my $type = $event->{type} // '';
 
         if ($type eq 'sse.disconnect') {
+            $self->{_disconnect_reason} = $event->{reason} // 'client_closed';
             $self->_set_closed;
             await $self->_run_close_callbacks;
             last;
@@ -509,8 +520,11 @@ sub _watch_for_disconnect {
 
             my $type = $event->{type} // '';
             if ($type eq 'sse.disconnect') {
-                $weak_self->_set_closed if $weak_self;
-                await $weak_self->_run_close_callbacks if $weak_self;
+                if ($weak_self) {
+                    $weak_self->{_disconnect_reason} = $event->{reason} // 'client_closed';
+                    $weak_self->_set_closed;
+                    await $weak_self->_run_close_callbacks;
+                }
                 last;
             }
         }
@@ -539,9 +553,11 @@ PAGI::SSE - Convenience wrapper for PAGI Server-Sent Events connections
         # Enable keepalive for proxy compatibility
         await $sse->keepalive(25);
 
-        # Cleanup on disconnect
+        # Cleanup on disconnect - with reason for logging
         $sse->on_close(sub {
+            my ($sse, $reason) = @_;
             remove_subscriber($sse->stash->{sub_id});
+            log_disconnect($reason);  # 'client_closed', 'write_error', etc.
         });
 
         # Handle reconnection
@@ -698,6 +714,26 @@ handler to keep the connection open.
     if ($sse->is_closed) { ... }
     my $state = $sse->connection_state;    # 'pending', 'started', 'closed'
 
+=head2 disconnect_reason
+
+    my $reason = $sse->disconnect_reason;
+
+Returns the reason for disconnect, if available. Common values:
+
+=over 4
+
+=item * C<client_closed> - Client closed connection normally
+
+=item * C<write_error> - Failed to write data (network error)
+
+=item * C<send_timeout> - Send operation timed out
+
+=item * C<idle_timeout> - Connection closed due to inactivity
+
+=back
+
+Returns C<undef> if connection is still open or reason is unknown.
+
 =head1 SEND METHODS
 
 =head2 send
@@ -806,12 +842,28 @@ closed and on_close callbacks are run.
 =head2 on_close
 
     $sse->on_close(sub {
-        my ($sse) = @_;
-        cleanup_resources();
+        my ($sse, $reason) = @_;
+        if ($reason eq 'client_closed') {
+            # Normal disconnect
+            cleanup_resources();
+        } else {
+            # Error condition
+            log_error("Unexpected disconnect: $reason");
+        }
     });
 
 Registers cleanup callback. Runs on disconnect or close().
 Multiple callbacks run in registration order.
+
+Callbacks receive two arguments:
+
+=over 4
+
+=item * C<$sse> - The SSE connection object
+
+=item * C<$reason> - Why the connection closed (see L</disconnect_reason>)
+
+=back
 
 =head2 on_error
 
@@ -847,7 +899,11 @@ Registers error callback.
         });
 
         $sse->on_close(sub {
+            my ($sse, $reason) = @_;
             unsubscribe_metrics($sub_id);
+            # Log abnormal disconnects for debugging
+            warn "SSE client disconnected: $reason"
+                unless $reason eq 'client_closed';
         });
 
         await $sse->run;

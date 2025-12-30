@@ -182,7 +182,7 @@ async sub home {
 
             sse.addEventListener('metrics', (e) => {
                 const data = JSON.parse(e.data);
-                logSse('Metrics: requests=' + data.requests + ' ws_active=' + data.ws_active + ' seq=' + data.sse_seq, 'event');
+                logSse('Metrics: requests=' + data.requests + ' ws_active=' + data.ws_active + ' ws_msgs=' + (data.ws_messages || 0) + ' seq=' + data.sse_seq, 'event');
             });
 
             sse.onerror = () => {
@@ -330,6 +330,14 @@ async sub sse_metrics {
 
     # Enable keepalive to prevent proxy timeouts
     await $sse->keepalive(15);
+
+    # Log disconnect reason - useful for debugging connection issues
+    $sse->on_close(sub {
+        my ($sse, $reason) = @_;
+        # In production, you might track this in metrics or logs
+        warn "SSE client disconnected: $reason\n"
+            unless $reason eq 'client_closed';  # Only log unexpected disconnects
+    });
 
     # Send metrics every 2 seconds using loop-agnostic every()
     # Requires Future::IO to be installed

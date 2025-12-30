@@ -498,6 +498,40 @@ B<CLI:> C<--max-requests 10000>
 Example: With 4 workers and max_requests=10000, total capacity before any
 restart is 40,000 requests. Workers restart individually without downtime.
 
+=item timeout => $seconds
+
+Connection idle timeout in seconds. Closes connections that are idle between
+requests (applies to keep-alive connections waiting for the next request).
+
+B<Default:> 60
+
+B<Performance note:> Each connection with a non-zero timeout creates a timer
+that is reset on every read event. For maximum throughput in high-performance
+scenarios, set C<timeout =E<gt> 0> to disable the idle timer entirely. This
+eliminates timer management overhead but means idle connections will never
+be automatically closed.
+
+B<Example:>
+
+    # Disable idle timeout for maximum performance
+    my $server = PAGI::Server->new(
+        app     => $app,
+        timeout => 0,
+    );
+
+    # Short timeout to reclaim connections quickly
+    my $server = PAGI::Server->new(
+        app     => $app,
+        timeout => 30,
+    );
+
+B<CLI:> C<--timeout 0> or C<--timeout 30>
+
+B<Note:> This differs from C<request_timeout> (stall timeout during active
+request processing). The C<timeout> applies between requests; the
+C<request_timeout> applies during a request. For WebSocket and SSE, use
+C<ws_idle_timeout> and C<sse_idle_timeout> respectively.
+
 =item request_timeout => $seconds
 
 Maximum time in seconds a request can stall without any I/O activity before

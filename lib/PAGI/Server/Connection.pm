@@ -137,6 +137,7 @@ sub new {
         # SSE state
         sse_mode          => 0,
         sse_started       => 0,
+        sse_disconnect_reason => undef,  # Reason for SSE disconnect (client_closed, write_error, etc.)
         # Keepalive state (protocol-level ping/pong for WebSocket, comments for SSE)
         ws_keepalive_timer  => undef,  # Periodic timer for sending WebSocket pings
         ws_pong_timeout     => undef,  # Timeout timer for pong response
@@ -390,6 +391,7 @@ sub _start_sse_idle_timer {
                 $weak_self->{server}->_log(warn =>
                     "SSE idle timeout ($weak_self->{sse_idle_timeout}s) - closing connection");
             }
+            $weak_self->{sse_disconnect_reason} = 'idle_timeout';
             $weak_self->_close;
         },
     );
@@ -1245,7 +1247,10 @@ sub _handle_disconnect {
     if ($self->{websocket_mode}) {
         $disconnect_event = { type => 'websocket.disconnect', code => 1006, reason => '' };
     } elsif ($self->{sse_mode}) {
-        $disconnect_event = { type => 'sse.disconnect' };
+        $disconnect_event = {
+            type   => 'sse.disconnect',
+            reason => $self->{sse_disconnect_reason} // 'client_closed',
+        };
     } else {
         $disconnect_event = { type => 'http.disconnect' };
     }
@@ -1326,7 +1331,10 @@ sub _close {
     if ($self->{websocket_mode}) {
         $disconnect_event = { type => 'websocket.disconnect', code => 1006, reason => '' };
     } elsif ($self->{sse_mode}) {
-        $disconnect_event = { type => 'sse.disconnect' };
+        $disconnect_event = {
+            type   => 'sse.disconnect',
+            reason => $self->{sse_disconnect_reason} // 'client_closed',
+        };
     } else {
         $disconnect_event = { type => 'http.disconnect' };
     }
@@ -1581,16 +1589,24 @@ sub _create_sse_receive {
 
     weaken(my $weak_self = $self);
 
+    # Helper to create SSE disconnect event with reason
+    my $sse_disconnect = sub {
+        return {
+            type   => 'sse.disconnect',
+            reason => ($weak_self ? $weak_self->{sse_disconnect_reason} : undef) // 'client_closed',
+        };
+    };
+
     return sub {
-        return Future->done({ type => 'sse.disconnect' })
+        return Future->done($sse_disconnect->())
             unless $weak_self;
-        return Future->done({ type => 'sse.disconnect' })
+        return Future->done($sse_disconnect->())
             if $weak_self->{closed};
 
         my $future = (async sub {
-            return { type => 'sse.disconnect' }
+            return $sse_disconnect->()
                 unless $weak_self;
-            return { type => 'sse.disconnect' }
+            return $sse_disconnect->()
                 if $weak_self->{closed};
 
             # Check queue first
@@ -1615,7 +1631,7 @@ sub _create_sse_receive {
                     }
                 }
 
-                return { type => 'sse.disconnect' } if $weak_self->{closed};
+                return $sse_disconnect->() if $weak_self->{closed};
 
                 # Read available data up to remaining
                 my $to_read = $remaining < length($weak_self->{buffer})
@@ -1651,7 +1667,7 @@ sub _create_sse_receive {
                     return shift @{$weak_self->{receive_queue}};
                 }
 
-                return { type => 'sse.disconnect' }
+                return $sse_disconnect->()
                     if $weak_self->{closed};
 
                 if (!$weak_self->{receive_pending}) {
