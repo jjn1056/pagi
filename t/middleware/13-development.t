@@ -196,6 +196,35 @@ subtest 'Lint middleware - strict mode throws' => sub {
     ok $died || $err_msg =~ /Lint/, 'strict mode throws or catches error';
 };
 
+subtest 'Lint middleware - preserves original error with lint context' => sub {
+    my $lint = PAGI::Middleware::Lint->new(strict => 1);
+
+    my $app = async sub  {
+        my ($scope, $receive, $send) = @_;
+        die "Original app error: something broke\n";
+    };
+
+    my $wrapped = $lint->wrap($app);
+    my $scope = make_scope();
+
+    my $err_msg = '';
+    eval {
+        $loop->await(
+            $wrapped->($scope, async sub { {} }, async sub { })->else(sub {
+                my ($failure) = @_;
+                $err_msg = $failure;
+                return Future->done;
+            })
+        );
+    };
+    $err_msg = $@ if $@ && !$err_msg;
+
+    like $err_msg, qr/Original app error: something broke/,
+        'original error message preserved';
+    like $err_msg, qr/Lint note:.*http\.response\.start/,
+        'lint context included';
+};
+
 subtest 'Lint middleware - accepts valid response' => sub {
     my @warnings;
     my $lint = PAGI::Middleware::Lint->new(

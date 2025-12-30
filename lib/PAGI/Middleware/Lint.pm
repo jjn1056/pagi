@@ -116,7 +116,18 @@ sub wrap {
         };
         my $err = $@;
 
-        # Post-completion checks
+        # If app threw an error, prioritize it but add lint context
+        if ($err) {
+            my $lint_context = "";
+            if ($scope->{type} eq 'http' && !$response_started) {
+                $lint_context = "\n(Lint note: app exited without sending http.response.start)";
+            } elsif ($scope->{type} eq 'http' && $response_started && !$response_finished) {
+                $lint_context = "\n(Lint note: app exited without sending final http.response.body)";
+            }
+            die "$err$lint_context";
+        }
+
+        # Post-completion checks (only if app completed without throwing)
         if ($scope->{type} eq 'http') {
             if (!$response_started) {
                 $self->_warn(
@@ -133,8 +144,6 @@ sub wrap {
                 );
             }
         }
-
-        die $err if $err;
     };
 }
 
