@@ -331,16 +331,16 @@ async sub sse_metrics {
     # Enable keepalive to prevent proxy timeouts
     await $sse->keepalive(15);
 
-    # For periodic updates, use your event loop directly:
-    # my $loop = IO::Async::Loop->new;
-    # while (!$sse->is_closed) {
-    #     $metrics->{sse_seq}++;
-    #     await $sse->send_event(event => 'metrics', data => $metrics, id => $metrics->{sse_seq});
-    #     await $loop->delay_future(after => 2);
-    # }
-
-    # Or use pub/sub to push updates when data changes
-    await $sse->run;  # Wait for disconnect
+    # Send metrics every 2 seconds using loop-agnostic every()
+    # Requires Future::IO to be installed
+    await $sse->every(2, async sub {
+        $metrics->{sse_seq}++;
+        await $sse->send_event(
+            event => 'metrics',
+            data  => $metrics,
+            id    => $metrics->{sse_seq},
+        );
+    });
 }
 
 1;

@@ -447,6 +447,76 @@ async sub each {
     return $self;
 }
 
+# Periodic callback execution with interval delay
+# Requires Future::IO to be installed
+async sub every {
+    my ($self, $interval, $callback) = @_;
+
+    croak "every() requires interval" unless defined $interval && $interval > 0;
+    croak "every() requires callback coderef" unless ref $callback eq 'CODE';
+
+    # Future::IO is required for every() - fail clearly if not available
+    eval { require Future::IO; 1 }
+        or croak "every() requires Future::IO to be installed. "
+               . "Install it with: cpanm Future::IO";
+
+    await $self->start unless $self->is_started;
+
+    # Start background disconnect monitor
+    my $disconnect_future = $self->_watch_for_disconnect;
+
+    while (!$self->is_closed) {
+        # Execute the callback
+        my $ok = eval { await $callback->(); 1 };
+        unless ($ok) {
+            my $err = $@;
+            # Callback failed - connection likely closed or error occurred
+            $self->_set_closed;
+            await $self->_run_close_callbacks;
+            last;
+        }
+
+        # Race between sleep and disconnect detection
+        my $sleep_future = Future::IO->sleep($interval);
+        my $winner = await Future->wait_any($sleep_future, $disconnect_future);
+
+        # If disconnect won, exit the loop
+        if ($self->is_closed) {
+            $sleep_future->cancel if $sleep_future->can('cancel') && !$sleep_future->is_ready;
+            last;
+        }
+    }
+
+    # Clean up disconnect monitor if still running
+    $disconnect_future->cancel if $disconnect_future->can('cancel') && !$disconnect_future->is_ready;
+
+    return $self;
+}
+
+# Background future that completes when disconnect is detected
+sub _watch_for_disconnect {
+    my ($self) = @_;
+
+    my $receive = $self->{receive};
+    require Scalar::Util;
+    my $weak_self = $self;
+    Scalar::Util::weaken($weak_self);
+
+    return (async sub {
+        while ($weak_self && !$weak_self->is_closed) {
+            my $event = eval { await $receive->() };
+            last unless $event;
+
+            my $type = $event->{type} // '';
+            if ($type eq 'sse.disconnect') {
+                $weak_self->_set_closed if $weak_self;
+                await $weak_self->_run_close_callbacks if $weak_self;
+                last;
+            }
+        }
+    })->();
+}
+
 1;
 
 __END__
@@ -700,6 +770,36 @@ The server manages the timer internally - this method is loop-agnostic.
 
 Iterates over items, calling callback for each.
 If callback returns a hashref, sends it as an event.
+
+=head2 every
+
+    # Send metrics every 2 seconds
+    await $sse->every(2, async sub {
+        await $sse->send_event(
+            event => 'metrics',
+            data  => get_current_metrics(),
+        );
+    });
+
+Periodically executes a callback with a delay between iterations.
+The loop continues until the connection closes or the callback throws.
+
+B<Requires Future::IO> - this method will C<croak> if Future::IO is not
+installed. Install with: C<cpanm Future::IO>
+
+Parameters:
+
+=over 4
+
+=item * C<$interval> - Seconds between iterations (required, must be > 0)
+
+=item * C<$callback> - Async coderef to execute (required)
+
+=back
+
+The callback is executed first, then the method sleeps for the interval
+before the next iteration. If the callback throws, the connection is
+closed and on_close callbacks are run.
 
 =head1 EVENT CALLBACKS
 
