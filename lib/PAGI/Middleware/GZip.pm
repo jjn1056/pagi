@@ -72,10 +72,14 @@ sub wrap {
         }
 
         # Buffer response to compress
+        # NOTE: All request-specific state MUST be lexical variables, not instance
+        # state ($self->{}), because middleware instances are shared across
+        # concurrent requests. Using $self->{} would cause race conditions.
         my @body_parts;
         my $response_started = 0;
         my $content_type = '';
         my $original_headers;
+        my $headers_sent = 0;  # Request-local state (NOT on $self!)
 
         my $wrapped_send = async sub  {
         my ($event) = @_;
@@ -92,17 +96,23 @@ sub wrap {
                 # Don't send yet - buffer to compress
             }
             elsif ($event->{type} eq 'http.response.body') {
+                # If we're already in streaming mode, pass through all chunks
+                if ($headers_sent) {
+                    await $send->($event);
+                    return;
+                }
+
                 push @body_parts, $event->{body} // '';
 
-                # If streaming (more => 1), pass through without compression
+                # If streaming (more => 1), switch to pass-through mode
                 if ($event->{more}) {
-                    if (!$self->{_headers_sent}) {
+                    if (!$headers_sent) {
                         await $send->({
                             type    => 'http.response.start',
                             status  => 200,
                             headers => $original_headers,
                         });
-                        $self->{_headers_sent} = 1;
+                        $headers_sent = 1;
                     }
                     await $send->($event);
                 }
@@ -115,7 +125,7 @@ sub wrap {
         await $app->($scope, $receive, $wrapped_send);
 
         # If headers already sent (streaming), we're done
-        return if $self->{_headers_sent};
+        return if $headers_sent;
 
         # Combine body
         my $body = join('', @body_parts);

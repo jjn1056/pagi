@@ -87,23 +87,23 @@ subtest 'accepts predicate' => sub {
 };
 
 subtest 'is_disconnected' => sub {
-    my $scope = { type => 'http', method => 'GET', headers => [] };
+    require PAGI::Server::ConnectionState;
 
     # Test with client still connected
-    my $connected_receive = async sub {
-        return { type => 'http.request', body => '', more => 1 };
-    };
-    my $req1 = PAGI::Request->new($scope, $connected_receive);
-    my $disconnected1 = (async sub { await $req1->is_disconnected })->()->get;
-    ok(!$disconnected1, 'client connected');
+    my $conn1 = PAGI::Server::ConnectionState->new();
+    my $scope1 = { type => 'http', method => 'GET', headers => [], 'pagi.connection' => $conn1 };
+    my $req1 = PAGI::Request->new($scope1);
+    ok(!$req1->is_disconnected, 'client connected');
+    ok($req1->is_connected, 'is_connected returns true');
 
     # Test with disconnected client
-    my $disconnected_receive = async sub {
-        return { type => 'http.disconnect' };
-    };
-    my $req2 = PAGI::Request->new($scope, $disconnected_receive);
-    my $disconnected2 = (async sub { await $req2->is_disconnected })->()->get;
-    ok($disconnected2, 'client disconnected');
+    my $conn2 = PAGI::Server::ConnectionState->new();
+    $conn2->_mark_disconnected('client_closed');
+    my $scope2 = { type => 'http', method => 'GET', headers => [], 'pagi.connection' => $conn2 };
+    my $req2 = PAGI::Request->new($scope2);
+    ok($req2->is_disconnected, 'client disconnected');
+    ok(!$req2->is_connected, 'is_connected returns false');
+    is($req2->disconnect_reason, 'client_closed', 'disconnect_reason set');
 };
 
 done_testing;

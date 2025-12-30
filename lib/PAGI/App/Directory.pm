@@ -6,6 +6,7 @@ use Future::AsyncAwait;
 use parent 'PAGI::App::File';
 use JSON::MaybeXS ();
 use File::Spec;
+use Cwd qw(realpath);
 
 =head1 NAME
 
@@ -26,7 +27,29 @@ sub new {
 
     my $self = $class->SUPER::new(%args);
     $self->{show_hidden} = $args{show_hidden} // 0;
+    # Cache realpath of root for symlink escape detection
+    $self->{real_root} = realpath($self->{root}) // $self->{root};
     return $self;
+}
+
+# HTML escape to prevent XSS
+sub _html_escape {
+    my $str = shift;
+    return '' unless defined $str;
+    $str =~ s/&/&amp;/g;
+    $str =~ s/</&lt;/g;
+    $str =~ s/>/&gt;/g;
+    $str =~ s/"/&quot;/g;
+    $str =~ s/'/&#39;/g;
+    return $str;
+}
+
+# URL encode for href attributes
+sub _url_encode {
+    my $str = shift;
+    return '' unless defined $str;
+    $str =~ s/([^A-Za-z0-9\-_.~\/])/sprintf("%%%02X", ord($1))/ge;
+    return $str;
 }
 
 sub to_app {
@@ -34,6 +57,7 @@ sub to_app {
 
     my $parent_app = $self->SUPER::to_app();
     my $root = $self->{root};
+    my $real_root = $self->{real_root};
 
     return async sub  {
         my ($scope, $receive, $send) = @_;
@@ -42,6 +66,13 @@ sub to_app {
         my $path = $scope->{path} // '/';
         $path =~ s{^/+}{};
         my $dir_path = File::Spec->catdir($root, $path);
+
+        # Symlink escape check: ensure resolved path is within root
+        my $real_dir = realpath($dir_path);
+        if (!$real_dir || index($real_dir, $real_root) != 0) {
+            await $self->_send_error($send, 403, 'Forbidden');
+            return;
+        }
 
         # If it's a directory without index file, show listing
         if (-d $dir_path) {
@@ -108,11 +139,14 @@ async sub _send_listing {
     my $base_path = $rel_path eq '' ? '/' : "/$rel_path";
     $base_path =~ s{/+$}{};
 
-    my $html = "<!DOCTYPE html><html><head><title>Index of $base_path/</title>";
+    # Escape base_path for safe HTML output
+    my $escaped_path = _html_escape($base_path);
+
+    my $html = "<!DOCTYPE html><html><head><title>Index of $escaped_path/</title>";
     $html .= '<style>body{font-family:sans-serif;margin:20px}table{border-collapse:collapse}';
     $html .= 'th,td{padding:8px 16px;text-align:left;border-bottom:1px solid #ddd}';
     $html .= 'a{text-decoration:none;color:#0066cc}a:hover{text-decoration:underline}</style></head>';
-    $html .= "<body><h1>Index of $base_path/</h1><table><tr><th>Name</th><th>Size</th></tr>";
+    $html .= "<body><h1>Index of $escaped_path/</h1><table><tr><th>Name</th><th>Size</th></tr>";
 
     if ($rel_path ne '') {
         $html .= '<tr><td><a href="../">..</a></td><td>-</td></tr>';
@@ -123,7 +157,11 @@ async sub _send_listing {
         my $display = $entry->{is_dir} ? "$name/" : $name;
         my $href = "$name" . ($entry->{is_dir} ? '/' : '');
         my $size = $entry->{is_dir} ? '-' : _format_size($entry->{size});
-        $html .= qq{<tr><td><a href="$href">$display</a></td><td>$size</td></tr>};
+
+        # Escape all user-controlled values to prevent XSS
+        my $escaped_display = _html_escape($display);
+        my $escaped_href = _html_escape(_url_encode($href));
+        $html .= qq{<tr><td><a href="$escaped_href">$escaped_display</a></td><td>$size</td></tr>};
     }
 
     $html .= '</table></body></html>';

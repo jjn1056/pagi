@@ -8,7 +8,7 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 ## Spec Versions
 
-- `0.2`: Added keepalive events (`websocket.keepalive`, `sse.keepalive`), send timeouts, disconnect reasons, SSE support for all HTTP methods (not just GET) with `sse.request` receive event for request body.
+- `0.2`: Added keepalive events (`websocket.keepalive`, `sse.keepalive`), send timeouts, disconnect reasons, SSE support for all HTTP methods (not just GET) with `sse.request` receive event for request body. Added `pagi.connection` scope key for non-destructive disconnect detection.
 - `0.1`: Initial draft, based on ASGI 2.5, including Server-Side Events support.
 
 ## Common Data Types
@@ -204,6 +204,7 @@ Each HTTP request has a single-request connection scope. Scope keys:
 - `client` (ArrayRef[String, Int], optional) -- `[host, port]` of client
 - `server` (ArrayRef[String, Optional[Int]], optional) -- `[host, port]` or `[path, undef]` for Unix sockets
 - `state` (HashRef, optional) -- State namespace from lifespan
+- `pagi.connection` (Object) -- Connection state object for disconnect detection. See [Connection State](#connection-state) below.
 
 ### Request - `receive` event
 
@@ -318,6 +319,173 @@ Sent to the application if receive is called after a response has been sent or a
 Keys:
 
 - `type` -- `"http.disconnect"`
+
+### Connection State
+
+The `pagi.connection` scope key provides a mechanism for applications to detect client disconnection **without consuming messages from the receive queue**. This addresses a fundamental limitation where checking for disconnect via `receive()` may inadvertently consume request body data.
+
+#### The Problem
+
+In PAGI's pull-based receive model, the only way to know if a client has disconnected is to consume the next message:
+
+```perl
+my $message = await $receive->();
+if ($message->{type} eq 'http.disconnect') {
+    # Client is gone - but if it wasn't a disconnect, that data is lost!
+}
+```
+
+The connection state object solves this with synchronous, non-destructive checks.
+
+#### Connection Object Interface
+
+Servers MUST provide a connection state object with these methods:
+
+**`is_connected()`** - Returns true if the connection is still open.
+
+```perl
+my $connected = $conn->is_connected;  # Boolean, synchronous
+```
+
+**`disconnect_reason()`** - Returns the disconnect reason string, or `undef` if still connected.
+
+```perl
+my $reason = $conn->disconnect_reason;  # String or undef
+```
+
+**`on_disconnect($callback)`** - Registers a callback to be invoked when disconnect occurs.
+
+```perl
+$conn->on_disconnect(sub {
+    my ($reason) = @_;
+    cleanup_resources();
+});
+```
+
+- May be called multiple times to register multiple callbacks
+- Callbacks are invoked in registration order
+- If registered after disconnect already occurred, callback is invoked immediately
+
+**`disconnect_future()`** - Returns a Future that resolves when the connection closes.
+
+```perl
+my $future = $conn->disconnect_future;  # Future or undef
+my $reason = await $future;
+```
+
+Servers SHOULD provide this method. Returns `undef` if not supported.
+
+#### Standard Disconnect Reasons
+
+Servers MUST use these standard reason strings:
+
+| Reason | Description |
+|--------|-------------|
+| `client_closed` | Client initiated clean close (TCP FIN) |
+| `client_timeout` | Client stopped responding (read timeout) |
+| `idle_timeout` | Connection idle too long between requests |
+| `write_timeout` | Response write timed out |
+| `write_error` | Socket write failed (EPIPE, ECONNRESET) |
+| `read_error` | Socket read failed |
+| `protocol_error` | HTTP parse error, invalid request |
+| `server_shutdown` | Server shutting down gracefully |
+| `body_too_large` | Request body exceeded limit |
+
+Servers MAY define additional reasons prefixed with `x-` (e.g., `x-rate-limited`).
+
+#### Server Requirements
+
+1. MUST provide `pagi.connection` in scope for `http` type requests
+2. MUST implement `is_connected()`, `disconnect_reason()`, and `on_disconnect()` methods
+3. SHOULD implement `disconnect_future()` method returning a Future
+4. MUST update connection state as soon as disconnect is detected
+5. MUST use standard reason strings where applicable
+6. MUST NOT transition `is_connected()` back to true once false (one-way transition)
+
+#### State Transition Order
+
+When disconnect is detected, servers MUST update state in this order:
+
+1. Set `is_connected()` to return false
+2. Set `disconnect_reason()` to return the reason string
+3. Resolve `disconnect_future()` with the reason (if provided)
+4. Invoke `on_disconnect` callbacks in registration order
+5. Send `http.disconnect` message to receive queue
+
+#### Applicability
+
+| Scope Type | Connection State |
+|------------|------------------|
+| `http` | MUST provide `pagi.connection` |
+| `websocket` | NOT APPLICABLE (use `websocket.disconnect` events) |
+| `sse` | NOT APPLICABLE (use `sse.disconnect` events) |
+
+WebSocket and SSE have dedicated disconnect events and typically use handler objects (like `PAGI::WebSocket`, `PAGI::SSE`) that already manage connection state.
+
+#### Example: Basic Connection Check
+
+```perl
+async sub handler {
+    my ($scope, $receive, $send) = @_;
+    my $conn = $scope->{'pagi.connection'};
+
+    # Check before expensive work
+    return unless $conn->is_connected;
+
+    my $result = await expensive_operation();
+
+    # Check again before responding
+    return unless $conn->is_connected;
+
+    await $send->({ type => 'http.response.start', status => 200, headers => [] });
+    await $send->({ type => 'http.response.body', body => $result, more => 0 });
+}
+```
+
+#### Example: Cleanup on Disconnect
+
+```perl
+async sub handler {
+    my ($scope, $receive, $send) = @_;
+    my $conn = $scope->{'pagi.connection'};
+
+    my $temp_file = create_temp_file();
+
+    # Register cleanup - runs automatically if client disconnects
+    $conn->on_disconnect(sub {
+        my ($reason) = @_;
+        $temp_file->unlink;
+        log_info("Client disconnected: $reason");
+    });
+
+    my $result = await process_data($temp_file);
+    $temp_file->unlink;  # Normal cleanup
+
+    await send_response($send, $result);
+}
+```
+
+#### Example: Racing Against Disconnect
+
+```perl
+async sub long_poll_handler {
+    my ($scope, $receive, $send) = @_;
+    my $conn = $scope->{'pagi.connection'};
+
+    my $disconnect_future = $conn->disconnect_future;
+    my $event_future = wait_for_event();
+
+    if ($disconnect_future) {
+        # Race: wait for event OR disconnect
+        await Future->wait_any($disconnect_future, $event_future);
+
+        return unless $conn->is_connected;
+    }
+
+    my $event = $event_future->get;
+    await send_response($send, $event);
+}
+```
 
 ## WebSocket
 

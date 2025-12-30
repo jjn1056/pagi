@@ -7,7 +7,7 @@ use IO::Socket::INET;
 
 =head1 NAME
 
-PAGI::App::Proxy - HTTP reverse proxy
+PAGI::App::Proxy - HTTP reverse proxy (DEMO ONLY - NOT FOR PRODUCTION)
 
 =head1 SYNOPSIS
 
@@ -136,8 +136,42 @@ __END__
 
 =head1 DESCRIPTION
 
-Simple HTTP reverse proxy. For production use, consider a more robust
-implementation with connection pooling and async I/O.
+Simple HTTP reverse proxy for development and demonstration purposes.
+
+B<WARNING: NOT FOR PRODUCTION USE>
+
+This module has known security and performance issues:
+
+=over 4
+
+=item * B<SSRF Vulnerability> - No validation of backend URLs. Attackers could
+potentially target internal services (localhost, private IPs).
+
+=item * B<Blocking I/O> - Uses synchronous C<IO::Socket::INET>, which blocks
+the entire event loop during backend requests. This defeats the purpose of
+async and severely limits throughput.
+
+=item * B<No Connection Pooling> - Creates a new connection for every request.
+
+=item * B<Limited Error Handling> - Basic 502 response on connection failure.
+
+=back
+
+For production reverse proxy needs, consider:
+
+=over 4
+
+=item * L<nginx|https://nginx.org/> or L<HAProxy|http://www.haproxy.org/> as a
+dedicated reverse proxy
+
+=item * A proper async HTTP client like L<Net::Async::HTTP> with PAGI
+
+=item * L<Plack::App::Proxy> if migrating from PSGI
+
+=back
+
+This module is included as a simple demonstration of the PAGI interface for
+proxy-style applications.
 
 =head1 OPTIONS
 

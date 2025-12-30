@@ -205,20 +205,56 @@ sub is_delete  { uc(shift->method // '') eq 'DELETE' }
 sub is_head    { uc(shift->method // '') eq 'HEAD' }
 sub is_options { uc(shift->method // '') eq 'OPTIONS' }
 
-# Check if client has disconnected (async)
-async sub is_disconnected {
+# =============================================================================
+# Connection State Methods (PAGI spec 0.3)
+#
+# These methods provide non-destructive disconnect detection via the
+# pagi.connection scope key, which is a PAGI::Server::ConnectionState object.
+# =============================================================================
+
+# Get the connection state object
+sub connection {
     my $self = shift;
+    return $self->{scope}{'pagi.connection'};
+}
 
-    return 0 unless $self->{receive};
+# Check if client is still connected (synchronous, non-destructive)
+sub is_connected {
+    my $self = shift;
+    my $conn = $self->connection;
+    return 0 unless $conn;
+    return $conn->is_connected;
+}
 
-    # Peek at receive - if we get disconnect, client is gone
-    my $message = await $self->{receive}->();
+# Check if client has disconnected (synchronous, non-destructive)
+# This is the inverse of is_connected - preferred for new code
+sub is_disconnected {
+    my $self = shift;
+    return !$self->is_connected;
+}
 
-    if ($message && $message->{type} eq 'http.disconnect') {
-        return 1;
-    }
+# Get the disconnect reason string, or undef if still connected
+sub disconnect_reason {
+    my $self = shift;
+    my $conn = $self->connection;
+    return undef unless $conn;
+    return $conn->disconnect_reason;
+}
 
-    return 0;
+# Register a callback to be invoked when disconnect occurs
+sub on_disconnect {
+    my ($self, $cb) = @_;
+    my $conn = $self->connection;
+    return unless $conn;
+    $conn->on_disconnect($cb);
+}
+
+# Get a Future that resolves when the client disconnects
+sub disconnect_future {
+    my $self = shift;
+    my $conn = $self->connection;
+    return undef unless $conn;
+    return $conn->disconnect_future;
 }
 
 # Content-type predicates
@@ -914,11 +950,76 @@ Returns the best matching content type from the provided list based on the
 client's Accept header and quality values. Returns undef if none are acceptable.
 Supports shortcuts (json, html, xml, etc).
 
-=head2 is_disconnected (async)
+=head1 CONNECTION STATE METHODS
 
-    if (await $req->is_disconnected) { ... }
+These methods provide non-destructive disconnect detection. Unlike reading
+from the receive queue, these methods do not consume any messages.
 
-Check if client has disconnected.
+See L<PAGI::Server::ConnectionState> for the underlying implementation.
+
+=head2 connection
+
+    my $conn = $req->connection;
+
+Returns the L<PAGI::Server::ConnectionState> object for this request, or
+C<undef> if not provided by the server.
+
+=head2 is_connected
+
+    if ($req->is_connected) {
+        # Client still connected
+    }
+
+Returns true if the client connection is still alive. This is a synchronous,
+non-destructive check that does not consume messages from the receive queue.
+
+=head2 is_disconnected
+
+    if ($req->is_disconnected) {
+        # Client has disconnected
+    }
+
+Returns true if the client has disconnected. Equivalent to
+C<< !$req->is_connected >>.
+
+This is a synchronous, non-destructive check.
+
+=head2 disconnect_reason
+
+    my $reason = $req->disconnect_reason;
+
+Returns the disconnect reason string, or C<undef> if still connected.
+
+Standard reasons include: C<client_closed>, C<client_timeout>, C<idle_timeout>,
+C<write_error>, C<read_error>, C<protocol_error>, C<server_shutdown>,
+C<body_too_large>.
+
+See L<PAGI::Server::ConnectionState/disconnect_reason> for the full list.
+
+=head2 on_disconnect
+
+    $req->on_disconnect(sub {
+        my ($reason) = @_;
+        cleanup_resources();
+        log_info("Client disconnected: $reason");
+    });
+
+Registers a callback to be invoked when the client disconnects. Multiple
+callbacks may be registered. If the client has already disconnected, the
+callback is invoked immediately.
+
+=head2 disconnect_future
+
+    my $future = $req->disconnect_future;
+    if ($future) {
+        # Race against other operations
+        await Future->wait_any($disconnect_future, $event_future);
+    }
+
+Returns a Future that resolves when the client disconnects, or C<undef>
+if not supported. The Future resolves with the disconnect reason string.
+
+This is useful for racing against other async operations.
 
 =head1 AUTH HELPERS
 
