@@ -12,9 +12,20 @@ use IO::Async::Timer::Countdown;
 use IO::Async::Timer::Periodic;
 use Time::HiRes qw(gettimeofday tv_interval);
 use PAGI::Server::AsyncFile;
+use PAGI::Server::ConnectionState;
 
 
 use constant FILE_CHUNK_SIZE => 65536;  # 64KB chunks for file streaming
+
+# =============================================================================
+# Unrecognized Event Type Handler (PAGI spec compliance)
+# =============================================================================
+# Per main.mkdn: "Servers must raise exceptions if... The type field is unrecognized"
+
+sub _unrecognized_event_type {
+    my ($type, $protocol) = @_;
+    die "Unrecognized event type '$type' for $protocol protocol\n";
+}
 
 # =============================================================================
 # Header Validation (CRLF Injection Prevention)
@@ -113,6 +124,7 @@ sub new {
         max_receive_queue => $args{max_receive_queue} // 1000,  # Max WebSocket receive queue size
         max_ws_frame_size => $args{max_ws_frame_size} // 65536,  # Max WebSocket frame size in bytes
         sync_file_threshold => $args{sync_file_threshold} // 65536,  # Threshold for sync file reads (default 64KB)
+        validate_events => $args{validate_events} // 0,  # Dev-mode event validation (0 = disabled)
         tls_info      => undef,  # Populated on first request if TLS
         buffer        => '',
         closed        => 0,
@@ -197,6 +209,7 @@ sub start {
                 return unless $weak_self;
                 return if $weak_self->{closed};
                 # Close idle connection
+                $weak_self->_handle_disconnect('idle_timeout');
                 $weak_self->_close;
             },
         );
@@ -299,6 +312,7 @@ sub _start_stall_timer {
                 $weak_self->{server}->_log(warn =>
                     "Request stall timeout ($weak_self->{request_timeout}s) - closing connection");
             }
+            $weak_self->_handle_disconnect('client_timeout');
             $weak_self->_close;
         },
     );
@@ -600,6 +614,8 @@ sub _try_handle_request {
 
     # Handle parse errors (malformed request, header too large)
     if ($request->{error}) {
+        # Mark connection as disconnected with protocol_error reason (PAGI spec compliance)
+        $self->_handle_disconnect('protocol_error');
         $self->_send_error_response($request->{error}, $request->{message});
         $self->_close;
         return;
@@ -734,6 +750,7 @@ async sub _handle_request {
         $self->{request_start} = undef;
         $self->{current_request} = undef;
         $self->{request_future} = undef;
+        $self->{current_connection_state} = undef;  # Clear for next request
 
         # Check if there's more data in the buffer (pipelining)
         if (length($self->{buffer}) > 0) {
@@ -777,6 +794,13 @@ sub _should_keep_alive {
 sub _create_scope {
     my ($self, $request) = @_;
 
+    # Create connection state object for disconnect tracking (PAGI spec 0.3)
+    my $disconnect_future = Future->new;
+    my $connection_state = PAGI::Server::ConnectionState->new(
+        future => $disconnect_future,
+    );
+    $self->{current_connection_state} = $connection_state;
+
     my $scope = {
         type         => 'http',
         pagi         => {
@@ -797,6 +821,8 @@ sub _create_scope {
         # Optimized: avoid hash copy when state is empty (common case)
         state        => %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
+        # Connection state for non-destructive disconnect detection (PAGI spec 0.3)
+        'pagi.connection' => $connection_state,
     };
 
     return $scope;
@@ -907,6 +933,7 @@ sub _create_receive {
                     if ($weak_self->{max_body_size} && $bytes_read > $weak_self->{max_body_size}) {
                         # Body too large - close connection
                         $weak_self->_send_error_response(413, 'Payload Too Large');
+                        $weak_self->_handle_disconnect('body_too_large');
                         $weak_self->_close;
                         return { type => 'http.disconnect' };
                     }
@@ -1031,6 +1058,12 @@ sub _create_send {
         $weak_self->_reset_stall_timer;
 
         my $type = $event->{type} // '';
+
+        # Dev-mode event validation (PAGI spec compliance)
+        if ($weak_self->{validate_events}) {
+            require PAGI::Server::EventValidator;
+            PAGI::Server::EventValidator::validate_http_send($event);
+        }
 
         if ($type eq 'http.response.start') {
             return if $response_started;
@@ -1175,6 +1208,10 @@ sub _create_send {
             # For this reference implementation, we return immediately as the
             # write buffer will be flushed by the event loop.
         }
+        else {
+            # Per PAGI spec: servers must raise exceptions for unrecognized event types
+            _unrecognized_event_type($type, 'http');
+        }
 
         return;
     };
@@ -1240,7 +1277,22 @@ sub _write_access_log {
 }
 
 sub _handle_disconnect {
-    my ($self) = @_;
+    my ($self, $reason) = @_;
+
+    # Auto-detect server shutdown (PAGI spec compliance)
+    # If no explicit reason and server is shutting down, use server_shutdown
+    if (!$reason && $self->{server} && $self->{server}{shutting_down}) {
+        $reason = 'server_shutdown';
+    }
+
+    # Default reason is client_closed (TCP FIN received)
+    $reason //= 'client_closed';
+
+    # Mark HTTP connection state as disconnected (PAGI spec 0.3)
+    # Only for HTTP - WebSocket/SSE have their own patterns
+    if ($self->{current_connection_state} && !$self->{websocket_mode} && !$self->{sse_mode}) {
+        $self->{current_connection_state}->_mark_disconnected($reason);
+    }
 
     # Determine disconnect event type based on mode
     my $disconnect_event;
@@ -1701,6 +1753,12 @@ sub _create_sse_send {
 
         my $type = $event->{type} // '';
 
+        # Dev-mode event validation (PAGI spec compliance)
+        if ($weak_self->{validate_events}) {
+            require PAGI::Server::EventValidator;
+            PAGI::Server::EventValidator::validate_sse_send($event);
+        }
+
         if ($type eq 'sse.start') {
             return if $weak_self->{sse_started};
             $weak_self->{sse_started} = 1;
@@ -1809,6 +1867,10 @@ sub _create_sse_send {
                 require Socket;
                 $handle->setsockopt(Socket::IPPROTO_TCP(), Socket::TCP_NODELAY(), 1);
             }
+        }
+        else {
+            # Per PAGI spec: servers must raise exceptions for unrecognized event types
+            _unrecognized_event_type($type, 'sse');
         }
 
         return;
@@ -1982,6 +2044,12 @@ sub _create_websocket_send {
 
         my $type = $event->{type} // '';
 
+        # Dev-mode event validation (PAGI spec compliance)
+        if ($weak_self->{validate_events}) {
+            require PAGI::Server::EventValidator;
+            PAGI::Server::EventValidator::validate_websocket_send($event);
+        }
+
         if ($type eq 'websocket.accept') {
             return if $weak_self->{websocket_accepted};
 
@@ -2098,6 +2166,10 @@ sub _create_websocket_send {
             else {
                 $weak_self->_stop_ws_keepalive;
             }
+        }
+        else {
+            # Per PAGI spec: servers must raise exceptions for unrecognized event types
+            _unrecognized_event_type($type, 'websocket');
         }
 
         return;

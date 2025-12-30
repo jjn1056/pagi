@@ -1083,6 +1083,9 @@ sub _init {
     $self->{ws_idle_timeout}     = delete $params->{ws_idle_timeout} // 0;   # WebSocket idle timeout (0 = disabled)
     $self->{sse_idle_timeout}    = delete $params->{sse_idle_timeout} // 0;  # SSE idle timeout (0 = disabled)
     $self->{loop_type}           = delete $params->{loop_type};  # Optional loop backend (EPoll, EV, Poll, etc.)
+    # Dev-mode event validation: explicit flag, or auto-enable in development mode
+    $self->{validate_events}     = delete $params->{validate_events}
+        // (($ENV{PAGI_ENV} // '') eq 'development' ? 1 : 0);
 
     $self->{running}     = 0;
     $self->{bound_port}  = undef;
@@ -1830,6 +1833,7 @@ sub _on_connection {
         max_receive_queue => $self->{max_receive_queue},
         max_ws_frame_size => $self->{max_ws_frame_size},
         sync_file_threshold => $self->{sync_file_threshold},
+        validate_events   => $self->{validate_events},
     );
 
     # Track the connection (O(1) hash insert)
