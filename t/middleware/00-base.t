@@ -258,8 +258,8 @@ subtest 'Middleware Builder' => sub {
 
         # Manually compose (simulating builder)
         my $builder = PAGI::Middleware::Builder->new;
-        $builder->add_middleware('TestMiddleware::Counter', name => 'A');
-        $builder->add_middleware('TestMiddleware::Counter', name => 'B');
+        $builder->add_middleware('^TestMiddleware::Counter', name => 'A');
+        $builder->add_middleware('^TestMiddleware::Counter', name => 'B');
         my $app = $builder->to_app($inner_app);
 
         run_async(async sub {
@@ -305,7 +305,7 @@ subtest 'Middleware Builder' => sub {
         my $builder = PAGI::Middleware::Builder->new;
         $builder->add_middleware_if(
             sub { $_[0]->{path} =~ m{^/api/} },
-            'TestMiddleware::Marker',
+            '^TestMiddleware::Marker',
         );
         my $app = $builder->to_app($inner_app);
 

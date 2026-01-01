@@ -77,10 +77,12 @@ sub builder (&) {
 =head2 enable
 
     enable 'MiddlewareName', %config;
-    enable 'PAGI::Middleware::Custom', %config;
+    enable 'Auth::Basic', %config;        # PAGI::Middleware::Auth::Basic
+    enable '^My::Custom::Middleware';     # My::Custom::Middleware (no prefix)
 
-Enable a middleware. If the name doesn't contain '::', it's prefixed
-with 'PAGI::Middleware::'.
+Enable a middleware. The name is automatically prefixed with
+'PAGI::Middleware::' unless it starts with '^', which indicates
+a fully qualified class name (the '^' is stripped).
 
 =cut
 
@@ -224,12 +226,14 @@ sub to_app {
 # Private: resolve middleware class name
 sub _resolve_middleware {
     my ($self, $name) = @_;
-    my $class = $name;
 
-    # Prepend PAGI::Middleware:: if no ::
-    unless ($class =~ /::/) {
-        $class = "PAGI::Middleware::$class";
-    }
+    # Always prepend PAGI::Middleware::, then strip everything up to ^ if present
+    # Examples:
+    #   'GZIP'           -> 'PAGI::Middleware::GZIP'
+    #   'Auth::Basic'    -> 'PAGI::Middleware::Auth::Basic'
+    #   '^My::Custom'    -> 'My::Custom' (prefix removed)
+    #   '^TopLevel'      -> 'TopLevel' (prefix removed)
+    my $class = "PAGI::Middleware::$name" =~ s{^.+\^}{}r;
 
     # Load the module
     my $file = $class;
