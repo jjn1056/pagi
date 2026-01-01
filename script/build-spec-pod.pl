@@ -2,6 +2,11 @@
 #
 # Converts PAGI specification markdown files to POD for CPAN distribution.
 #
+# Uses App::sdview for conversion (replaces Markdown::Pod for better output):
+# - Proper =item * bullet points (not =item -)
+# - Better code block handling
+# - =for highlighter language markers
+#
 # Run manually: perl script/build-spec-pod.pl
 # Or automatically via dzil build (configured in dist.ini)
 #
@@ -10,11 +15,9 @@ use strict;
 use warnings;
 use File::Spec;
 use File::Path qw(make_path);
-use File::Basename qw(dirname);
-
-# Check for Markdown::Pod
-eval { require Markdown::Pod; 1 }
-    or die "Markdown::Pod required. Install with: cpanm Markdown::Pod\n";
+use File::Temp qw(tempfile);
+use IPC::Open3;
+use Symbol 'gensym';
 
 use Getopt::Long;
 
@@ -41,7 +44,34 @@ my %MKDN_TO_POD = (
     'tls.mkdn'      => 'PAGI::Spec::Tls',
 );
 
-# Convert markdown-style links to POD L<> links
+# Known Perl modules that should be L<> links on metacpan
+my @LINKABLE_MODULES = qw(
+    Future
+    Future::AsyncAwait
+    Future::IO
+    Future::Queue
+    IO::Async
+    IO::Async::Loop
+    IO::Async::Stream
+    IO::Async::SSL
+    IO::Socket::SSL
+    Plack
+    PSGI
+    Mojolicious
+    Dancer2
+    AnyEvent
+    Coro
+    Test2::V0
+);
+
+# Check for sdview
+my $SDVIEW = `which sdview 2>/dev/null`;
+chomp $SDVIEW;
+unless ($SDVIEW && -x $SDVIEW) {
+    die "App::sdview required. Install with: cpanm App::sdview\n";
+}
+
+# Convert .mkdn internal links to POD L<> links
 sub convert_mkdn_links {
     my ($pod) = @_;
 
@@ -57,56 +87,112 @@ sub convert_mkdn_links {
     return $pod;
 }
 
+# Convert known module names from C<> to L<> for metacpan links
+sub convert_module_links {
+    my ($pod) = @_;
+
+    for my $module (@LINKABLE_MODULES) {
+        # Convert C<Module::Name> to L<Module::Name>
+        # Be careful not to convert things like C<$module->method>
+        # Only convert if the entire C<> content is a module name
+        $pod =~ s/C<\Q$module\E>/L<$module>/g;
+    }
+
+    return $pod;
+}
+
+# Clean up whitespace issues in POD
+sub clean_pod_whitespace {
+    my ($pod) = @_;
+
+    # Remove trailing whitespace from lines
+    $pod =~ s/[ \t]+$//mg;
+
+    # Remove lines that are only whitespace within paragraphs
+    # (replace whitespace-only lines with empty lines)
+    $pod =~ s/^[ \t]+$//mg;
+
+    # Collapse multiple blank lines into two (paragraph separator)
+    $pod =~ s/\n{3,}/\n\n/g;
+
+    return $pod;
+}
+
+# Run sdview to convert markdown to POD
+sub markdown_to_pod {
+    my ($markdown_file) = @_;
+
+    # sdview requires .md extension, so create a temp file if needed
+    my $input_file = $markdown_file;
+    my $temp_file;
+    if ($markdown_file !~ /\.md$/) {
+        (undef, $temp_file) = tempfile(SUFFIX => '.md', UNLINK => 0);
+        $input_file = $temp_file;
+
+        # Copy content to temp file with proper encoding
+        open my $in, '<:encoding(UTF-8)', $markdown_file
+            or die "Cannot read $markdown_file: $!\n";
+        my $content = do { local $/; <$in> };
+        close $in;
+
+        open my $out, '>:encoding(UTF-8)', $temp_file
+            or die "Cannot write temp file $temp_file: $!\n";
+        print $out $content;
+        close $out;
+    }
+
+    # Run sdview with Pod output (suppress Wide character warnings to stderr)
+    my $cmd = "$SDVIEW '$input_file' -t Pod -O table_style=none 2>/dev/null";
+    my $pod = `$cmd`;
+
+    # Clean up temp file
+    unlink $temp_file if $temp_file;
+
+    # sdview may exit non-zero due to Wide character warnings but still produce valid output
+    # Only fail if we got no output at all
+    if (!defined $pod || $pod eq '') {
+        die "sdview produced no output for $markdown_file\n";
+    }
+
+    return $pod;
+}
+
 # Ensure output directories exist
 make_path("$OUTPUT_BASE/PAGI") unless -d "$OUTPUT_BASE/PAGI";
 make_path($OUTPUT_DIR) unless -d $OUTPUT_DIR;
-
-# Convert markdown to POD
-my $m2p = Markdown::Pod->new;
 
 for my $file (@SPEC_FILES) {
     my $input_path = File::Spec->catfile($SPEC_DIR, $file);
     next unless -f $input_path;
 
-    # Read markdown
-    open my $fh, '<:encoding(UTF-8)', $input_path
-        or die "Cannot read $input_path: $!\n";
-    my $markdown = do { local $/; <$fh> };
-    close $fh;
+    print "Converting: $file\n";
 
-    # Convert to POD (suppress warnings from Markdown::Pod internals)
-    # Use GitHub dialect for better fenced code block handling
-    my $pod;
-    {
-        local $SIG{__WARN__} = sub { };  # Suppress warnings during conversion
-        eval {
-            $pod = $m2p->markdown_to_pod(markdown => $markdown, dialect => 'GitHub');
-        };
-        if ($@ || !defined $pod) {
-            warn "Warning: Failed to convert $file: $@\n";
-            next;
-        }
+    # Convert to POD using sdview
+    my $pod = eval { markdown_to_pod($input_path) };
+    if ($@ || !defined $pod || $pod eq '') {
+        warn "Warning: Failed to convert $file: $@\n";
+        next;
     }
 
-    # Ensure pod is at least an empty string
-    $pod //= '';
-
-    # Convert .mkdn links to POD L<> links
+    # Post-process the POD
     $pod = convert_mkdn_links($pod);
+    $pod = convert_module_links($pod);
+    $pod = clean_pod_whitespace($pod);
 
     # Determine output filename
     my $basename = $file;
     $basename =~ s/\.mkdn$//;
     $basename = ucfirst($basename);  # Main.pod, Www.pod, etc.
 
-    # Add POD header
+    # Build module name
     my $module_name = "PAGI::Spec::$basename";
-    $module_name = 'PAGI::Spec' if $basename eq 'Main';  # Main spec is just PAGI::Spec
+    $module_name = 'PAGI::Spec' if $basename eq 'Main';
 
     my $output_file = $basename eq 'Main'
         ? File::Spec->catfile($OUTPUT_BASE, 'PAGI', 'Spec.pod')
         : File::Spec->catfile($OUTPUT_DIR, "$basename.pod");
 
+    # Build header (must come before sdview output to ensure =encoding is first)
     my $header = <<"POD_HEADER";
 =encoding utf8
 
