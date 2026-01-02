@@ -467,7 +467,7 @@ The stream throws exceptions in these cases:
 
 =item * C<max_bytes> exceeded - Request body too large
 
-=item * UTF-8 decoding errors (when C<strict => 1>)
+=item * UTF-8 decoding errors (when C<< strict => 1 >>)
 
 =item * File I/O errors during C<stream_to_file>
 
@@ -494,3 +494,4 @@ L<PAGI::Request>, L<Future::AsyncAwait>
 PAGI Contributors
 
 =cut
+

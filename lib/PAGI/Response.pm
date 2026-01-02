@@ -234,14 +234,14 @@ B<Important CORS Notes:>
 
 =over 4
 
-=item * When C<credentials> is true, you cannot use C<origin => '*'>.
+=item * When C<credentials> is true, you cannot use C<< origin => '*' >>.
 Either specify an exact origin, or pass C<request_origin> with the
 client's actual Origin header.
 
 =item * The C<Vary: Origin> header is always set to ensure proper caching
 when origin-specific responses are used.
 
-=item * For preflight (OPTIONS) requests, set C<preflight => 1> and
+=item * For preflight (OPTIONS) requests, set C<< preflight => 1 >> and
 typically respond with C<< $res->status(204)->empty() >>.
 
 =back
@@ -1043,3 +1043,4 @@ async sub send_file {
 }
 
 1;
+

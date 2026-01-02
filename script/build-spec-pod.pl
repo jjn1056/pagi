@@ -93,7 +93,7 @@ sub convert_module_links {
 
     for my $module (@LINKABLE_MODULES) {
         # Convert C<Module::Name> to L<Module::Name>
-        # Be careful not to convert things like C<$module->method>
+        # Be careful not to convert things like C<< $module->method >>
         # Only convert if the entire C<> content is a module name
         $pod =~ s/C<\Q$module\E>/L<$module>/g;
     }
@@ -220,3 +220,4 @@ POD_HEADER
 }
 
 print "Done!\n";
+

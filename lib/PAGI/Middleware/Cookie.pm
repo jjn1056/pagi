@@ -30,7 +30,7 @@ PAGI::Middleware::Cookie - Cookie parsing middleware
 =head1 DESCRIPTION
 
 PAGI::Middleware::Cookie parses the Cookie header and makes the parsed
-cookies available in C<$scope->{'pagi.cookies'}> as a hashref.
+cookies available in C<< $scope->{'pagi.cookies'} >> as a hashref.
 
 It also provides a helper for setting response cookies.
 
@@ -206,3 +206,4 @@ L<PAGI::Middleware> - Base class for middleware
 L<PAGI::Middleware::Session> - Session management using cookies
 
 =cut
+

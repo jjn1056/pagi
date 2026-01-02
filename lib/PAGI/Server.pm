@@ -576,7 +576,7 @@ B<When to use:>
 
 =back
 
-B<Note:> Only applies in multi-worker mode (C<workers> > 0). In single-worker
+B<Note:> Only applies in multi-worker mode (C<< workers > 0 >>). In single-worker
 mode, this setting is ignored.
 
 B<CLI:> C<--max-requests 10000>
@@ -2539,3 +2539,4 @@ This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself.
 
 =cut
+

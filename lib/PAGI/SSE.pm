@@ -614,7 +614,7 @@ Creates a new SSE wrapper. Requires:
 
 =over 4
 
-=item * C<$scope> - PAGI scope hashref with C<type => 'sse'>
+=item * C<$scope> - PAGI scope hashref with C<< type => 'sse' >>
 
 =item * C<$receive> - Async coderef returning Futures for events
 
@@ -920,3 +920,4 @@ L<PAGI::Server> - PAGI protocol server
 PAGI Contributors
 
 =cut
+

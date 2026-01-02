@@ -30,7 +30,7 @@ PAGI::Middleware::JSONBody - JSON request body parsing middleware
 =head1 DESCRIPTION
 
 PAGI::Middleware::JSONBody parses JSON request bodies and makes the
-parsed data available in C<$scope->{'pagi.parsed_body'}>.
+parsed data available in C<< $scope->{'pagi.parsed_body'} >>.
 
 =head1 CONFIGURATION
 
@@ -204,3 +204,4 @@ L<PAGI::Middleware> - Base class for middleware
 L<PAGI::Middleware::FormBody> - Form body parsing
 
 =cut
+

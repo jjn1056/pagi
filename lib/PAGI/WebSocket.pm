@@ -651,7 +651,7 @@ Creates a new WebSocket wrapper. Requires:
 
 =over 4
 
-=item * C<$scope> - PAGI scope hashref with C<type => 'websocket'>
+=item * C<$scope> - PAGI scope hashref with C<< type => 'websocket' >>
 
 =item * C<$receive> - Async coderef returning Futures for events
 
@@ -982,3 +982,4 @@ L<PAGI::Server> - PAGI protocol server
 PAGI Contributors
 
 =cut
+

@@ -214,13 +214,13 @@ bytes where the application must decide. Broad guidance:
 =over 4
 
 =item *
-C<$scope->{path}> is UTF-8 decoded from the percent-encoded
-C<$scope->{raw_path}>. If UTF-8 decoding fails (invalid byte sequences), the
+C<< $scope->{path} >> is UTF-8 decoded from the percent-encoded
+C<< $scope->{raw_path} >>. If UTF-8 decoding fails (invalid byte sequences), the
 original bytes are preserved as-is (Mojolicious-style fallback). If you need
 exact on-the-wire bytes, use C<raw_path>.
 
 =item *
-C<$scope->{query_string}> and request bodies arrive as percent-encoded or raw
+C<< $scope->{query_string} >> and request bodies arrive as percent-encoded or raw
 bytes. Higher-level frameworks may auto-decode with replacement by default, but
 raw values remain available via C<query_string> and the body stream. If you
 need strict validation, decode yourself with C<Encode> and C<FB_CROAK>.
@@ -340,3 +340,4 @@ John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
 This software is licensed under the same terms as Perl itself.
 
 =cut
+

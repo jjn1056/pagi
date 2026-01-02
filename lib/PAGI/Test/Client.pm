@@ -898,7 +898,7 @@ See L<PAGI::Test::SSE> for the SSE connection API.
 
     $client->start;
 
-Triggers lifespan.startup. Only needed if C<lifespan => 1> was passed
+Triggers lifespan.startup. Only needed if C<< lifespan => 1 >> was passed
 to the constructor.
 
 =head2 stop
@@ -928,3 +928,4 @@ runs your callback, then calls stop. Exceptions propagate.
 L<PAGI::Test::Response>, L<PAGI::Test::WebSocket>, L<PAGI::Test::SSE>
 
 =cut
+
