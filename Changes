@@ -1,5 +1,38 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001012 - 2026-01-01
+  [New Features]
+  - PAGI 0.2 specification: Loop-agnostic apps, SSE POST support, keepalive events
+  - Send-side backpressure to prevent unbounded memory growth under slow clients
+  - Configurable write_high_watermark (64KB) and write_low_watermark (16KB)
+    matching Python asyncio defaults for optimal memory/throughput balance
+  - SSE disconnect reasons (client_closed, timeout, write_error, shutdown)
+  - Backpressure test app in examples/backpressure-test/ for benchmarking
+
+  [Bug Fixes]
+  - Fix Lint middleware to preserve original app errors instead of masking them
+  - Fix SSE keepalive to use chunked transfer encoding
+  - Fix missing IO::Async::Timer::Periodic use statement
+  - Fix missing 'method' field in SSE test scopes (per spec line 624)
+  - Fix WebSocket scope incorrectly including 'method' field in test client
+  - Fix middleware class resolution for nested namespaces (Auth::Basic, etc.)
+    using ^ prefix for fully-qualified class names
+
+  [Improvements]
+  - Improved event loop portability (Future::IO now fully optional)
+  - Improve max_connections auto-detection using getrlimit(RLIMIT_NOFILE)
+    instead of sysconf(_SC_OPEN_MAX) for accuracy
+  - Add fd_headroom config option (default 100) for max_connections calculation
+  - Add TTY warning at startup when access_log goes to terminal
+  - Security fixes from code review
+  - PAGI spec compliance fixes for event validation
+
+  [Build/Distribution]
+  - Replace Markdown::Pod with App::sdview for spec POD generation
+    - Fixes =item - to =item * (proper POD bullet points)
+    - Converts module names to L<> links for metacpan
+  - Exclude development files from dist (TODO_*, docs/design/, etc.)
+
 0.001011 - 2025-12-28
   - Switch license from Perl_5 to Artistic_2_0 (cleaner language, OSI recommended)
   - Fix Ctrl-C signal handling for multi-worker mode: lifespan.shutdown now runs
