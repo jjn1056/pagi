@@ -717,11 +717,8 @@ sub new {
     my $self = bless {
         send              => $send,
         scope             => $scope,
-        _status             => 200,
+        # _status not set here - uses exists() check and lazy default of 200
         _headers            => [],
-        _status_set         => 0,
-        _content_type_set   => 0,
-        _content_type_value => undef,
         _header_set         => {},
     }, $class;
 
@@ -730,17 +727,16 @@ sub new {
 
 sub status {
     my ($self, $code) = @_;
-    return $self->{_status} if @_ == 1;
+    return $self->{_status} // 200 if @_ == 1;  # lazy default
     croak("Status must be a number between 100-599")
         unless $code =~ /^\d+$/ && $code >= 100 && $code <= 599;
     $self->{_status} = $code;
-    $self->{_status_set} = 1;
     return $self;
 }
 
 sub status_try {
     my ($self, $code) = @_;
-    return $self if $self->{_status_set};
+    return $self if exists $self->{_status};
     return $self->status($code);
 }
 
@@ -759,8 +755,7 @@ sub header {
     my $key = lc($name // '');
     $self->{_header_set}{$key} = 1 if length $key;
     if ($key eq 'content-type') {
-        $self->{_content_type_set} = 1;
-        $self->{_content_type_value} = $value;
+        $self->{_content_type} = $value;
     }
     return $self;
 }
@@ -789,25 +784,24 @@ sub header_try {
 
 sub content_type {
     my ($self, $type) = @_;
-    return $self->{_content_type_value} if @_ == 1;
+    return $self->{_content_type} if @_ == 1;
     # Remove existing content-type headers
     $self->{_headers} = [grep { lc($_->[0]) ne 'content-type' } @{$self->{_headers}}];
     push @{$self->{_headers}}, ['content-type', $type];
     $self->{_header_set}{'content-type'} = 1;
-    $self->{_content_type_set} = 1;
-    $self->{_content_type_value} = $type;
+    $self->{_content_type} = $type;
     return $self;
 }
 
 sub content_type_try {
     my ($self, $type) = @_;
-    return $self if $self->{_content_type_set};
+    return $self if exists $self->{_content_type};
     return $self->content_type($type);
 }
 
 sub has_status {
     my ($self) = @_;
-    return $self->{_status_set} ? 1 : 0;
+    return exists $self->{_status} ? 1 : 0;
 }
 
 sub has_header {
@@ -819,7 +813,7 @@ sub has_header {
 
 sub has_content_type {
     my ($self) = @_;
-    return $self->{_content_type_set} ? 1 : 0;
+    return exists $self->{_content_type} ? 1 : 0;
 }
 
 # Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
@@ -857,7 +851,7 @@ async sub send_raw {
     # Send start
     await $self->{send}->({
         type    => 'http.response.start',
-        status  => $self->{_status},
+        status  => $self->status,  # uses lazy default of 200
         headers => $self->{_headers},
     });
 
@@ -923,8 +917,8 @@ async sub redirect {
 
 async sub empty {
     my ($self) = @_;
-    # Use 204 if status hasn't been explicitly set to something other than 200
-    if ($self->{_status} == 200) {
+    # Use 204 if status hasn't been explicitly set
+    unless (exists $self->{_status}) {
         $self->{_status} = 204;
     }
     await $self->send_raw(undef);
@@ -1051,7 +1045,7 @@ async sub stream {
     # Send start
     await $self->{send}->({
         type    => 'http.response.start',
-        status  => $self->{_status},
+        status  => $self->status,  # uses lazy default of 200
         headers => $self->{_headers},
     });
 
@@ -1141,7 +1135,7 @@ async sub send_file {
     # Send response start
     await $self->{send}->({
         type    => 'http.response.start',
-        status  => $self->{_status},
+        status  => $self->status,  # uses lazy default of 200
         headers => $self->{_headers},
     });
 
