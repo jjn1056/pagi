@@ -96,27 +96,24 @@ These methods return C<$self> for fluent chaining.
     my $code = $res->status;
 
 Set or get the HTTP status code (100-599). Returns C<$self> when setting
-for fluent chaining.
-
-B<Note:> The default status is 200, but this is not considered "explicitly set".
-Use C<has_status()> to check if status was explicitly set, or C<status_try()>
-to set a status only if one hasn't been explicitly chosen:
+for fluent chaining. When getting, returns 200 if no status has been set.
 
     my $res = PAGI::Response->new($scope, $send);
-    $res->status;           # 200 (default)
-    $res->has_status;       # false - not explicitly set
-    $res->status_try(202);  # sets to 202
-    $res->has_status;       # true - now explicitly set
-    $res->status_try(500);  # no-op, status already set
+    $res->status;           # 200 (default, nothing set yet)
+    $res->has_status;       # false
+    $res->status(201);      # set explicitly
+    $res->has_status;       # true
 
 =head2 status_try
 
     $res->status_try(404);
 
-Set the HTTP status code only if it has not already been explicitly set.
-The default status of 200 does not count as "set" - this method will
-override the default. Use this in middleware or error handlers to provide
-fallback status codes without overriding explicit choices by the application.
+Set the HTTP status code only if one hasn't been set yet. Useful in
+middleware or error handlers to provide fallback status codes without
+overriding choices made by the application:
+
+    $res->status_try(202);  # sets to 202 (nothing was set)
+    $res->status_try(500);  # no-op, 202 already set
 
 =head2 header
 
