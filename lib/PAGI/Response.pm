@@ -989,52 +989,6 @@ sub cors {
     return $self;
 }
 
-# Writer class for streaming
-package PAGI::Response::Writer {
-    use strict;
-    use warnings;
-    use Future::AsyncAwait;
-    use Carp qw(croak);
-
-    sub new {
-        my ($class, $send) = @_;
-        return bless {
-            send => $send,
-            bytes_written => 0,
-            closed => 0,
-        }, $class;
-    }
-
-    async sub write {
-        my ($self, $chunk) = @_;
-        croak("Writer already closed") if $self->{closed};
-        $self->{bytes_written} += length($chunk // '');
-        await $self->{send}->({
-            type => 'http.response.body',
-            body => $chunk,
-            more => 1,
-        });
-    }
-
-    async sub close {
-        my ($self) = @_;
-        return if $self->{closed};
-        $self->{closed} = 1;
-        await $self->{send}->({
-            type => 'http.response.body',
-            body => '',
-            more => 0,
-        });
-    }
-
-    sub bytes_written {
-        my ($self) = @_;
-        return $self->{bytes_written};
-    }
-}
-
-package PAGI::Response;
-
 async sub stream {
     my ($self, $callback) = @_;
     $self->_mark_sent;
@@ -1147,6 +1101,50 @@ async sub send_file {
     $body_event->{length} = $length if $length < $max_length;
 
     await $self->{send}->($body_event);
+}
+
+# Writer class for streaming responses
+package PAGI::Response::Writer {
+    use strict;
+    use warnings;
+    use Future::AsyncAwait;
+    use Carp qw(croak);
+
+    sub new {
+        my ($class, $send) = @_;
+        return bless {
+            send => $send,
+            bytes_written => 0,
+            closed => 0,
+        }, $class;
+    }
+
+    async sub write {
+        my ($self, $chunk) = @_;
+        croak("Writer already closed") if $self->{closed};
+        $self->{bytes_written} += length($chunk // '');
+        await $self->{send}->({
+            type => 'http.response.body',
+            body => $chunk,
+            more => 1,
+        });
+    }
+
+    async sub close {
+        my ($self) = @_;
+        return if $self->{closed};
+        $self->{closed} = 1;
+        await $self->{send}->({
+            type => 'http.response.body',
+            body => '',
+            more => 0,
+        });
+    }
+
+    sub bytes_written {
+        my ($self) = @_;
+        return $self->{bytes_written};
+    }
 }
 
 1;
