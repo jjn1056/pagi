@@ -4,16 +4,12 @@ use strict;
 use warnings;
 use Future::AsyncAwait;
 use Carp qw(croak);
-use Scalar::Util qw(refaddr);
-
-my %WRAPPED_APPS;
 
 
 sub new {
     my ($class, %args) = @_;
 
-    my $app = delete $args{app}
-        or croak "PAGI::Lifespan requires 'app' parameter";
+    my $app = delete $args{app};
 
     my @handlers;
     push @handlers, {
@@ -30,6 +26,32 @@ sub new {
 
 sub state { shift->{_state} }
 
+sub on_startup {
+    my ($self, $cb) = @_;
+    return $self->register(startup => $cb);
+}
+
+sub on_shutdown {
+    my ($self, $cb) = @_;
+    return $self->register(shutdown => $cb);
+}
+
+sub register {
+    my ($self, %args) = @_;
+    return $self unless $args{startup} || $args{shutdown};
+    push @{$self->{_handlers}}, {
+        startup  => $args{startup},
+        shutdown => $args{shutdown},
+    };
+    return $self;
+}
+
+sub for_scope {
+    my ($class, $scope) = @_;
+    croak "scope is required" unless $scope && ref($scope) eq 'HASH';
+    return $scope->{'pagi.lifespan.manager'} //= $class->new;
+}
+
 sub wrap {
     my ($class, $app, %args) = @_;
 
@@ -40,8 +62,8 @@ sub wrap {
 sub to_app {
     my ($self) = @_;
 
-    my $app      = $self->{app};
-    my $handlers = $self->{_handlers};
+    my $app = $self->{app};
+    croak "PAGI::Lifespan->to_app requires an app" unless $app;
 
     my $wrapper = async sub {
         my ($scope, $receive, $send) = @_;
@@ -49,51 +71,43 @@ sub to_app {
         my $type = $scope->{type} // '';
 
         if ($type eq 'lifespan') {
-            my $scope_handlers = $scope->{'pagi.lifespan.handlers'} //= [];
-            push @$scope_handlers, @$handlers if @$handlers;
-
-            # Always use state as the canonical shared state
+            $scope->{'pagi.lifespan.manager'} //= $self;
             $scope->{state} //= {};
-            my $state_ref = $scope->{state};
-            $self->{_state} = $state_ref;
-
-            if (_is_lifespan_wrapper($app)) {
-                await $app->($scope, $receive, $send);
-                return;
-            }
-
-            await _handle_lifespan($state_ref, $scope_handlers, $receive, $send);
-            return;
+            await $app->($scope, $receive, $send);
+            return await $self->handle($scope, $receive, $send);
         }
 
-        # Inject state into scope for all other request types
-        my $state_ref = $scope->{state} // {};
-        $self->{_state} = $state_ref;
-        my $inner_scope = { %$scope, state => $state_ref };
+        my $inner_scope = { %$scope };
+        $inner_scope->{state} //= ($self->{_state} // {});
+        $self->{_state} = $inner_scope->{state};
 
         await $app->($inner_scope, $receive, $send);
     };
 
-    $WRAPPED_APPS{refaddr($wrapper)} = 1;
     return $wrapper;
 }
 
-sub _is_lifespan_wrapper {
-    my ($app) = @_;
-    return unless ref($app);
-    return $WRAPPED_APPS{refaddr($app)} ? 1 : 0;
-}
+async sub handle {
+    my ($self, $scope, $receive, $send) = @_;
+    return 0 unless $scope && ($scope->{type} // '') eq 'lifespan';
+    return 0 if $scope->{'pagi.lifespan.handled'};
+    $scope->{'pagi.lifespan.handled'} = 1;
 
-async sub _handle_lifespan {
-    my ($state, $handlers, $receive, $send) = @_;
-    $handlers //= [];
+    my @handlers;
+    if (my $extra = $scope->{'pagi.lifespan.handlers'}) {
+        push @handlers, @$extra;
+    }
+    push @handlers, @{$self->{_handlers} // []};
+
+    my $state = $scope->{state} //= {};
+    $self->{_state} = $state;
 
     while (1) {
         my $msg = await $receive->();
         my $type = $msg->{type} // '';
 
         if ($type eq 'lifespan.startup') {
-            for my $handler (@$handlers) {
+            for my $handler (@handlers) {
                 next unless $handler->{startup};
                 eval { await $handler->{startup}->($state) };
                 if ($@) {
@@ -107,12 +121,12 @@ async sub _handle_lifespan {
             await $send->({ type => 'lifespan.startup.complete' });
         }
         elsif ($type eq 'lifespan.shutdown') {
-            for my $handler (reverse @$handlers) {
+            for my $handler (reverse @handlers) {
                 next unless $handler->{shutdown};
                 eval { await $handler->{shutdown}->($state) };
             }
             await $send->({ type => 'lifespan.shutdown.complete' });
-            return;
+            return 1;
         }
     }
 }

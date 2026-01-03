@@ -84,13 +84,34 @@ subtest 'lifespan run() helper' => sub {
     ok $shutdown_called, 'shutdown called after run()';
 };
 
-subtest 'lifespan wrappers aggregate hooks' => sub {
+subtest 'lifespan manager aggregates hooks' => sub {
     my @events;
 
-    my $base_app = async sub {
-        my ($scope, $receive, $send) = @_;
-        return if $scope->{type} eq 'lifespan';
+    my $lifespan = PAGI::Lifespan->new;
+    $lifespan->on_startup(async sub {
+        my ($state) = @_;
+        push @events, 'outer_start';
+        $state->{outer} = 1;
+    });
+    $lifespan->on_shutdown(async sub {
+        my ($state) = @_;
+        push @events, 'outer_stop';
+    });
+    $lifespan->on_startup(async sub {
+        my ($state) = @_;
+        push @events, 'inner_start';
+        $state->{inner} = 1;
+    });
+    $lifespan->on_shutdown(async sub {
+        my ($state) = @_;
+        push @events, 'inner_stop';
+    });
 
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            return await $lifespan->handle($scope, $receive, $send);
+        }
         await $send->({
             type    => 'http.response.start',
             status  => 200,
@@ -103,33 +124,7 @@ subtest 'lifespan wrappers aggregate hooks' => sub {
         });
     };
 
-    my $inner = PAGI::Lifespan->wrap(
-        $base_app,
-        startup => async sub {
-            my ($state) = @_;
-            push @events, 'inner_start';
-            $state->{inner} = 1;
-        },
-        shutdown => async sub {
-            my ($state) = @_;
-            push @events, 'inner_stop';
-        },
-    );
-
-    my $outer = PAGI::Lifespan->wrap(
-        $inner,
-        startup => async sub {
-            my ($state) = @_;
-            push @events, 'outer_start';
-            $state->{outer} = 1;
-        },
-        shutdown => async sub {
-            my ($state) = @_;
-            push @events, 'outer_stop';
-        },
-    );
-
-    my $client = PAGI::Test::Client->new(app => $outer, lifespan => 1);
+    my $client = PAGI::Test::Client->new(app => $app, lifespan => 1);
     $client->start;
     $client->get('/');
     $client->stop;
