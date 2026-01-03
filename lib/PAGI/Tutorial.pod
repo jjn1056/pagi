@@ -1096,7 +1096,7 @@ Key points:
 
 =head2 2.7 Lifespan Protocol (Application Lifecycle)
 
-The lifespan protocol allows your application to initialize resources on startup and clean them up on shutdown. The key feature is C<$scope-E<gt>{state}> - a hash that persists across all requests within a worker process.
+The lifespan protocol allows your application to initialize resources on startup and clean them up on shutdown. The key feature is C<$scope-E<gt>> - a hash that persists across all requests within a worker process.
 
 B<Important:> In worker mode (C<--workers N>), each worker runs lifespan independently after forking. This means each worker initializes its own database connections, cache handles, etc. This is actually good - most database connections can't be shared across forks anyway.
 

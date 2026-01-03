@@ -49,7 +49,7 @@ sub to_app {
         my ($scope, $receive, $send) = @_;
 
         # Inject instance state into scope (allows $req->state to work)
-        $scope->{'pagi.state'} //= $state;
+        $scope->{state} //= $state;
 
         # Dispatch to internal router
         await $app->($scope, $receive, $send);

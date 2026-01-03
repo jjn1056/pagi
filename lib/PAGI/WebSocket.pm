@@ -66,7 +66,7 @@ sub stash {
 # Application state (injected by PAGI::Lifespan, read-only)
 sub state {
     my $self = shift;
-    return $self->{scope}{'pagi.state'} // {};
+    return $self->{scope}{state} // {};
 }
 
 # Path parameter accessors - captured from URL path by router
@@ -982,4 +982,3 @@ L<PAGI::Server> - PAGI protocol server
 PAGI Contributors
 
 =cut
-

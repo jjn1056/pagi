@@ -6,6 +6,7 @@ use Future::AsyncAwait;
 
 use lib 'lib';
 use PAGI::Test::Client;
+use PAGI::Lifespan;
 
 my $startup_called = 0;
 my $shutdown_called = 0;
@@ -81,6 +82,63 @@ subtest 'lifespan run() helper' => sub {
     });
 
     ok $shutdown_called, 'shutdown called after run()';
+};
+
+subtest 'lifespan wrappers aggregate hooks' => sub {
+    my @events;
+
+    my $base_app = async sub {
+        my ($scope, $receive, $send) = @_;
+        return if $scope->{type} eq 'lifespan';
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => "ok",
+            more => 0,
+        });
+    };
+
+    my $inner = PAGI::Lifespan->wrap(
+        $base_app,
+        startup => async sub {
+            my ($state) = @_;
+            push @events, 'inner_start';
+            $state->{inner} = 1;
+        },
+        shutdown => async sub {
+            my ($state) = @_;
+            push @events, 'inner_stop';
+        },
+    );
+
+    my $outer = PAGI::Lifespan->wrap(
+        $inner,
+        startup => async sub {
+            my ($state) = @_;
+            push @events, 'outer_start';
+            $state->{outer} = 1;
+        },
+        shutdown => async sub {
+            my ($state) = @_;
+            push @events, 'outer_stop';
+        },
+    );
+
+    my $client = PAGI::Test::Client->new(app => $outer, lifespan => 1);
+    $client->start;
+    $client->get('/');
+    $client->stop;
+
+    is \@events, ['outer_start', 'inner_start', 'inner_stop', 'outer_stop'],
+        'startup runs outer->inner, shutdown runs inner->outer';
+
+    ok $client->state->{outer}, 'outer startup wrote to shared state';
+    ok $client->state->{inner}, 'inner startup wrote to shared state';
 };
 
 done_testing;

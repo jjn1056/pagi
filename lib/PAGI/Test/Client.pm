@@ -399,9 +399,9 @@ sub start {
     $self->{state} = {};
 
     my $scope = {
-        type  => 'lifespan',
-        pagi  => { version => '0.2', spec_version => '0.2' },
-        state => $self->{state},
+        type          => 'lifespan',
+        pagi          => { version => '0.2', spec_version => '0.2' },
+        state  => $self->{state},
     };
 
     my $phase = 'startup';
@@ -928,4 +928,3 @@ runs your callback, then calls stop. Exceptions propagate.
 L<PAGI::Test::Response>, L<PAGI::Test::WebSocket>, L<PAGI::Test::SSE>
 
 =cut
-

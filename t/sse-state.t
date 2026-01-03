@@ -9,7 +9,7 @@ subtest 'state accessor reads from scope' => sub {
         type    => 'sse',
         path    => '/events',
         headers => [],
-        'pagi.state' => { db => 'test-connection' },
+        state => { db => 'test-connection' },
     };
 
     my $sse = PAGI::SSE->new($scope, sub { }, sub { });

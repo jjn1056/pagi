@@ -10,7 +10,7 @@ subtest 'state accessor reads from scope' => sub {
         method  => 'GET',
         path    => '/',
         headers => [],
-        'pagi.state' => { db => 'test-connection', config => { env => 'test' } },
+        state => { db => 'test-connection', config => { env => 'test' } },
     };
 
     my $req = PAGI::Request->new($scope, sub { });
@@ -40,7 +40,7 @@ subtest 'state is separate from stash' => sub {
         method  => 'GET',
         path    => '/',
         headers => [],
-        'pagi.state' => { db => 'connection' },
+        state => { db => 'connection' },
     };
 
     my $req = PAGI::Request->new($scope, sub { });

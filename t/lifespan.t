@@ -68,7 +68,7 @@ subtest 'state injected into scope for requests' => sub {
 
     my $inner_app = async sub {
         my ($scope, $receive, $send) = @_;
-        $scope_state = $scope->{'pagi.state'};
+        $scope_state = $scope->{state};
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'ok' });
     };

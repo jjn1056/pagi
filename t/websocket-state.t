@@ -9,7 +9,7 @@ subtest 'state accessor reads from scope' => sub {
         type    => 'websocket',
         path    => '/ws',
         headers => [],
-        'pagi.state' => { db => 'test-connection' },
+        state => { db => 'test-connection' },
     };
 
     my $ws = PAGI::WebSocket->new($scope, sub { }, sub { });
@@ -36,7 +36,7 @@ subtest 'state is separate from stash' => sub {
         type    => 'websocket',
         path    => '/ws',
         headers => [],
-        'pagi.state' => { db => 'connection' },
+        state => { db => 'connection' },
     };
 
     my $ws = PAGI::WebSocket->new($scope, sub { }, sub { });

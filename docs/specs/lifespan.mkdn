@@ -176,4 +176,3 @@ sees this it should log/print the message provided and then terminate.
 ## Copyright
 
 This document has been placed in the public domain.
-

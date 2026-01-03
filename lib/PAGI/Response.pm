@@ -162,21 +162,6 @@ httponly, samesite.
 
 Delete a cookie by setting it with Max-Age=0.
 
-=head2 path_param
-
-    my $id = $res->path_param('id');
-
-Returns a path parameter by name. Path parameters are captured from the URL
-path by a router and stored in C<< $scope->{path_params} >>. Returns C<undef>
-if the parameter is not found or if no scope was provided.
-
-=head2 path_params
-
-    my $params = $res->path_params;
-
-Returns hashref of all path parameters from scope. Returns an empty hashref
-if no path parameters exist or if no scope was provided.
-
 =head2 stash
 
     my $user = $res->stash->{user};
@@ -820,21 +805,6 @@ sub has_header {
 sub has_content_type {
     my ($self) = @_;
     return $self->{_content_type_set} ? 1 : 0;
-}
-
-# Path parameters - captured from URL path by router
-# Stored in scope->{path_params} for router-agnostic access
-sub path_params {
-    my ($self) = @_;
-    return {} unless $self->{scope};
-    return $self->{scope}{path_params} // {};
-}
-
-sub path_param {
-    my ($self, $name) = @_;
-    return undef unless $self->{scope};
-    my $params = $self->{scope}{path_params} // {};
-    return $params->{$name};
 }
 
 # Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
