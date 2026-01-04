@@ -54,7 +54,7 @@ perl5/
 .claude
 CLAUDE.md
 AGENTS.md
-TODO*.md
+# TODO*.md - now tracked
 
 # Local working docs
 docs/plans/
