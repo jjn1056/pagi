@@ -8,7 +8,7 @@ Complete or upcoming implementations of PAGI-compatible components — servers, 
 
 ## Application Frameworks
 
-(None yet — contributions welcome!)
+- **Thunderhorse** — A no-compromises async web framework built on PAGI. Features controller-based architecture, WebSocket and SSE support, Template::Toolkit integration, middleware system, and context-based request handling. Protocols: `http`, `websocket`, `sse`. Status: **beta**. [MetaCPAN](https://metacpan.org/dist/Thunderhorse)
 
 ## Middleware & Apps
 
