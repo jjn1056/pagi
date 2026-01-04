@@ -1,5 +1,27 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001013 - 2026-01-04
+  [New Features]
+  - Add PAGI::Utils::handle_lifespan utility for simplified lifespan handling
+  - Add Response getters (status, headers, content_type, body) and try setters
+  - Support static path rewrites in PAGI::App::File
+  - Add full-demo example demonstrating lifespan, HTTP, WebSocket, and SSE
+
+  [Bug Fixes]
+  - Fix POD formatting of nested angle brackets
+  - Make handle_lifespan croak on wrong scope type for clearer error messages
+
+  [Improvements]
+  - Match plackup FindBin behavior for app loading
+  - Refactor PAGI::Response to use exists() for lazy defaults
+  - Remove deprecated path_param/path_params from PAGI::Response
+  - Document state method in PAGI::Request
+  - Normalize spec docs to ASCII
+
+  [Build/Distribution]
+  - Add .editorconfig for consistent editor settings
+  - Add Thunderhorse to implementations documentation
+
 0.001012 - 2026-01-01
   [New Features]
   - PAGI 0.2 specification: Loop-agnostic apps, SSE POST support, keepalive events
