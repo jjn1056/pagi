@@ -25,6 +25,8 @@ Examples assume you understand the core spec (`docs/specs/main.mkdn`) plus the r
 10. `10-chat-showcase` - WebSocket chat demo with multiple clients
 11. `11-job-runner` - background job processing example
 12. `12-utf8` - UTF-8 handling demonstration
+13. `13-contact-form` - form parsing and file uploads
+14. `14-lifespan-utils` - lifespan hooks via PAGI::Utils
 
 ## Built-in Apps
 Additional example apps are bundled in `lib/PAGI/App/`:

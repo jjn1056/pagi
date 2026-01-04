@@ -214,12 +214,14 @@ subtest 'handle_lifespan in inner app with outer hooks' => sub {
         'inner handler runs after outer hook registration';
 };
 
-subtest 'handle_lifespan returns 0 for non-lifespan scope' => sub {
+subtest 'handle_lifespan croaks for non-lifespan scope' => sub {
     my $scope = { type => 'http' };
     my $receive = async sub { return { type => 'http.disconnect' } };
     my $send = async sub { };
 
-    is handle_lifespan($scope, $receive, $send)->get, 0, 'non-lifespan returns 0';
+    like dies { handle_lifespan($scope, $receive, $send)->get },
+        qr/handle_lifespan called with scope type 'http'.*expected 'lifespan'/,
+        'croaks with helpful message for wrong scope type';
 };
 
 subtest 'handle_lifespan reports startup failure' => sub {

@@ -1,0 +1,937 @@
+# PAGI-Channels Design Document
+
+**Version**: 0.3
+**Status**: Design Document
+**Distribution**: PAGI-Channels (standalone, separate from PAGI and PAGI-Server)
+
+This document describes the design for `PAGI-Channels`, a standalone distribution
+that provides cross-process and cross-server messaging for PAGI applications
+via a middleware wrapper pattern.
+
+## Architecture
+
+PAGI-Channels follows the ASGI ecosystem pattern: **the server knows nothing
+about channel layers**. Channel support is provided via middleware that wraps
+your application:
+
+```perl
+use PAGI::Channels;
+use PAGI::Server;
+
+# Create channel layer (memory backend for v1)
+my $channels = PAGI::Channels->new(
+    backend => 'memory://',  # Redis backend: future, requires Future::IO::Redis
+);
+
+# Wrap your app - injects scope keys, handles cleanup
+my $app = $channels->wrap(async sub {
+    my ($scope, $receive, $send) = @_;
+
+    if (my $ch = $scope->{'pagi.channels'}) {
+        await $ch->subscribe("chat.room");
+        # ...
+    }
+});
+
+# Server is completely unaware of channel layer
+PAGI::Server->new(app => $app)->run;
+```
+
+This approach:
+
+- Works with ANY PAGI-compliant server (IO::Async, Mojo, etc.)
+- Keeps PAGI::Server lean and focused
+- Follows established ASGI patterns (Django Channels, Starlette/Broadcaster)
+- Channel layer dependencies don't bloat the core distributions
+
+Applications access the channel layer via scope keys injected by the wrapper:
+
+```perl
+my $channels = $scope->{'pagi.channels'};   # Channel layer interface
+my $my_channel = $scope->{'pagi.channel'};  # This connection's unique channel name
+```
+
+## Scope and Backends
+
+### v1: Memory Backend Only
+
+The initial release ships with an in-memory backend only:
+
+```perl
+my $channels = PAGI::Channels->new(
+    backend => 'memory://',  # or just omit for default
+);
+```
+
+The Memory backend:
+- Works with any PAGI server (truly server-agnostic)
+- Suitable for development, testing, and single-process production
+- Full semantics (expiry, capacity, FIFO, etc.)
+
+### Future: Redis Backend
+
+Redis backend is deferred because async Redis clients are event-loop specific:
+
+| Event Loop | Redis Client |
+|------------|--------------|
+| IO::Async | Net::Async::Redis |
+| Mojo::IOLoop | Mojo::Redis |
+| Future::IO | ❌ doesn't exist |
+
+Using an event-loop-specific Redis client would violate PAGI's server-agnostic
+principle. The Redis backend requires `Future::IO::Redis` - an event-loop
+agnostic Redis client built on Future::IO primitives.
+
+Once Future::IO::Redis exists:
+
+```perl
+my $channels = PAGI::Channels->new(
+    backend => 'redis://localhost:6379',
+);
+```
+
+This is a separate project that would benefit the entire Perl async ecosystem.
+
+## Motivation
+
+PAGI's core spec handles single-connection lifecycles well, but production
+deployments often require:
+
+- Broadcasting messages to multiple connections across workers
+- Communication between worker pool processes and connection handlers
+- Horizontal scaling across multiple servers
+- Subscription state that survives worker restarts
+
+## Scope Keys
+
+The `wrap()` middleware injects these keys into every scope:
+
+- `pagi.channels` - The channel layer interface (same instance for all connections)
+- `pagi.channel` - Unique channel name for this connection (e.g., `"conn.a4f2b8"`)
+
+These keys are only present when using the `PAGI::Channels->wrap()` middleware.
+
+## Channel Names
+
+Each connection has a unique channel name for point-to-point messaging:
+
+```perl
+my $my_channel = $scope->{'pagi.channel'};  # e.g., "conn.w1.a4f2b"
+```
+
+Channel names:
+- MUST be unique across all workers/servers for the connection's lifetime
+- MUST contain only ASCII alphanumerics, dots, hyphens, underscores, and colons
+- MUST NOT exceed 100 characters
+- SHOULD be prefixed with a namespace (e.g., `conn.`, `worker.`, `task.`)
+
+## Topics (Groups)
+
+Topics are named channels for broadcast messaging. Multiple connections can
+subscribe to a topic and receive all messages published to it.
+
+Topic names follow the same character restrictions as channel names.
+
+## Interface
+
+### send($channel, $message) → Future
+
+Send a message to a specific channel (point-to-point).
+
+```perl
+await $channels->send("conn.w2.x7y8z", {
+    type => 'chat.message',
+    text => 'Hello!',
+});
+```
+
+- `$channel` (String) - Target channel name
+- `$message` (HashRef) - Message payload, MUST contain `type` key
+- Returns: Future that resolves when message is queued (not necessarily delivered)
+
+Use for: request/reply patterns, targeted notifications.
+
+### subscribe($topic) → Future
+
+Subscribe this connection's channel to a topic.
+
+```perl
+await $channels->subscribe("chat.room.42");
+```
+
+- `$topic` (String) - Topic name to subscribe to
+- Returns: Future that resolves when subscription is recorded
+
+Alias: `group_add($topic, $my_channel)` for Django Channels compatibility.
+
+### unsubscribe($topic) → Future
+
+Unsubscribe this connection's channel from a topic.
+
+```perl
+await $channels->unsubscribe("chat.room.42");
+```
+
+- `$topic` (String) - Topic name to unsubscribe from
+- Returns: Future that resolves when subscription is removed
+
+Alias: `group_discard($topic, $my_channel)` for Django Channels compatibility.
+
+### publish($topic, $message, %options) → Future
+
+Send a message to all subscribers of a topic.
+
+```perl
+await $channels->publish("chat.room.42", {
+    type => 'chat.message',
+    user => 'alice',
+    text => 'Hello everyone!',
+});
+
+# Exclude sender (common for chat)
+await $channels->publish("chat.room.42", $msg, exclude => $my_channel);
+
+# Exclude multiple channels
+await $channels->publish("chat.room.42", $msg, exclude => [$ch1, $ch2]);
+```
+
+- `$topic` (String) - Target topic name
+- `$message` (HashRef) - Message payload, MUST contain `type` key
+- `%options`:
+  - `exclude` (String|ArrayRef) - Channel(s) to exclude from broadcast
+- Returns: Future that resolves when message is queued to all current subscribers
+
+Alias: `group_send($topic, $message)` for Django Channels compatibility.
+
+### Low-Level Group API (Optional)
+
+For advanced use cases where you need to manage subscriptions for channels
+other than your own:
+
+```perl
+# Add any channel to a group
+await $channels->group_add("notifications.admin", $other_channel);
+
+# Remove any channel from a group
+await $channels->group_discard("notifications.admin", $other_channel);
+```
+
+Implementations MUST support these for worker pool patterns.
+
+## Receiving Messages
+
+Channel layer messages are delivered via **queue interleaving**. Messages
+appear in the connection's receive queue, interleaved with protocol events:
+
+```perl
+while (1) {
+    my $event = await $receive->();
+
+    if ($event->{type} eq 'websocket.receive') {
+        # Regular WebSocket message from client
+    }
+    elsif ($event->{type} eq 'chat.message') {
+        # Message from channel layer
+        await $send->({
+            type => 'websocket.send',
+            text => encode_json($event),
+        });
+    }
+    elsif ($event->{type} eq 'websocket.disconnect') {
+        last;
+    }
+}
+```
+
+The wrapped `$receive` checks the channel queue first, then falls through to
+protocol events. Apps can distinguish by checking `$event->{type}` - protocol
+events use prefixes like `websocket.`, `http.`, `sse.`
+
+## Message Format
+
+All messages MUST be HashRefs containing at minimum:
+
+- `type` (String) - Message type, used for routing/dispatch
+
+Messages SHOULD be JSON-serializable for cross-process transport.
+Implementations MAY reject messages that cannot be serialized.
+
+```perl
+# Good
+{ type => 'user.joined', user_id => 123, name => 'alice' }
+
+# Bad - contains non-serializable reference
+{ type => 'data', handle => $filehandle }
+```
+
+## Delivery Guarantees
+
+Channel layers provide **at-most-once** delivery:
+
+- Messages MAY be lost if a channel/connection disappears before delivery
+- Messages are NOT persisted across server restarts
+- Messages are NOT retried on failure
+- Order is preserved for messages from the same sender to the same recipient
+
+For stronger guarantees (at-least-once, exactly-once), use a dedicated
+message queue system (RabbitMQ, etc.) and integrate via the channel layer.
+
+**No History:** Subscribers only receive messages published after they
+subscribe. There is no message replay or catch-up mechanism.
+
+## Message Expiry
+
+Messages MUST expire if unread within a configurable timeout.
+
+- Default expiry: 60 seconds
+- Implementations MUST NOT deliver expired messages
+- Implementations MUST clean up expired messages to prevent memory growth
+- Each message expires independently based on when it was sent
+
+Implementations SHOULD support configuring expiry timeout. The mechanism
+for configuration is implementation-defined (constructor arguments, config
+file, environment variables, etc.).
+
+This prevents memory exhaustion when receivers are slow or dead, and ensures
+stale messages don't suddenly appear after long delays.
+
+## Capacity and Backpressure
+
+Channel layers MUST define per-channel capacity to prevent unbounded memory
+growth.
+
+- Default capacity: 100 messages per channel
+- `send()` to a full channel MUST die with a `ChannelFull` error
+- `publish()` MUST NOT die even if subscriber channels are full; instead,
+  messages to full channels are silently dropped (at-most-once semantics)
+
+```perl
+# Handling ChannelFull in application code
+eval {
+    await $channels->send($target, $message);
+};
+if ($@ && $@ =~ /ChannelFull/) {
+    # Target channel is overwhelmed, handle gracefully
+    warn "Channel $target is full, message dropped";
+}
+```
+
+Implementations SHOULD support configuring capacity. The mechanism for
+configuration is implementation-defined.
+
+The distinction between `send` and `publish` behavior:
+
+- `send` is point-to-point; the sender expects delivery and should know if
+  it fails
+- `publish` is broadcast; some subscribers being slow shouldn't block others
+  or raise errors
+
+## Group Membership Expiry
+
+Group (topic) memberships MUST expire after a configurable timeout to handle
+cleanup when disconnect handlers fail to run (e.g., server crash, network
+partition).
+
+- Default group expiry: 86400 seconds (24 hours)
+- After expiry, `publish()` no longer targets the stale channel
+- Implementations SHOULD refresh expiry on each `subscribe()` call
+- Implementations MAY use heartbeats to extend membership
+
+Implementations SHOULD support configuring group expiry timeout.
+
+This is a safety net. Normal cleanup happens via `unsubscribe()` or automatic
+cleanup on connection close. Group expiry handles the abnormal cases.
+
+## Message Size Limits
+
+Implementations MUST support messages up to 1MB when serialized.
+
+- Default max size: 1,048,576 bytes (1MB)
+- Implementations MUST reject larger messages with a clear error before sending
+- The size limit applies to the serialized form (JSON, Sereal, etc.)
+
+```perl
+# Oversized message handling
+eval {
+    await $channels->send($target, $large_message);
+};
+if ($@ && $@ =~ /MessageTooLarge/) {
+    # Message exceeds size limit
+}
+```
+
+Implementations SHOULD support configuring max message size.
+
+For larger payloads, applications should store data externally (database, S3)
+and send a reference via the channel layer.
+
+## FIFO Ordering
+
+Messages are delivered in FIFO (First-In-First-Out) order:
+
+- Messages from sender A to recipient B arrive in the order A sent them
+- No ordering guarantees between different senders
+- If multiple consumers receive from the same channel (worker pool pattern),
+  each message is delivered to exactly one consumer (no duplicates)
+
+## Idempotency
+
+Subscription operations MUST be idempotent:
+
+- `subscribe($topic)` when already subscribed: no-op, no duplicate deliveries
+- `unsubscribe($topic)` when not subscribed: no-op, no error
+- `unsubscribe($topic)` then `publish($topic, ...)`: no delivery to
+  unsubscribed channel
+
+## Flush API (Testing)
+
+Implementations MUST provide a `flush()` method for test isolation:
+
+```perl
+await $channels->flush();
+```
+
+Flush MUST:
+- Clear all pending messages from all channels
+- Remove all group memberships
+- Reset capacity counters
+- Leave the channel layer in a clean, deterministic state
+
+This is primarily for test setup/teardown. Production code should not call
+`flush()`.
+
+## Automatic Cleanup
+
+When a connection closes:
+
+- Implementations MUST automatically unsubscribe the connection's channel
+  from all topics
+- Implementations SHOULD clean up the channel name for reuse
+
+Applications do not need to manually unsubscribe on disconnect.
+
+## Lifespan Handling
+
+The `wrap()` middleware injects `pagi.channels` into all scope types,
+including `lifespan`. This allows applications to initialize channel-dependent
+features at startup:
+
+```perl
+my $inner_app = async sub {
+    my ($scope, $receive, $send) = @_;
+
+    if ($scope->{type} eq 'lifespan') {
+        my $event = await $receive->();
+        if ($event->{type} eq 'lifespan.startup') {
+            # pagi.channels is available here
+            my $channels = $scope->{'pagi.channels'};
+            log_info("Channel layer ready: " . ref($channels));
+            await $send->({ type => 'lifespan.startup.complete' });
+        }
+    }
+    # ... handle other scope types
+};
+
+# Wrap with channel layer
+my $app = $channels->wrap($inner_app);
+```
+
+Applications that may or may not use channel layer can check for availability:
+
+```perl
+if (my $ch = $scope->{'pagi.channels'}) {
+    # Using channel layer
+} else {
+    # Running without wrapper - single-process fallback
+}
+```
+
+## Implementation Requirements
+
+### MUST
+
+- Implement `send`, `subscribe`, `unsubscribe`, `publish`, `flush`, `poll`, `cleanup`
+- Implement queue interleaving receive mechanism
+- Support the `exclude` option on `publish`
+- Auto-cleanup subscriptions on connection close (via `cleanup()`)
+- Work correctly in single-process mode (for development/testing)
+- Expire unread messages after configurable timeout (default: 60s)
+- Enforce per-channel capacity limits (default: 100 messages)
+- Return `Future->fail('ChannelFull', ...)` on `send()` to full channel
+- Drop silently on `publish()` to full subscriber channels
+- Expire group memberships after configurable timeout (default: 86400s)
+- Support messages up to 1MB serialized; reject larger with `Future->fail('MessageTooLarge', ...)`
+- Deliver messages in FIFO order (per sender-recipient pair)
+- Ensure idempotent subscribe/unsubscribe operations
+- Validate channel/topic names (charset, length ≤100)
+- Implement Backend role (Role::Tiny)
+
+### SHOULD
+
+- Provide zero-configuration development mode (no external services required)
+- Implement `group_add`/`group_discard`/`group_send` aliases
+- Log warnings for undeliverable messages (dead channels)
+- Refresh group membership expiry on re-subscribe
+- Support configurable expiry, capacity, group_expiry, max_size
+- Default to memory:// backend if not specified
+- Support `PAGI_CHANNELS_BACKEND` environment variable
+
+### MAY
+
+- Implement `local_publish` for current-process-only broadcast
+- Implement pattern subscriptions (e.g., `chat.*`)
+- Implement presence tracking (who's subscribed to a topic)
+- Implement message history/replay
+- Use heartbeats to extend group membership
+
+## Example: Chat Room
+
+```perl
+my $app = async sub {
+    my ($scope, $receive, $send) = @_;
+    return unless $scope->{type} eq 'websocket';
+
+    my $channels = $scope->{'pagi.channels'};
+    my $my_channel = $scope->{'pagi.channel'};
+    my $room = $scope->{path_params}{room} // 'general';
+
+    await $send->({ type => 'websocket.accept' });
+    await $channels->subscribe("chat.$room");
+
+    eval {
+        while (1) {
+            my $event = await $receive->();
+
+            if ($event->{type} eq 'websocket.receive') {
+                # Broadcast to room (excluding self)
+                await $channels->publish("chat.$room", {
+                    type => 'chat.message',
+                    text => $event->{text},
+                }, exclude => $my_channel);
+            }
+            elsif ($event->{type} eq 'chat.message') {
+                # Forward to this client
+                await $send->({
+                    type => 'websocket.send',
+                    text => $event->{text},
+                });
+            }
+            elsif ($event->{type} eq 'websocket.disconnect') {
+                last;
+            }
+        }
+    };
+
+    # Cleanup happens automatically, but explicit is fine too
+    await $channels->unsubscribe("chat.$room");
+};
+```
+
+## Example: Worker Pool Request/Reply
+
+```perl
+# In connection handler - dispatch blocking work
+my $my_channel = $scope->{'pagi.channel'};
+
+await $channels->send("worker.pool", {
+    type     => 'task.execute',
+    task     => 'send_email',
+    args     => { to => 'user@example.com', subject => 'Hello' },
+    reply_to => $my_channel,
+});
+
+# Wait for result (appears in receive queue)
+while (1) {
+    my $event = await $receive->();
+    if ($event->{type} eq 'task.result') {
+        my $result = $event->{result};
+        last;
+    }
+    # Handle other events...
+}
+```
+
+```perl
+# In worker pool process
+while (1) {
+    my $task = await $receive->();
+
+    if ($task->{type} eq 'task.execute') {
+        my $result = do_blocking_work($task);
+
+        await $channels->send($task->{reply_to}, {
+            type   => 'task.result',
+            result => $result,
+        });
+    }
+}
+```
+
+## Example: Server-Side Push
+
+Push from HTTP endpoint to WebSocket connections:
+
+```perl
+# HTTP endpoint that triggers notification
+my $http_app = async sub {
+    my ($scope, $receive, $send) = @_;
+    return unless $scope->{type} eq 'http';
+
+    my $channels = $scope->{'pagi.channels'};
+    my $user_id = get_user_id($scope);
+
+    # Publish to user's notification topic
+    await $channels->publish("notifications.user.$user_id", {
+        type    => 'notification',
+        title   => 'New message',
+        body    => 'You have a new message',
+    });
+
+    await $send->({ type => 'http.response.start', status => 200 });
+    await $send->({ type => 'http.response.body', body => 'OK' });
+};
+
+# WebSocket handler subscribes to user's notifications
+my $ws_app = async sub {
+    my ($scope, $receive, $send) = @_;
+    my $channels = $scope->{'pagi.channels'};
+    my $user_id = get_user_id($scope);
+
+    await $send->({ type => 'websocket.accept' });
+    await $channels->subscribe("notifications.user.$user_id");
+
+    # Messages from HTTP endpoint appear here
+    while (1) {
+        my $event = await $receive->();
+        if ($event->{type} eq 'notification') {
+            await $send->({
+                type => 'websocket.send',
+                text => encode_json($event),
+            });
+        }
+        # ...
+    }
+};
+```
+
+---
+
+## Implementation Details
+
+This section covers internal implementation decisions.
+
+### The wrap() Method
+
+The `wrap()` method creates a middleware that:
+
+1. Generates unique channel name
+2. Injects scope keys
+3. Wraps receive to interleave channel messages
+4. Calls inner app
+5. Cleans up when inner app returns (or dies)
+
+```perl
+sub wrap {
+    my ($self, $inner_app) = @_;
+
+    return async sub {
+        my ($scope, $receive, $send) = @_;
+
+        # 1. Generate unique channel name
+        my $channel_name = $self->_generate_channel_name();
+
+        # 2. Inject scope keys
+        $scope->{'pagi.channels'} = $self;
+        $scope->{'pagi.channel'} = $channel_name;
+
+        # 3. Wrap receive - poll channel queue first
+        my $wrapped_receive = async sub {
+            if (my $msg = $self->{backend}->poll($channel_name)) {
+                return $msg;
+            }
+            return await $receive->();
+        };
+
+        # 4. Call inner app
+        my $err;
+        eval { await $inner_app->($scope, $wrapped_receive, $send) };
+        $err = $@;
+
+        # 5. Always cleanup, even on error
+        $self->{backend}->cleanup($channel_name);
+
+        die $err if $err;
+    };
+}
+```
+
+The wrapped receive polls the channel queue first (non-blocking), then falls
+through to the protocol receive. This interleaves channel messages with
+WebSocket/SSE/HTTP events.
+
+### Channel Name Generation
+
+Channel names use PID + timestamp + counter for uniqueness:
+
+```perl
+sub _generate_channel_name {
+    my ($self) = @_;
+    $self->{_counter}++;
+    return sprintf("conn.%d.%d.%d", $$, time(), $self->{_counter});
+    # e.g., "conn.12345.1735689600.1"
+}
+```
+
+This is multi-process safe (PID differentiates) and debuggable.
+
+### Backend Interface
+
+Backends implement a Role::Tiny role:
+
+```perl
+package PAGI::Channels::Backend;
+use Role::Tiny;
+
+requires qw(
+    send
+    poll
+    subscribe
+    unsubscribe
+    publish
+    flush
+    cleanup
+);
+
+1;
+```
+
+| Method | Signature | Purpose |
+|--------|-----------|---------|
+| `send` | `($channel, $msg)` | Queue message for channel |
+| `poll` | `($channel)` | Non-blocking check, returns msg or undef |
+| `subscribe` | `($channel, $topic)` | Add channel to topic group |
+| `unsubscribe` | `($channel, $topic)` | Remove channel from topic |
+| `publish` | `($topic, $msg, %opts)` | Send to all topic subscribers |
+| `flush` | `()` | Clear all state (testing) |
+| `cleanup` | `($channel)` | Remove channel and all subscriptions |
+
+### Error Handling
+
+Errors use Future->fail for async-native error handling:
+
+```perl
+sub send {
+    my ($self, $channel, $msg) = @_;
+
+    return Future->fail('ChannelFull', 'channel', $channel)
+        if $self->_is_full($channel);
+
+    return Future->fail('MessageTooLarge', 'size', length($serialized))
+        if $self->_too_large($msg);
+
+    # Success
+    return Future->done(1);
+}
+```
+
+Callers can handle errors with Future chains:
+
+```perl
+# Pattern 1: await with eval (failure rethrows)
+eval { await $ch->send($target, $msg) };
+
+# Pattern 2: Future->catch
+await $ch->send($target, $msg)->catch(sub {
+    my ($category, @details) = @_;
+    if ($category eq 'ChannelFull') {
+        warn "Channel full, dropping";
+        return;  # Swallow error
+    }
+    die $category;  # Re-throw
+});
+
+# Pattern 3: Fallback chain
+await $ch->send($primary, $msg)->else(sub {
+    $ch->send($fallback, $msg)
+});
+```
+
+Error categories:
+- `ChannelFull` - send() to channel at capacity
+- `MessageTooLarge` - message exceeds max_size
+- `InvalidChannelName` - bad characters or too long
+- `InvalidTopicName` - bad characters or too long
+
+### Serialization
+
+Serialization is a backend concern:
+
+- **Memory backend**: No serialization. Stores HashRefs directly.
+- **Redis backend** (future): Serializes on send (JSON/Sereal), deserializes on receive.
+
+The facade API always deals with HashRefs. This keeps Memory backend fast
+with zero serialization overhead.
+
+Messages must be serializable for cross-process backends. Memory backend
+won't enforce this, but non-serializable messages will fail with Redis.
+
+### Concurrency
+
+**Memory backend** requires no locking:
+
+- Single-process async (IO::Async, Mojo) has one thread of execution
+- Code runs atomically between `await` points
+- No concurrent access to data structures
+
+```perl
+# Safe - no await between read and modify
+sub send {
+    my ($self, $channel, $msg) = @_;
+    push @{$self->{queues}{$channel}}, $msg;  # Atomic
+    return Future->done(1);
+}
+```
+
+**Memory backend is single-process only.** For multi-process deployments,
+use Redis backend (future).
+
+### Future: Redis Backend Concurrency
+
+Redis backend handles concurrency differently:
+
+- **Redis commands are atomic** - no locking needed for single operations
+- **Multi-step operations may race** - acceptable for at-most-once semantics
+- **Use MULTI/EXEC** for operations requiring atomicity:
+
+```perl
+# Atomic unsubscribe + cleanup
+$redis->multi;
+$redis->srem("group.$topic", $channel);
+$redis->del("queue.$channel");
+$redis->exec;
+```
+
+Race conditions (e.g., publish to channel that just unsubscribed) are
+acceptable - messages may be lost, matching at-most-once guarantees.
+
+### Default Backend
+
+Backend defaults to memory if not specified:
+
+```perl
+sub new {
+    my ($class, %args) = @_;
+
+    my $backend_uri = $args{backend}
+        // $ENV{PAGI_CHANNELS_BACKEND}
+        // 'memory://';
+
+    my $backend = $class->_parse_backend($backend_uri);
+    ...
+}
+```
+
+Precedence:
+1. Constructor `backend` argument
+2. `PAGI_CHANNELS_BACKEND` environment variable
+3. `memory://` (default)
+
+### Testing Pattern
+
+No special test integration needed. Use `wrap()` same as production:
+
+```perl
+use Test2::V0;
+use PAGI::Channels;
+use PAGI::Test::Client;
+
+my $channels = PAGI::Channels->new();  # Memory backend
+
+my $inner_app = async sub {
+    my ($scope, $receive, $send) = @_;
+    # ... app code using $scope->{'pagi.channels'}
+};
+
+my $app = $channels->wrap($inner_app);
+my $client = PAGI::Test::Client->new(app => $app);
+
+# Test WebSocket with channels
+$client->websocket('/chat', sub {
+    my ($ws) = @_;
+    $ws->send_text('hello');
+    # ...
+});
+
+# Inject messages directly for testing
+$channels->publish("chat.room", { type => 'test.event', data => 'injected' });
+
+# Clean state between tests
+await $channels->flush();
+
+done_testing;
+```
+
+---
+
+## Design Rationale
+
+### Why a Standalone Distribution?
+
+We considered three approaches:
+
+1. **Integrate into PAGI spec** - Make channel layer a protocol extension
+2. **Integrate into PAGI::Server** - Add as a server feature (role, subclass)
+3. **Standalone middleware** - Separate distribution, server-agnostic
+
+We chose **#3 (standalone middleware)** because:
+
+**Following ASGI precedent:**
+In the Python ASGI ecosystem, channel layers are NOT part of the core spec.
+Django Channels and Starlette/Broadcaster are separate libraries. The ASGI
+servers (Uvicorn, Daphne) know nothing about channel layers. This separation
+has worked well.
+
+**Server agnosticism:**
+A middleware wrapper works with ANY PAGI-compliant server - whether it's
+PAGI::Server (IO::Async), a future Mojo-based implementation, or anything else.
+No server modifications required.
+
+**Clean separation of concerns:**
+- PAGI spec defines `($scope, $receive, $send)` - the connection lifecycle
+- PAGI::Server implements that spec
+- PAGI-Channels provides cross-connection messaging as an opt-in layer
+
+**Dependency isolation:**
+Redis, PostgreSQL, and other backend dependencies stay in PAGI-Channels,
+not bloating PAGI or PAGI-Server.
+
+### The Middleware Pattern
+
+```perl
+my $app = $channels->wrap($inner_app);
+```
+
+The `wrap()` method returns a new PAGI app that:
+
+1. Generates a unique channel name for each connection
+2. Registers the connection with the channel layer
+3. Injects `pagi.channels` and `pagi.channel` into scope
+4. Calls the inner app
+5. Cleans up (unsubscribes, unregisters) when the connection ends
+
+This is transparent to both the server and the inner application.
+
+---
+
+## Appendix: Compatibility Aliases
+
+For users familiar with Django Channels terminology:
+
+| PAGI | Django Channels |
+|------|-----------------|
+| `subscribe($topic)` | `group_add($group, $channel)` |
+| `unsubscribe($topic)` | `group_discard($group, $channel)` |
+| `publish($topic, $msg)` | `group_send($group, $msg)` |
+| `send($channel, $msg)` | `send($channel, $msg)` |
+
+Implementations SHOULD support both naming conventions.

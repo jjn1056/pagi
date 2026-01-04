@@ -1,0 +1,1266 @@
+# Worker Pool Middleware
+
+**Status**: DESIGN - Draft
+
+**Version**: 0.2
+
+This document describes the design for a Worker Pool middleware that enables
+PAGI applications to offload blocking operations to separate worker processes
+without blocking the main event loop. This allows use of existing synchronous
+Perl modules (DBI, LWP::UserAgent, etc.) while maintaining async responsiveness.
+
+**Note:** This is middleware, not a core PAGI spec. Implementation will use
+Future::IO for loop-agnostic async I/O and may build on the Channel Layer
+once available.
+
+## Motivation
+
+The Perl ecosystem has limited async-ready CPAN modules compared to the
+synchronous alternatives. Applications often need to:
+
+- Query databases using DBI
+- Make HTTP requests using LWP or HTTP::Tiny
+- Call legacy code that performs blocking I/O
+- Use CPAN modules that haven't been ported to async patterns
+
+Without a worker pool, these blocking calls freeze the event loop, starving
+other connections (especially long-lived WebSocket/SSE clients).
+
+## Design Principles
+
+This extension draws from patterns established in Python's async ecosystem:
+
+- **Starlette/FastAPI**: Thread pools with capacity limiting via AnyIO
+- **Django's asgiref**: `sync_to_async` with thread-sensitive context
+- **Celery**: Bounded queues with backpressure
+
+Key insights applied to PAGI:
+
+1. **Bounded queues are mandatory** - Unbounded queues just move the problem
+2. **Backpressure must be explicit** - Fail fast, let apps decide how to handle
+3. **Sync detection should be declarative** - Mark handlers, don't guess
+4. **Serialization constraints are a feature** - Forces clean architecture
+5. **This is a bridge, not a destination** - Prefer native async code when possible
+
+## Extension Discovery
+
+Servers that implement this extension **must** expose the worker pool
+in the scope under `pagi.extensions.worker_pool`:
+
+```perl
+async sub app ($scope, $receive, $send) {
+    my $pool = $scope->{pagi}{extensions}{worker_pool};
+
+    if ($pool) {
+        # Worker pool available
+    } else {
+        # Extension not supported - fall back or error
+    }
+}
+```
+
+### Lifespan Discovery
+
+During lifespan startup, servers **should** indicate worker pool support
+in the `pagi.extensions` list:
+
+```perl
+# In lifespan scope
+{
+    type => 'lifespan',
+    pagi => {
+        extensions => ['worker_pool'],  # Advertise support
+    },
+}
+```
+
+Applications can check for worker pool support during startup and fail
+early if it's required but not available:
+
+```perl
+async sub app ($scope, $receive, $send) {
+    if ($scope->{type} eq 'lifespan') {
+        my $extensions = $scope->{pagi}{extensions} // [];
+
+        unless (grep { $_ eq 'worker_pool' } @$extensions) {
+            # Worker pool required but not available
+            await $send->({
+                type    => 'lifespan.startup.failed',
+                message => 'This app requires worker_pool extension',
+            });
+            return;
+        }
+
+        await $send->({ type => 'lifespan.startup.complete' });
+    }
+    # ... handle other scope types
+}
+```
+
+This allows apps to fail fast rather than discovering missing support
+at first request time.
+
+## Marking Synchronous Handlers
+
+Applications can mark entire handlers as synchronous using the `sync()`
+wrapper. This enables routers to automatically detect and offload blocking
+handlers to the worker pool.
+
+### The PAGI::Sync Module
+
+A minimal marker module (server-agnostic):
+
+```perl
+package PAGI::Sync;
+use Scalar::Util qw(blessed);
+use Exporter 'import';
+our @EXPORT_OK = qw(sync is_sync);
+
+sub sync {
+    my ($coderef) = @_;
+    return bless $coderef, 'PAGI::Sync';
+}
+
+sub is_sync {
+    my ($thing) = @_;
+    return blessed($thing) && $thing->isa('PAGI::Sync');
+}
+
+1;
+```
+
+The blessed coderef remains callable - `sync()` is purely a marker.
+
+### Usage
+
+```perl
+use PAGI::Sync qw(sync);
+
+my $router = PAGI::Router->new;
+
+# Async handler - runs directly on event loop
+$router->get('/fast', async sub ($scope, $receive, $send) {
+    # Non-blocking async code
+    await $send->({ type => 'http.response.start', status => 200, headers => [] });
+    await $send->({ type => 'http.response.body', body => 'Fast!', more => 0 });
+});
+
+# Sync handler - automatically offloaded to worker pool
+$router->get('/slow', sync(sub ($scope, $receive, $send) {
+    # Blocking code is OK here - runs in worker process
+    my $state = $scope->{pagi}{worker_state};
+    my $data = $state->{dbh}->selectall_arrayref(...);
+
+    $send->({ type => 'http.response.start', status => 200, headers => [] });
+    $send->({ type => 'http.response.body', body => encode_json($data), more => 0 });
+}));
+```
+
+### Detection
+
+Routers and frameworks detect sync handlers via `is_sync()`:
+
+```perl
+use PAGI::Sync qw(is_sync);
+
+sub dispatch {
+    my ($handler, $scope, $receive, $send) = @_;
+
+    if (is_sync($handler)) {
+        # Offload to worker pool
+        return $pool->call($handler, args => [$scope, $receive, $send]);
+    } else {
+        # Call directly (async)
+        return $handler->($scope, $receive, $send);
+    }
+}
+```
+
+**Nested routers:** Detection happens at the leaf handler level. A sync
+handler mounted under an async router is still detected and offloaded.
+
+## Interface
+
+The worker pool object **must** implement the following interface:
+
+### `call($handler_name, %options) → Future`
+
+Executes a named handler in a worker process and returns a Future that
+resolves with the return value.
+
+```perl
+my $future = $pool->call(
+    'user.get',             # Handler name registered at pool creation
+    args    => [$user_id],
+    timeout => 30,          # Optional: job timeout in seconds
+);
+
+my $user = await $future;
+```
+
+**Parameters:**
+
+- `$handler_name` (String) - The name of a handler registered with the pool.
+  See "Named Handlers" section below.
+- `args` (ArrayRef) - Arguments passed to the handler. Must be serializable.
+- `timeout` (Number) - Optional. Maximum seconds for job execution.
+  If exceeded, the Future fails and the worker **may** be terminated.
+
+**Returns:**
+
+- A Future that resolves with the handler's return value, or fails if:
+  - The handler throws an exception
+  - The handler name is not registered
+  - The timeout is exceeded
+  - The worker process dies unexpectedly
+  - Backpressure rejects the job (see Backpressure Handling)
+
+**Behavior:**
+
+- The handler executes in a forked worker process
+- Arguments are serialized and sent to the worker (handler name only, not code)
+- Return values are serialized and sent back
+- If the handler dies, the Future fails with the error message
+- Workers may be reused for multiple calls (pooling)
+
+### `call_forget($handler_name, %options) → ()`
+
+Fire-and-forget variant. Queues the job but returns immediately without
+a Future. Useful for background work where you don't need the result.
+
+```perl
+$pool->call_forget('email.send_welcome', args => [$user_email]);
+# Returns immediately, email sends in background
+```
+
+**Note:** Errors in fire-and-forget jobs are logged but not propagated.
+
+### `stats() → HashRef`
+
+Returns current pool state for monitoring and backpressure detection.
+
+```perl
+my $stats = $pool->stats;
+# {
+#     workers     => 4,      # Total worker processes
+#     busy        => 2,      # Currently executing jobs
+#     idle        => 2,      # Waiting for work
+#     queue_depth => 15,     # Jobs waiting in queue
+#     queue_limit => 100,    # Maximum queue size
+# }
+```
+
+Implementations **may** include additional metrics (job counts, timing, etc.)
+but these are not required by the spec.
+
+## Named Handlers
+
+Handlers **must** be registered at pool creation time, before workers are
+forked. This is required because Perl coderefs cannot be serialized across
+process boundaries (Storable cannot serialize CODE refs).
+
+### Why Named Handlers?
+
+When a process forks, child processes receive a copy of the parent's memory.
+Coderefs registered *before* forking are available to all workers because
+they exist in the shared memory snapshot. However, we cannot *send* new
+coderefs to workers after forking - we can only send serializable data.
+
+This is fundamentally different from Python's thread pools, where threads
+share memory and can receive arbitrary callables.
+
+### Registering Handlers
+
+Handlers are registered in the pool configuration:
+
+```perl
+my $server = PAGI::Server->new(
+    worker_pool => {
+        workers => 4,
+
+        handlers => {
+            # Simple handlers
+            'user.get' => sub ($state, $id) {
+                return $state->{dbh}->selectrow_hashref(
+                    "SELECT * FROM users WHERE id = ?", undef, $id
+                );
+            },
+
+            'user.list' => sub ($state, %opts) {
+                return $state->{dbh}->selectall_arrayref(
+                    "SELECT * FROM users LIMIT ?", { Slice => {} },
+                    $opts{limit} // 100
+                );
+            },
+
+            # Complex business logic
+            'order.create' => sub ($state, %order_data) {
+                my $schema = $state->{schema};
+                return $schema->txn_do(sub {
+                    my $order = $schema->resultset('Order')->create(\%order_data);
+                    $order->send_confirmation_email;
+                    return $order->id;
+                });
+            },
+        },
+
+        init => sub {
+            return {
+                dbh    => DBI->connect($dsn, $user, $pass),
+                schema => MyApp::Schema->connect($dsn, $user, $pass),
+            };
+        },
+    },
+);
+```
+
+### Calling Handlers
+
+Use the handler name as a string:
+
+```perl
+# In your app
+my $pool = $scope->{pagi}{extensions}{worker_pool};
+
+my $user = await $pool->call('user.get', args => [123]);
+
+my $users = await $pool->call('user.list', args => [limit => 50]);
+
+my $order_id = await $pool->call('order.create', args => [
+    customer_id => 456,
+    items       => \@items,
+]);
+```
+
+### Handler Signature
+
+All handlers receive worker state as the first argument:
+
+```perl
+sub handler ($state, @args) {
+    # $state - the return value from init callback
+    # @args  - the args passed to call()
+    return $result;  # Must be serializable
+}
+```
+
+### Naming Conventions
+
+Use dot-notation for namespacing: `domain.action`
+
+```perl
+handlers => {
+    'user.get'      => sub { ... },
+    'user.list'     => sub { ... },
+    'user.create'   => sub { ... },
+    'order.create'  => sub { ... },
+    'order.cancel'  => sub { ... },
+    'email.send'    => sub { ... },
+}
+```
+
+This makes it easy to organize handlers and understand call sites.
+
+## Backpressure Handling
+
+Worker pools **must** implement bounded queues to prevent unbounded memory
+growth under load. When the queue is full, the pool must apply backpressure.
+
+### Queue Bounds
+
+Servers **must** support configuring:
+
+- `queue_limit` - Maximum number of pending jobs (default: implementation-defined)
+
+### Backpressure Strategy
+
+When a job is submitted and the queue is full, the pool **must** fail the
+Future immediately with a backpressure error.
+
+**Rationale:** Blocking strategies (waiting for queue space) can cause
+cascading failures in async systems - the event loop stops making progress
+while waiting, starving WebSocket/SSE connections. Immediate failure keeps
+the system responsive and gives applications explicit feedback to handle.
+
+Servers **may** offer alternative strategies (blocking, timeouts) as
+configuration options for specific use cases, but `fail` **must** be the
+default.
+
+### Detecting Backpressure
+
+Applications can detect backpressure in two ways:
+
+**1. Check before calling:**
+
+```perl
+my $stats = $pool->stats;
+if ($stats->{queue_depth} >= $stats->{queue_limit}) {
+    # Queue is full - handle gracefully
+    return send_503_response($send, "Service busy, try again");
+}
+await $pool->call(...);
+```
+
+**2. Catch the failure:**
+
+```perl
+use Syntax::Keyword::Try;
+
+try {
+    my $result = await $pool->call(sub { ... }, args => [...]);
+} catch ($e) {
+    if ($e =~ /backpressure|queue full/i) {
+        return send_503_response($send, "Service busy");
+    }
+    die $e;  # Re-throw other errors
+}
+```
+
+### Backpressure Error Type
+
+When using the `fail` strategy, the Future **must** fail with an error
+that can be distinguished from other failures. Implementations **should**
+use a specific exception class or include "backpressure" in the message.
+
+```perl
+# Recommended: Use exception objects
+$future->fail(PAGI::X::Backpressure->new(
+    message     => "Worker pool queue full",
+    queue_depth => 100,
+    queue_limit => 100,
+));
+
+# Minimum: Identifiable message
+$future->fail("Backpressure: worker pool queue full (100/100)");
+```
+
+### HTTP Integration
+
+For HTTP handlers using `sync()`, middleware or routers **should** translate
+backpressure failures into appropriate HTTP responses:
+
+```perl
+# Automatic behavior for sync() handlers:
+# - If backpressure occurs, return 503 Service Unavailable
+# - Include Retry-After header if configured
+
+HTTP/1.1 503 Service Unavailable
+Retry-After: 5
+Content-Type: text/plain
+
+Server busy, please retry
+```
+
+## Worker Initialization
+
+Workers can maintain persistent state (database connections, caches, etc.)
+that survives across multiple job invocations. This avoids the overhead of
+creating new connections per-call and sidesteps serialization limitations.
+
+### Why This Matters
+
+Database handles, sockets, and other resources **cannot cross fork boundaries**.
+When a process forks, the child gets a copy of the object but shares the
+underlying file descriptor - leading to corruption and failures.
+
+Worker initialization solves this by creating resources **inside each worker,
+after the fork**:
+
+```
+Parent process
+    │
+    ├── fork() ──→ Worker 1: runs init(), creates own $dbh
+    ├── fork() ──→ Worker 2: runs init(), creates own $dbh
+    └── fork() ──→ Worker 3: runs init(), creates own $dbh
+```
+
+### Configuration
+
+Servers **should** support `init` and `cleanup` callbacks:
+
+```perl
+my $server = PAGI::Server->new(
+    worker_pool => {
+        workers => 4,
+
+        # Runs once per worker after fork - return value becomes worker state
+        init => sub {
+            my $dbh = DBI->connect($dsn, $user, $pass, {
+                RaiseError => 1,
+                AutoCommit => 1,
+            });
+            return {
+                dbh   => $dbh,
+                cache => {},
+            };
+        },
+
+        # Runs when worker shuts down - receives the state
+        cleanup => sub {
+            my ($state) = @_;
+            $state->{dbh}->disconnect if $state->{dbh};
+        },
+    },
+);
+```
+
+### Accessing Worker State
+
+The worker state is passed as the **first argument** to the coderef:
+
+```perl
+my $result = await $pool->call(
+    sub {
+        my ($state, $user_id) = @_;
+
+        # $state->{dbh} is the worker's persistent connection
+        return $state->{dbh}->selectrow_hashref(
+            "SELECT * FROM users WHERE id = ?",
+            undef,
+            $user_id
+        );
+    },
+    args => [$user_id],
+);
+```
+
+### State Lifecycle
+
+- `init` runs **once per worker** when the worker process starts
+- State persists across all jobs handled by that worker
+- `cleanup` runs when worker exits (graceful shutdown, max_jobs_per_worker, etc.)
+- If a worker crashes, `cleanup` may not run - design accordingly
+
+### Reconnection Handling
+
+Workers should handle stale connections gracefully:
+
+```perl
+init => sub {
+    return {
+        dsn  => $dsn,
+        user => $user,
+        pass => $pass,
+        dbh  => undef,  # Lazy connect
+    };
+},
+
+# In the job coderef:
+sub {
+    my ($state, @args) = @_;
+
+    # Lazy connect / reconnect on failure
+    $state->{dbh} //= DBI->connect(
+        $state->{dsn}, $state->{user}, $state->{pass}
+    );
+
+    eval {
+        return $state->{dbh}->selectall_arrayref(...);
+    };
+    if ($@ =~ /server has gone away|connection reset/i) {
+        $state->{dbh} = DBI->connect(...);  # Reconnect
+        return $state->{dbh}->selectall_arrayref(...);
+    }
+    die $@;
+}
+```
+
+## Serialization Requirements
+
+Arguments and return values passed to `call()` **must** be serializable.
+Servers may use Storable, JSON, Sereal, or another serialization format.
+
+**Serializable values:**
+
+- Scalars (strings, numbers, undef)
+- Array references (containing serializable values)
+- Hash references (containing serializable values)
+
+**NOT serializable:**
+
+- **Coderefs** - This is why we use named handlers (see "Named Handlers")
+- Filehandles
+- Database handles
+- Socket connections
+- Objects with XS/C internals
+- Closures over lexical variables
+
+**Example - Wrong vs Right:**
+
+```perl
+# WRONG - cannot pass coderef at call time
+await $pool->call(sub {
+    return $dbh->selectall_arrayref($sql);  # Cannot serialize CODE
+});
+
+# RIGHT - register handler at pool creation, call by name
+# In pool config:
+handlers => {
+    'query.run' => sub ($state, $sql) {
+        return $state->{dbh}->selectall_arrayref($sql);
+    },
+},
+
+# In app:
+await $pool->call('query.run', args => [$sql]);
+```
+
+The named handler pattern is required due to Perl's process-based concurrency.
+Worker state provides access to non-serializable resources like database handles.
+
+## Error Handling
+
+If the coderef throws an exception, the Future **must** fail with the
+error message:
+
+```perl
+my $f = $pool->call(sub { die "Something went wrong\n" });
+
+$f->on_fail(sub {
+    my ($error) = @_;
+    warn "Worker failed: $error";  # "Worker failed: Something went wrong"
+});
+
+# Or with try/catch
+use Syntax::Keyword::Try;
+try {
+    await $pool->call(sub { die "Oops" });
+} catch ($e) {
+    warn "Caught: $e";
+}
+```
+
+## Timeouts
+
+Servers **may** implement call timeouts. If supported, the `call()` method
+accepts an optional timeout parameter:
+
+```perl
+my $result = await $pool->call(
+    sub { slow_operation() },
+    timeout => 30,  # seconds
+);
+```
+
+If the timeout expires, the Future fails with a timeout error and the
+worker process **may** be terminated.
+
+Servers that don't support timeouts **must** ignore the timeout parameter
+(not die).
+
+## Configuration
+
+Servers **should** allow configuration of the worker pool. Common options:
+
+| Option | Description | Suggested Default |
+|--------|-------------|-------------------|
+| `workers` | Number of worker processes | 4 |
+| `queue_limit` | Maximum pending jobs | 100 |
+| `job_timeout` | Default timeout per job | 30s |
+| `max_jobs_per_worker` | Jobs before worker restart | 1000 |
+| `idle_timeout` | Kill idle workers after | 60s |
+| `init` | Callback to initialize worker state | none |
+| `cleanup` | Callback to clean up worker state | none |
+
+Configuration is server-specific and outside the scope of this spec.
+
+### Sizing Guidelines
+
+**Worker count:**
+- I/O-bound work (DB queries, HTTP calls): `workers = 2-4 × CPU cores`
+- CPU-bound work (parsing, compression): `workers = CPU cores`
+- Mixed workloads: Start with `CPU cores`, tune based on metrics
+
+**Queue limit:**
+- Too small: Excessive backpressure under normal bursts
+- Too large: Memory growth, increased latency
+- Rule of thumb: `queue_limit = workers × 10` to `workers × 50`
+
+**Timeout:**
+- Should match your application's acceptable latency
+- Database queries: 5-30s
+- External API calls: 10-60s
+- Background jobs: 300s+
+
+## Scope Integration
+
+The worker pool **should** be available in all scope types where it
+makes sense:
+
+- `http` - Yes
+- `websocket` - Yes
+- `sse` - Yes
+- `lifespan` - Optional (useful for background setup tasks)
+
+Example showing the pool in an HTTP handler:
+
+```perl
+# Pool configured with handlers at server startup
+worker_pool => {
+    handlers => {
+        'user.list' => sub ($state) {
+            return $state->{dbh}->selectall_arrayref(
+                "SELECT id, name FROM users LIMIT 100",
+                { Slice => {} }
+            );
+        },
+    },
+    init => sub {
+        return { dbh => DBI->connect('dbi:Pg:dbname=myapp', 'user', 'pass') };
+    },
+},
+
+# In app:
+async sub app ($scope, $receive, $send) {
+    return unless $scope->{type} eq 'http';
+
+    my $pool = $scope->{pagi}{extensions}{worker_pool};
+    die "This app requires worker pool support" unless $pool;
+
+    # Offload blocking database query by handler name
+    my $users = await $pool->call('user.list');
+
+    # Back in async context - respond
+    await $send->({ type => 'http.response.start', status => 200, headers => [] });
+    await $send->({
+        type => 'http.response.body',
+        body => encode_json($users),
+        more => 0
+    });
+}
+```
+
+## Implementation Notes
+
+This section is non-normative guidance for server implementers.
+
+### Detecting Sync Handlers
+
+Servers **must** detect sync-marked handlers by checking:
+
+```perl
+use Scalar::Util qw(blessed);
+
+sub is_sync_handler {
+    my ($handler) = @_;
+    return blessed($handler) && $handler->isa('PAGI::Sync');
+}
+```
+
+Servers do **not** need to depend on or import `PAGI::Sync`. The `isa()`
+check works as long as the handler is blessed into `PAGI::Sync` (or a
+subclass). This keeps server implementations lightweight.
+
+When a sync handler is detected, servers **should**:
+
+1. Offload execution to the worker pool
+2. Pass worker state as `$scope->{pagi}{worker_state}`
+3. Handle backpressure (return 503 if pool queue is full)
+4. Serialize `$scope`, `$receive`, `$send` appropriately for IPC
+
+### Servers Without Worker Pool Support
+
+Servers that do not implement the worker pool extension are not required
+to detect or handle `sync()` markers. The blessed coderef remains callable,
+so the handler will simply execute directly on the event loop (blocking).
+
+This is the same behavior as any synchronous code - it works, but blocks.
+
+**It is the application's responsibility** to ensure `sync()` handlers are
+used with servers that support the worker pool extension. Using `sync()`
+with an incompatible server will result in blocking behavior, defeating
+the purpose of the marker.
+
+Servers **may** choose to detect `is_sync()` and warn or error, but this
+is not required by the spec.
+
+### Process Pool vs Thread Pool
+
+Process-based pools (fork) are recommended because:
+
+- Perl threads have significant overhead and quirks
+- Forked workers get copy-on-write memory benefits
+- Worker crashes don't affect the main process
+- Better isolation for blocking I/O
+
+### Single-Server Limitation
+
+**Important:** This spec describes a single-server worker pool. Each PAGI
+server instance has its own isolated pool of workers. This has implications:
+
+1. **No cross-server sharing** - If you run multiple PAGI servers behind a
+   load balancer, each has separate workers. Jobs submitted to server A
+   cannot be processed by server B's workers.
+
+2. **Reconnection hazard** - If a client disconnects mid-job and reconnects,
+   they may hit a different server and lose access to their pending job result.
+
+3. **No job persistence** - Jobs exist only in memory. Server restart loses
+   all pending jobs.
+
+For production deployments requiring distributed workers, job persistence,
+or reconnection resilience, implement the Channel Layer extension first
+and build the worker pool on top of it.
+
+**Recommended implementation order:**
+
+1. **Channel Layer** (foundational) - Enables cross-process/cross-server
+   communication with pluggable backends (in-memory, Redis, etc.)
+
+2. **Worker Pool** (builds on channels) - Becomes a thin layer:
+   - Producer sends `{ handler => 'name', args => [...] }` to job channel
+   - Workers consume from job channel, execute, send result to reply channel
+   - Caller awaits on reply channel
+
+This order means the worker pool inherits channel layer benefits (distribution,
+persistence, reconnection) automatically.
+
+### Channel Layer Integration
+
+If the server implements the Channel Layer extension (see `channel-layer.mkdn`),
+worker pools **should** use the channel layer for IPC. This simplifies
+implementation and provides consistent backpressure semantics.
+
+With a channel layer, `call()` becomes sugar for:
+
+```perl
+sub call ($self, $handler_name, %opts) {
+    my $reply_channel = generate_unique_channel();
+    await $self->channel_layer->send("pagi.workers", {
+        type          => "worker.execute",
+        handler       => $handler_name,  # Name, not coderef
+        args          => $opts{args},
+        reply_channel => $reply_channel,
+    });
+    return await $self->channel_layer->receive($reply_channel);
+}
+```
+
+This allows worker pool and channel layer to share infrastructure.
+
+### Suggested Implementation Approaches
+
+**Loop-agnostic with Future::IO (Recommended):**
+
+`Future::IO` provides an event-loop-agnostic abstraction for async I/O.
+The worker pool can use `Future::IO->sysread` and `Future::IO->syswrite`
+for non-blocking pipe communication with workers:
+
+```perl
+# Parent process - non-blocking via Future::IO
+async sub call ($self, $handler_name, %opts) {
+    my $worker = $self->_get_idle_worker();
+    my $job = freeze({ handler => $handler_name, args => $opts{args} });
+
+    # Non-blocking write to worker
+    await Future::IO->syswrite($worker->{pipe_to}, pack('N', length($job)) . $job);
+
+    # Non-blocking read of response
+    my $len_buf = await Future::IO->sysread($worker->{pipe_from}, 4);
+    my $resp = await Future::IO->sysread($worker->{pipe_from}, unpack('N', $len_buf));
+
+    return thaw($resp)->{result};
+}
+
+# Worker process - blocking I/O is fine (separate process)
+while (my $job = read_job_blocking($pipe)) {
+    my $result = $handlers->{$job->{handler}}->($state, @{$job->{args}});
+    write_response_blocking($pipe, { result => $result });
+}
+```
+
+This approach works with any event loop that has a `Future::IO` implementation:
+- `Future::IO::Impl::IOAsync` - for IO::Async
+- `Future::IO::Impl::UV` - for UV (libuv)
+- `Future::IO::Impl::Glib` - for Glib
+
+**IO::Async servers:** Use `IO::Async::Function` which provides a
+production-ready process pool with Future integration. PAGI::Server
+already uses this for async file I/O.
+
+**Mojo servers:** Use `Mojo::IOLoop::Subprocess` or a custom fork pool.
+May require a Future::IO adapter.
+
+**With channel layer:** If the server implements channel layers, use
+the channel layer for worker pool IPC as described above.
+
+### Connection Pooling in Workers
+
+Workers are separate processes, so database connections cannot be shared
+with the main process. Applications should either:
+
+1. Create connections per-call (simple, some overhead)
+2. Use connection pooling within workers (complex, efficient)
+3. Use an external connection pooler like PgBouncer
+
+### Lifespan Coordination
+
+If the server supports both lifespan and worker pool extensions, the
+worker pool **should** be available during `lifespan.startup` for
+background initialization tasks.
+
+Workers **should** be shut down gracefully during `lifespan.shutdown`.
+
+## Comparison with Other Approaches
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| Worker Pool (this spec) | Works with any sync code, bounded | Serialization overhead, process cost |
+| Async modules (Net::Async::*) | Native integration, efficient | Limited CPAN ecosystem |
+| External job queue (Redis/Celery) | Scalable, persistent, distributed | Infrastructure complexity |
+| Thread pool | Shared memory, lower overhead | Perl threads are heavy, GIL-like issues |
+
+The worker pool extension targets the common case: existing sync code
+that needs to work in an async context without major rewrites.
+
+### Comparison with Python/ASGI
+
+Python's async ecosystem uses **thread pools** for blocking code:
+
+```python
+# Python - simple, no init/cleanup needed
+from starlette.concurrency import run_in_threadpool
+
+async def handler(request):
+    result = await run_in_threadpool(blocking_db_query, user_id)
+    return JSONResponse(result)
+```
+
+This is simpler because threads share memory - a `$dbh` created in the
+main thread works in worker threads without serialization.
+
+PAGI uses **process pools** because Perl's threading model is problematic.
+This adds complexity:
+
+| Aspect | Python (threads) | PAGI (processes) |
+|--------|------------------|------------------|
+| `run_in_threadpool` / `$pool->call` | Similar | Similar |
+| `sync_to_async` / `sync()` | Similar | Similar |
+| Backpressure / capacity limiting | Similar | Similar |
+| Worker init/cleanup | Not needed | **Required** |
+| Worker state for DB handles | Not needed | **Required** |
+| Serialization of args/returns | Not needed | **Required** |
+
+**The extra complexity in this spec is inherent to Perl's process-based
+concurrency model, not over-engineering.** The patterns (`sync()`, `call()`,
+backpressure) mirror Python's established approaches; the init/cleanup
+and serialization requirements are the cost of using processes instead
+of threads.
+
+### When to Use What
+
+- **Worker pool**: Blocking CPAN modules, legacy code, quick migration
+- **Native async**: Hot paths, high-frequency operations, new code
+- **External queue**: Distributed systems, job persistence, multi-server
+- **Thread pool**: Rarely - only if you understand Perl's threading model
+
+## Examples
+
+### Basic Setup
+
+```perl
+use PAGI::Server;
+
+my $server = PAGI::Server->new(
+    app  => $app,
+    port => 5000,
+
+    worker_pool => {
+        workers     => 4,
+        queue_limit => 100,
+
+        # Named handlers - registered before workers fork
+        handlers => {
+            'user.get' => sub ($state, $id) {
+                return $state->{dbh}->selectrow_hashref(
+                    "SELECT * FROM users WHERE id = ?", undef, $id
+                );
+            },
+
+            'user.list' => sub ($state, $limit) {
+                return $state->{dbh}->selectall_arrayref(
+                    "SELECT * FROM users LIMIT ?",
+                    { Slice => {} }, $limit // 100
+                );
+            },
+        },
+
+        init => sub {
+            my $dbh = DBI->connect(
+                'dbi:Pg:dbname=myapp',
+                'user', 'pass',
+                { RaiseError => 1 }
+            );
+            return { dbh => $dbh };
+        },
+
+        cleanup => sub {
+            my ($state) = @_;
+            $state->{dbh}->disconnect if $state->{dbh};
+        },
+    },
+);
+
+$server->listen;
+```
+
+### Use Case 1: Existing DBIx::Class Business Logic
+
+You have a DBIx::Class schema with complex business logic. Use `sync()` to
+run entire handlers in workers with access to the schema:
+
+```perl
+use PAGI::Sync qw(sync);
+
+# Worker init creates schema per-worker
+worker_pool => {
+    init => sub {
+        my $schema = MyApp::Schema->connect($dsn, $user, $pass);
+        return { schema => $schema };
+    },
+},
+
+# Router setup
+my $router = PAGI::Router->new;
+
+$router->get('/users', sync(sub ($scope, $receive, $send) {
+    my $schema = $scope->{pagi}{worker_state}{schema};
+
+    # All your existing DBIx::Class code works unchanged
+    my @users = $schema->resultset('User')
+        ->search({ active => 1 })
+        ->with_reviews
+        ->order_by_popularity
+        ->all;
+
+    my $json = encode_json([ map { $_->TO_JSON } @users ]);
+
+    $send->({ type => 'http.response.start', status => 200,
+              headers => [['content-type', 'application/json']] });
+    $send->({ type => 'http.response.body', body => $json, more => 0 });
+}));
+
+$router->get('/user/:id', sync(sub ($scope, $receive, $send) {
+    my $schema = $scope->{pagi}{worker_state}{schema};
+    my $id = $scope->{params}{id};
+
+    my $user = $schema->resultset('User')->find($id);
+    # ... existing business logic
+}));
+```
+
+### Use Case 2: PAGI + PSGI App on Same Server
+
+Run native async PAGI routes alongside a legacy PSGI application:
+
+```perl
+use PAGI::Sync qw(sync);
+use PAGI::App::WrapPSGI;
+
+my $router = PAGI::Router->new;
+
+# Native async PAGI routes - WebSocket, SSE
+$router->get('/ws', async sub ($scope, $receive, $send) {
+    # True async WebSocket handling
+    await $send->({ type => 'websocket.accept' });
+    while (my $msg = await $receive->()) {
+        last if $msg->{type} eq 'websocket.disconnect';
+        await $send->({ type => 'websocket.send', text => "Echo: $msg->{text}" });
+    }
+});
+
+$router->get('/events', async sub ($scope, $receive, $send) {
+    # True async SSE
+    await $send->({ type => 'sse.start' });
+    for my $i (1..10) {
+        await $send->({ type => 'sse.event', data => "Event $i" });
+        await Future::IO->sleep(1);
+    }
+});
+
+# Legacy PSGI app - wrapped and offloaded to workers
+my $legacy_psgi = do 'legacy_app.psgi';
+my $wrapped = PAGI::App::WrapPSGI->new(psgi_app => $legacy_psgi)->to_app;
+
+$router->mount('/legacy', sync($wrapped));
+# All /legacy/* requests run in worker pool, blocking is OK
+```
+
+### Use Case 3: Gradual Catalyst Migration
+
+A Catalyst PAGI adapter could auto-detect async vs sync actions:
+
+```perl
+package Catalyst::Engine::PAGI;
+
+sub dispatch {
+    my ($self, $action, $scope, $receive, $send) = @_;
+
+    # Check if action has :Async attribute
+    if ($action->attributes->{Async}) {
+        # Run directly on event loop
+        return $action->execute($scope, $receive, $send);
+    } else {
+        # Wrap legacy blocking action in sync()
+        my $handler = sync(sub {
+            $action->execute(@_);
+        });
+        return $handler->($scope, $receive, $send);
+    }
+}
+
+# In your Catalyst controller:
+package MyApp::Controller::Root;
+
+# Traditional blocking action - auto-wrapped by adapter
+sub index : Path('/') {
+    my ($self, $c) = @_;
+    my @users = $c->model('DB::User')->all;  # Blocking, but OK
+    $c->stash(users => \@users);
+}
+
+# New async action - runs on event loop
+sub stream : Path('/stream') : Async {
+    my ($self, $c) = @_;
+    # True async SSE streaming
+}
+```
+
+### Use Case 4: Ad-hoc Blocking Calls
+
+Sometimes you need a single blocking call in an otherwise async handler.
+Register the handler at pool creation, then call it by name:
+
+```perl
+# In pool config:
+handlers => {
+    'user.get_by_id' => sub ($state, $id) {
+        return $state->{dbh}->selectrow_hashref(
+            "SELECT * FROM users WHERE id = ?", undef, $id
+        );
+    },
+},
+
+# In async app:
+async sub app ($scope, $receive, $send) {
+    my $pool = $scope->{pagi}{extensions}{worker_pool};
+
+    # Most of the handler is async
+    my $cache_result = await $async_redis->get('user:123');
+
+    if (!$cache_result) {
+        # Just this one call needs blocking DB
+        my $user = await $pool->call('user.get_by_id', args => [123]);
+
+        await $async_redis->set('user:123', encode_json($user));
+        $cache_result = $user;
+    }
+
+    # Back to async
+    await $send->({ type => 'http.response.start', status => 200, headers => [] });
+    await $send->({ type => 'http.response.body',
+                    body => encode_json($cache_result), more => 0 });
+}
+```
+
+### Use Case 5: Background Jobs with Fire-and-Forget
+
+Send emails, log analytics, or do other background work without waiting:
+
+```perl
+# In pool config:
+handlers => {
+    'email.send_confirmation' => sub ($state, $email, $order_id) {
+        # Uses $state->{mailer} initialized in init callback
+        $state->{mailer}->send(
+            to      => $email,
+            subject => "Order $order_id confirmed",
+            body    => "Thank you for your order!",
+        );
+    },
+
+    'analytics.log' => sub ($state, $event, $data) {
+        $state->{analytics}->track($event, $data);
+    },
+},
+
+# In async app:
+async sub app ($scope, $receive, $send) {
+    my $pool = $scope->{pagi}{extensions}{worker_pool};
+
+    # Process the request
+    my $order = await process_order($scope);
+
+    # Fire off background jobs - don't wait
+    $pool->call_forget('email.send_confirmation',
+        args => [$order->{email}, $order->{id}]);
+
+    $pool->call_forget('analytics.log',
+        args => ['order_placed', $order]);
+
+    # Respond immediately
+    await $send->({ type => 'http.response.start', status => 201, headers => [] });
+    await $send->({ type => 'http.response.body',
+                    body => encode_json({ order_id => $order->{id} }), more => 0 });
+}
+```
+
+### Use Case 6: Handling Backpressure
+
+Gracefully handle when the worker pool is overloaded:
+
+```perl
+# In pool config:
+handlers => {
+    'report.generate' => sub ($state, $params) {
+        # Expensive query
+        return $state->{dbh}->selectall_arrayref($complex_sql, { Slice => {} });
+    },
+},
+
+# In async app:
+use Syntax::Keyword::Try;
+
+async sub app ($scope, $receive, $send) {
+    my $pool = $scope->{pagi}{extensions}{worker_pool};
+
+    # Option A: Check before calling
+    my $stats = $pool->stats;
+    if ($stats->{queue_depth} >= $stats->{queue_limit} * 0.9) {
+        # Queue is 90% full - shed load early
+        await $send->({ type => 'http.response.start', status => 503,
+                        headers => [['retry-after', '5']] });
+        await $send->({ type => 'http.response.body',
+                        body => 'Server busy, please retry', more => 0 });
+        return;
+    }
+
+    # Option B: Catch backpressure errors
+    try {
+        my $result = await $pool->call('report.generate', args => [$params]);
+        await send_success($send, $result);
+    } catch ($e) {
+        if ($e =~ /backpressure|queue full/i) {
+            await $send->({ type => 'http.response.start', status => 503,
+                            headers => [['retry-after', '5']] });
+            await $send->({ type => 'http.response.body',
+                            body => 'Server busy', more => 0 });
+        } else {
+            die $e;
+        }
+    }
+}
+```
+
+## Version History
+
+- 0.2 (Draft) - Named handlers, Future::IO implementation
+  - Changed from arbitrary coderefs to named handlers (serialization constraint)
+  - Added Future::IO as recommended loop-agnostic implementation
+  - Added "Named Handlers" section explaining the design
+  - Updated all examples to use handler names
+- 0.1 (Draft) - Initial specification
+
+## Copyright
+
+This document has been placed in the public domain.
