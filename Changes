@@ -7,6 +7,10 @@
   - Configurable write_high_watermark (64KB) and write_low_watermark (16KB)
     matching Python asyncio defaults for optimal memory/throughput balance
   - SSE disconnect reasons (client_closed, timeout, write_error, shutdown)
+  - Add PAGI::Utils::handle_lifespan utility for simplified lifespan handling
+  - Add Response getters (status, headers, content_type, body) and try setters
+  - Support static path rewrites in PAGI::App::File
+  - Add full-demo example demonstrating lifespan, HTTP, WebSocket, and SSE
 
   [Bug Fixes]
   - Fix Lint middleware to preserve original app errors instead of masking them
@@ -16,6 +20,8 @@
   - Fix WebSocket scope incorrectly including 'method' field in test client
   - Fix middleware class resolution for nested namespaces (Auth::Basic, etc.)
     using ^ prefix for fully-qualified class names
+  - Fix POD formatting of nested angle brackets
+  - Make handle_lifespan croak on wrong scope type for clearer error messages
 
   [Improvements]
   - Improved event loop portability (Future::IO now fully optional)
@@ -25,11 +31,17 @@
   - Add TTY warning at startup when access_log goes to terminal
   - Security fixes from code review
   - PAGI spec compliance fixes for event validation
+  - Match plackup FindBin behavior for app loading
+  - Refactor PAGI::Response to use exists() for lazy defaults
+  - Remove deprecated path_param/path_params from PAGI::Response
+  - Document state method in PAGI::Request
 
   [Build/Distribution]
   - Replace Markdown::Pod with App::sdview for spec POD generation
     - Fixes =item - to =item * (proper POD bullet points)
     - Converts module names to L<> links for metacpan
+  - Add .editorconfig for consistent editor settings
+  - Add Thunderhorse to implementations documentation
 
 0.001011 - 2025-12-28
   - Switch license from Perl_5 to Artistic_2_0 (cleaner language, OSI recommended)
