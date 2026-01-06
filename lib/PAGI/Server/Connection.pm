@@ -115,6 +115,7 @@ sub new {
         extensions    => $args{extensions} // {},
         state         => $args{state} // {},
         tls_enabled   => $args{tls_enabled} // 0,
+        is_http2      => $args{is_http2} // 0,  # HTTP/2 connection flag
         timeout       => $args{timeout} // 60,  # Idle timeout in seconds
         request_timeout => $args{request_timeout} // 0,  # Request stall timeout in seconds (0 = disabled, default for performance)
         ws_idle_timeout => $args{ws_idle_timeout} // 0,   # WebSocket idle timeout (0 = disabled)
@@ -224,7 +225,14 @@ sub start {
         $timer->start;
     }
 
-    # Set up read handler
+    # HTTP/2 initialization
+    if ($self->{is_http2}) {
+        $self->_init_http2_session;
+        $self->_setup_http2_read_handler;
+        return;
+    }
+
+    # Set up read handler (HTTP/1.1)
     $stream->configure(
         on_read => sub  {
         my ($s, $buffref, $eof) = @_;
@@ -344,6 +352,352 @@ sub _stop_stall_timer {
         $self->{server}->remove_child($self->{stall_timer});
     }
     $self->{stall_timer} = undef;
+}
+
+# =============================================================================
+# HTTP/2 Support
+# =============================================================================
+# HTTP/2 connections use nghttp2 for binary framing and multiplexed streams
+
+sub _init_http2_session {
+    my ($self) = @_;
+
+    weaken(my $weak_self = $self);
+
+    # Create HTTP/2 session via protocol handler
+    $self->{h2_session} = $self->{protocol}->create_session(
+        on_request => sub {
+            my ($stream_id, $pseudo, $headers, $has_body) = @_;
+            return unless $weak_self;
+            $weak_self->_on_http2_request($stream_id, $pseudo, $headers, $has_body);
+        },
+        on_body => sub {
+            my ($stream_id, $data, $eof) = @_;
+            return unless $weak_self;
+            $weak_self->_on_http2_body($stream_id, $data, $eof);
+        },
+        on_close => sub {
+            my ($stream_id, $error_code) = @_;
+            return unless $weak_self;
+            $weak_self->_on_http2_stream_close($stream_id, $error_code);
+        },
+    );
+
+    # Store stream states: stream_id => { scope, receive_queue, send_future, ... }
+    $self->{h2_streams} = {};
+
+    # Send initial SETTINGS frame
+    $self->_flush_http2;
+}
+
+sub _setup_http2_read_handler {
+    my ($self) = @_;
+
+    my $stream = $self->{stream};
+    weaken(my $weak_self = $self);
+
+    $stream->configure(
+        on_read => sub {
+            my ($s, $buffref, $eof) = @_;
+            return 0 unless $weak_self;
+
+            # Reset idle timer on any read activity
+            $weak_self->_reset_idle_timer;
+
+            if (length($$buffref)) {
+                eval {
+                    # Feed data to nghttp2
+                    $weak_self->{h2_session}->feed($$buffref);
+                    $$buffref = '';
+
+                    # Extract and send any outgoing data
+                    $weak_self->_flush_http2;
+                };
+                if (my $error = $@) {
+                    warn "HTTP/2 protocol error: $error";
+                    $weak_self->_close;
+                    return 0;
+                }
+            }
+
+            if ($eof) {
+                $weak_self->_handle_disconnect;
+                return 0;
+            }
+
+            return 0;
+        },
+        on_closed => sub {
+            return unless $weak_self;
+            $weak_self->_handle_disconnect;
+        },
+    );
+}
+
+sub _flush_http2 {
+    my ($self) = @_;
+
+    return if $self->{closed};
+
+    while (1) {
+        my $data = $self->{h2_session}->extract;
+        last unless defined $data && length($data);
+        $self->{stream}->write($data);
+    }
+}
+
+sub _on_http2_request {
+    my ($self, $stream_id, $pseudo, $headers, $has_body) = @_;
+
+    # Build PAGI scope from HTTP/2 pseudo-headers and headers
+    my $method = $pseudo->{':method'} // 'GET';
+    my $path = $pseudo->{':path'} // '/';
+    my $scheme = $pseudo->{':scheme'} // 'https';
+    my $authority = $pseudo->{':authority'} // '';
+
+    # Split path into path and query string
+    my ($request_path, $query_string) = split /\?/, $path, 2;
+    $query_string //= '';
+
+    # Parse authority into host/port
+    my ($host, $port) = split /:/, $authority, 2;
+    $host //= $self->{server_host} // 'localhost';
+    $port //= $self->{server_port} // 443;
+
+    # Build scope (PAGI 0.2 spec)
+    my $scope = {
+        type => 'http',
+        pagi => {
+            version   => '0.2',
+            spec_version => '0.2.2',
+        },
+        http_version => '2',
+        method => $method,
+        scheme => $scheme,
+        path   => $request_path,
+        root_path => '',
+        query_string => $query_string,
+        headers => $headers,
+        server => [$host, int($port)],
+        client => [$self->{client_host} // '127.0.0.1', int($self->{client_port} // 0)],
+        state  => $self->{state},
+        extensions => {
+            %{$self->{extensions}},
+            'http2' => {
+                stream_id => $stream_id,
+            },
+        },
+    };
+
+    # Add TLS info if enabled
+    if ($self->{tls_enabled} && $self->{tls_info}) {
+        $scope->{extensions}{tls} = $self->{tls_info};
+    }
+
+    # Create stream state
+    $self->{h2_streams}{$stream_id} = {
+        scope         => $scope,
+        has_body      => $has_body,
+        body_chunks   => [],
+        receive_queue => [],
+        receive_pending => undef,
+        response_started => 0,
+    };
+
+    # If no body expected, start handling immediately
+    if (!$has_body) {
+        $self->_handle_http2_stream($stream_id);
+    }
+    # If body expected, wait for body data
+}
+
+sub _on_http2_body {
+    my ($self, $stream_id, $data, $eof) = @_;
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return unless $h2_stream;
+
+    # Queue body data
+    if (length($data)) {
+        push @{$h2_stream->{body_chunks}}, $data;
+    }
+
+    # If this is the last body chunk, start handling
+    if ($eof) {
+        $self->_handle_http2_stream($stream_id);
+    }
+}
+
+sub _on_http2_stream_close {
+    my ($self, $stream_id, $error_code) = @_;
+
+    my $h2_stream = delete $self->{h2_streams}{$stream_id};
+    return unless $h2_stream;
+
+    # Cancel any pending receive futures
+    if ($h2_stream->{receive_pending} && !$h2_stream->{receive_pending}->is_ready) {
+        $h2_stream->{receive_pending}->fail("Stream closed");
+    }
+}
+
+sub _handle_http2_stream {
+    my ($self, $stream_id) = @_;
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return unless $h2_stream;
+
+    my $scope = $h2_stream->{scope};
+    weaken(my $weak_self = $self);
+
+    # Combine body chunks if any
+    my $body = join('', @{$h2_stream->{body_chunks}});
+    $h2_stream->{body_chunks} = [];
+
+    # Create $receive for this stream
+    my $receive = sub {
+        return Future->fail("Connection closed") unless $weak_self;
+        return Future->fail("Stream closed") unless $weak_self->{h2_streams}{$stream_id};
+
+        my $h2s = $weak_self->{h2_streams}{$stream_id};
+
+        # Return queued event if available
+        if (@{$h2s->{receive_queue}}) {
+            return Future->done(shift @{$h2s->{receive_queue}});
+        }
+
+        # Otherwise create pending future
+        my $f = Future->new;
+        $h2s->{receive_pending} = $f;
+        return $f;
+    };
+
+    # Queue initial http.request event
+    my $request_event = {
+        type => 'http.request',
+        body => $body,
+        more => 0,  # HTTP/2: body is complete when we get here
+    };
+    push @{$h2_stream->{receive_queue}}, $request_event;
+
+    # Create $send for this stream
+    my $send = sub {
+        my ($event) = @_;
+        return Future->fail("Connection closed") unless $weak_self;
+        return Future->fail("Stream closed") unless $weak_self->{h2_streams}{$stream_id};
+
+        my $type = $event->{type} // '';
+
+        if ($type eq 'http.response.start') {
+            return $weak_self->_send_http2_response_start($stream_id, $event);
+        }
+        elsif ($type eq 'http.response.body') {
+            return $weak_self->_send_http2_response_body($stream_id, $event);
+        }
+        else {
+            return Future->fail("Unsupported event type: $type");
+        }
+    };
+
+    # Call the application
+    my $f = $self->{app}->($scope, $receive, $send);
+    $h2_stream->{app_future} = $f;
+
+    # Handle completion/errors
+    $f->on_fail(sub {
+        my ($error) = @_;
+        return unless $weak_self;
+        warn "HTTP/2 stream $stream_id application error: $error";
+        # Send RST_STREAM or GOAWAY if needed
+    });
+}
+
+sub _send_http2_response_start {
+    my ($self, $stream_id, $event) = @_;
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return Future->fail("Stream not found") unless $h2_stream;
+
+    my $status = $event->{status} // 200;
+    my $headers = $event->{headers} // [];
+
+    # Mark response started
+    $h2_stream->{response_started} = 1;
+    $h2_stream->{response_status} = $status;
+    $h2_stream->{response_headers} = $headers;
+
+    return Future->done;
+}
+
+sub _send_http2_response_body {
+    my ($self, $stream_id, $event) = @_;
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return Future->fail("Stream not found") unless $h2_stream;
+
+    my $body = $event->{body} // '';
+    my $more = $event->{more} // 0;
+
+    # If we haven't sent headers yet, send them now with body
+    if (!$h2_stream->{headers_sent}) {
+        $h2_stream->{headers_sent} = 1;
+
+        if (!$more) {
+            # Complete response - send all at once
+            $self->{h2_session}->submit_response($stream_id,
+                status  => $h2_stream->{response_status} // 200,
+                headers => $h2_stream->{response_headers} // [],
+                body    => $body,
+            );
+        }
+        else {
+            # Streaming response - use data callback
+            $h2_stream->{pending_body} = $body;
+            $h2_stream->{body_complete} = 0;
+
+            weaken(my $weak_self = $self);
+            my $weak_stream_id = $stream_id;
+
+            $self->{h2_session}->submit_response_streaming($stream_id,
+                status  => $h2_stream->{response_status} // 200,
+                headers => $h2_stream->{response_headers} // [],
+                data_callback => sub {
+                    my ($sid, $max_len) = @_;
+                    return ('', 1) unless $weak_self;
+
+                    my $h2s = $weak_self->{h2_streams}{$weak_stream_id};
+                    return ('', 1) unless $h2s;
+
+                    my $data = $h2s->{pending_body};
+                    $h2s->{pending_body} = '';
+
+                    if ($h2s->{body_complete}) {
+                        return ($data, 1);  # EOF
+                    }
+                    elsif (length($data)) {
+                        return ($data, 0);  # More to come
+                    }
+                    else {
+                        return;  # Defer - no data ready
+                    }
+                },
+            );
+        }
+    }
+    else {
+        # Subsequent body chunks for streaming response
+        $h2_stream->{pending_body} .= $body;
+        $h2_stream->{body_complete} = !$more;
+
+        # Resume the stream if it was deferred
+        if ($self->{h2_session}->is_stream_deferred($stream_id)) {
+            $self->{h2_session}->resume_stream($stream_id);
+        }
+    }
+
+    # Flush any pending output
+    $self->_flush_http2;
+
+    return Future->done;
 }
 
 # WebSocket idle timeout - closes connection if no activity

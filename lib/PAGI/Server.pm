@@ -38,6 +38,17 @@ BEGIN {
 
 sub has_tls { return $TLS_AVAILABLE }
 
+# Check HTTP/2 module availability (optional - falls back to HTTP/1.1)
+our $HTTP2_AVAILABLE;
+BEGIN {
+    $HTTP2_AVAILABLE = eval {
+        require PAGI::Server::Protocol::HTTP2;
+        PAGI::Server::Protocol::HTTP2->available;
+    } ? 1 : 0;
+}
+
+sub has_http2 { return $HTTP2_AVAILABLE }
+
 # Windows doesn't support Unix signals - signal handling is conditional
 use constant WIN32 => $^O eq 'MSWin32';
 
@@ -1480,6 +1491,22 @@ async sub _listen_singleworker {
             $listen_opts{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
         }
 
+        # ALPN negotiation for HTTP/2 support
+        # Only advertise h2 if nghttp2 module is available
+        my $enable_http2 = $ssl->{enable_http2} // 1;  # Enabled by default
+        if ($enable_http2 && $HTTP2_AVAILABLE) {
+            $listen_opts{SSL_alpn_protocols} = ['h2', 'http/1.1'];
+            $self->{http2_enabled} = 1;
+            $self->_log(info => "HTTP/2 enabled via ALPN (nghttp2 available)");
+        } else {
+            # HTTP/1.1 only
+            $listen_opts{SSL_alpn_protocols} = ['http/1.1'];
+            $self->{http2_enabled} = 0;
+            if ($enable_http2 && !$HTTP2_AVAILABLE) {
+                $self->_log(info => "HTTP/2 requested but nghttp2 not available, falling back to HTTP/1.1");
+            }
+        }
+
         # Mark that TLS is enabled
         $self->{tls_enabled} = 1;
 
@@ -1926,14 +1953,39 @@ sub _on_connection {
         return;
     }
 
+    # Detect ALPN-negotiated protocol for HTTP/2 support
+    my $alpn_protocol;
+    if ($self->{tls_enabled} && $self->{http2_enabled}) {
+        my $handle = $stream->read_handle;
+        if ($handle && $handle->can('alpn_selected')) {
+            $alpn_protocol = $handle->alpn_selected() // 'http/1.1';
+            $self->_log(debug => "ALPN negotiated: $alpn_protocol");
+        }
+    }
+
+    # Select protocol handler based on ALPN result
+    my $protocol = $self->{protocol};  # Default HTTP/1.1
+    my $is_http2 = ($alpn_protocol && $alpn_protocol eq 'h2');
+
+    if ($is_http2) {
+        # Create HTTP/2 protocol handler for this connection
+        $protocol = PAGI::Server::Protocol::HTTP2->new(
+            max_concurrent_streams => $self->{http2_max_concurrent_streams} // 100,
+            initial_window_size    => $self->{http2_initial_window_size} // 65535,
+            max_frame_size         => $self->{http2_max_frame_size} // 16384,
+            enable_push            => $self->{http2_enable_push} // 0,
+        );
+    }
+
     my $conn = PAGI::Server::Connection->new(
         stream            => $stream,
         app               => $self->{app},
-        protocol          => $self->{protocol},
+        protocol          => $protocol,
         server            => $self,
         extensions        => $self->{extensions},
         state             => $self->{state},
         tls_enabled       => $self->{tls_enabled} // 0,
+        is_http2          => $is_http2,
         timeout           => $self->{timeout},
         request_timeout   => $self->{request_timeout},
         ws_idle_timeout   => $self->{ws_idle_timeout},
