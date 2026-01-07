@@ -197,7 +197,7 @@ Each HTTP request has a single-request connection scope. Scope keys:
 - `method` (String) -- Uppercase HTTP method
 - `scheme` (String, default `"http"`) -- URL scheme (`"http"` or `"https"`)
 - `path` (String) -- Decoded HTTP path
-- `raw_path` (Bytes, optional) -- Original HTTP path bytes
+- `raw_path` (Bytes, optional) -- Original HTTP path bytes as received, before percent-decoding. Servers SHOULD provide this field. It is marked optional because some server implementations (e.g., those built on frameworks that pre-decode paths) may be unable to provide it. When omitted, applications requiring original bytes should use `Encode::encode('UTF-8', $path)` as an approximation, understanding that non-UTF-8 sequences will have been lost. Middleware MUST NOT modify `raw_path`; it represents the immutable wire format.
 - `query_string` (Bytes) -- Percent-encoded query string
 - `root_path` (String, default `""`) -- Application mount path, equivalent to `SCRIPT_NAME` in PSGI
 - `headers` (ArrayRef[ArrayRef[Bytes]]) -- Original HTTP headers. Header names **must** be lower-cased byte strings and header values must be opaque byte strings.
@@ -205,6 +205,58 @@ Each HTTP request has a single-request connection scope. Scope keys:
 - `server` (ArrayRef[String, Optional[Int]], optional) -- `[host, port]` or `[path, undef]` for Unix sockets
 - `state` (HashRef, optional) -- State namespace from lifespan
 - `pagi.connection` (Object) -- Connection state object for disconnect detection. See [Connection State](#connection-state) below.
+
+### Path Handling for Routers and Middleware
+
+When middleware or routers modify paths for sub-application mounting, they MUST follow these rules:
+
+#### Scope Field Mutability
+
+| Field | Mutable? | Description |
+|-------|----------|-------------|
+| `path` | YES | Modified to strip mount prefix for sub-apps |
+| `root_path` | YES | Accumulates mount prefixes |
+| `raw_path` | **NO** | Immutable; original wire bytes |
+| `query_string` | NO | Original percent-encoded query |
+
+#### Mounting Example
+
+When an app is mounted at `/api` and receives a request to `/api/users/λ`:
+
+```perl
+# Original scope from server
+{
+    path         => '/api/users/λ',
+    raw_path     => '/api/users/%CE%BB',
+    root_path    => '',
+    query_string => '',
+}
+
+# After mount middleware strips /api prefix
+{
+    path         => '/users/λ',          # Stripped
+    raw_path     => '/api/users/%CE%BB', # UNCHANGED
+    root_path    => '/api',              # Updated
+    query_string => '',
+}
+```
+
+#### URL Reconstruction
+
+To reconstruct the full decoded path for redirects or link generation:
+
+```perl
+my $full_path = $scope->{root_path} . $scope->{path};
+```
+
+Use `raw_path` only when you need the original wire bytes (logging, security analysis, strict UTF-8 validation).
+
+#### Why raw_path Is Immutable
+
+1. **Audit trail**: Security logging needs exact bytes received from client
+2. **Strict validation**: Apps can decode `raw_path` with `Encode::FB_CROAK` for strict UTF-8
+3. **Round-trip safety**: Original percent-encoding preserved for proxying scenarios
+4. **ASGI compatibility**: Matches ASGI behavior where `raw_path` is never modified
 
 ### Request - `receive` event
 
@@ -499,7 +551,7 @@ WebSocket servers handle fragmentation and PING/PONG messages. Servers MUST wait
 - `http_version` (String, default `"1.1"`) -- HTTP version used for handshake
 - `scheme` (String, default `"ws"`) -- URL scheme (`"ws"` or `"wss"`)
 - `path` (String) -- Decoded path string
-- `raw_path` (Bytes, optional) -- Original path bytes from request
+- `raw_path` (Bytes, optional) -- Original path bytes from request, before percent-decoding. Immutable; middleware MUST NOT modify. See HTTP scope for details.
 - `query_string` (Bytes) -- Percent-encoded query string
 - `root_path` (String, default `""`) -- Mount point for application
 - `headers` (ArrayRef[ArrayRef[Bytes]]) -- Original headers
@@ -771,6 +823,9 @@ Response mappings:
   replacing invalid sequences or rejecting the request (Mojolicious-style
   fallback). Applications needing strict UTF-8 validation can check `raw_path`
   and decode themselves with `Encode::FB_CROAK`.
+
+**Note on mounting:** Routers and middleware that strip path prefixes operate on `path` (the decoded string), not `raw_path`. The `raw_path` field is immutable and always reflects the original request bytes. See [Path Handling for Routers and Middleware](#path-handling-for-routers-and-middleware).
+
 - `headers`: Represented as bytes exactly as sent/received
 - `query_string`: Raw bytes from URL after `?`, percent-encoded
 - `root_path`: Unicode path string matching `SCRIPT_NAME`
