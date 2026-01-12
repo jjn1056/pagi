@@ -442,6 +442,11 @@ sub _setup_http2_read_handler {
                 };
                 if (my $error = $@) {
                     warn "HTTP/2 protocol error: $error";
+                    # Try to send GOAWAY before closing
+                    eval {
+                        $weak_self->{h2_session}->terminate(1);  # PROTOCOL_ERROR
+                        $weak_self->_flush_http2;
+                    };
                     $weak_self->_close;
                     return 0;
                 }

@@ -187,6 +187,15 @@ sub _init_nghttp2_session {
                     }
                 }
 
+                # DATA frame with END_STREAM = body complete
+                if ($type == Net::HTTP2::nghttp2::NGHTTP2_DATA()) {
+                    my $end_stream = $flags & Net::HTTP2::nghttp2::NGHTTP2_FLAG_END_STREAM();
+                    if ($end_stream && $weak_self->{on_body}) {
+                        # Signal end of body with empty data and eof=1
+                        $weak_self->{on_body}->($stream_id, '', 1);
+                    }
+                }
+
                 return 0;
             },
 
