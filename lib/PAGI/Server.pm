@@ -92,6 +92,8 @@ B<Currently supported:>
 
 =item * HTTP/1.1 (full support including chunked encoding, trailers, keepalive)
 
+=item * HTTP/2 (experimental, requires Net::HTTP2::nghttp2)
+
 =item * WebSocket (RFC 6455)
 
 =item * Server-Sent Events (SSE)
@@ -102,14 +104,26 @@ B<Not yet implemented:>
 
 =over 4
 
-=item * HTTP/2 - Planned for a future release
-
 =item * HTTP/3 (QUIC) - Under consideration
 
 =back
 
-For HTTP/2 support today, run PAGI::Server behind a reverse proxy like nginx
-or Caddy that handles HTTP/2 on the frontend and speaks HTTP/1.1 to PAGI.
+=head2 HTTP/2 Support
+
+HTTP/2 is an opt-in experimental feature. To enable:
+
+    my $server = PAGI::Server->new(
+        app   => $app,
+        http2 => 1,  # Enable HTTP/2
+        ssl   => {
+            cert_file => 'server.crt',
+            key_file  => 'server.key',
+        },
+    );
+
+HTTP/2 requires L<Net::HTTP2::nghttp2> to be installed. If enabled without
+TLS, the server runs in h2c (cleartext) mode - a warning is issued since
+most clients (browsers) require TLS for HTTP/2.
 
 =head1 WINDOWS SUPPORT
 
@@ -1132,6 +1146,22 @@ sub _init {
     $self->{port}             = delete $params->{port} // 5000;
     $self->{ssl}              = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
+    $self->{http2}            = delete $params->{http2} // 0;  # HTTP/2 support (opt-in, experimental)
+
+    # Validate HTTP/2 availability if requested
+    if ($self->{http2}) {
+        unless ($HTTP2_AVAILABLE) {
+            die <<"END_HTTP2_ERROR";
+HTTP/2 support requested but Net::HTTP2::nghttp2 is not installed.
+
+To enable HTTP/2 support, install:
+    cpanm Net::HTTP2::nghttp2
+
+Or disable HTTP/2:
+    http2 => 0
+END_HTTP2_ERROR
+        }
+    }
 
     # Validate SSL certificate files at startup (fail fast)
     # Skip validation if TLS is explicitly disabled
@@ -1217,6 +1247,9 @@ sub configure {
     }
     if (exists $params{ssl}) {
         $self->{ssl} = delete $params{ssl};
+    }
+    if (exists $params{http2}) {
+        $self->{http2} = delete $params{http2};
     }
     if (exists $params{extensions}) {
         $self->{extensions} = delete $params{extensions};
@@ -1310,6 +1343,19 @@ sub _tls_status_string {
         return 'on';
     }
     return $TLS_AVAILABLE ? 'available' : 'not installed';
+}
+
+# Returns a human-readable HTTP/2 status string for the startup banner
+sub _http2_status_string {
+    my ($self) = @_;
+
+    if ($self->{http2_enabled}) {
+        if ($self->{h2c_enabled}) {
+            return 'on (h2c)';
+        }
+        return 'on';
+    }
+    return $HTTP2_AVAILABLE ? 'available' : 'not installed';
 }
 
 # Check if TLS modules are available
@@ -1491,20 +1537,14 @@ async sub _listen_singleworker {
             $listen_opts{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
         }
 
-        # ALPN negotiation for HTTP/2 support
-        # Only advertise h2 if nghttp2 module is available
-        my $enable_http2 = $ssl->{enable_http2} // 1;  # Enabled by default
-        if ($enable_http2 && $HTTP2_AVAILABLE) {
+        # ALPN negotiation for HTTP/2 support (only if http2 option is enabled)
+        if ($self->{http2}) {
             $listen_opts{SSL_alpn_protocols} = ['h2', 'http/1.1'];
             $self->{http2_enabled} = 1;
-            $self->_log(info => "HTTP/2 enabled via ALPN (nghttp2 available)");
         } else {
             # HTTP/1.1 only
             $listen_opts{SSL_alpn_protocols} = ['http/1.1'];
             $self->{http2_enabled} = 0;
-            if ($enable_http2 && !$HTTP2_AVAILABLE) {
-                $self->_log(info => "HTTP/2 requested but nghttp2 not available, falling back to HTTP/1.1");
-            }
         }
 
         # Mark that TLS is enabled
@@ -1512,6 +1552,13 @@ async sub _listen_singleworker {
 
         # Auto-add tls extension when SSL is configured
         $self->{extensions}{tls} = {} unless exists $self->{extensions}{tls};
+    }
+
+    # Handle HTTP/2 over cleartext (h2c) - enabled if http2 is on but no TLS
+    if ($self->{http2} && !$self->{tls_enabled}) {
+        $self->{http2_enabled} = 1;
+        $self->{h2c_enabled} = 1;  # Prior knowledge mode
+        $self->_log(warn => "HTTP/2 enabled without TLS (h2c mode) - only h2c-capable clients will work");
     }
 
     # Start listening
@@ -1573,6 +1620,7 @@ async sub _listen_singleworker {
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
+    my $http2_status = $self->_http2_status_string;
 
     # Warn if access_log is a terminal (slow for benchmarks)
     if ($self->{access_log} && -t $self->{access_log}) {
@@ -1582,7 +1630,7 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, tls: $tls_status)");
+    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status)");
 
     return $self;
 }
@@ -1632,6 +1680,7 @@ sub _listen_multiworker {
     my $mode = $reuseport ? 'reuseport' : 'shared-socket';
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
+    my $http2_status = $self->_http2_status_string;
 
     # Warn if access_log is a terminal (slow for benchmarks)
     if ($self->{access_log} && -t $self->{access_log}) {
@@ -1641,7 +1690,7 @@ sub _listen_multiworker {
         );
     }
 
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, tls: $tls_status)");
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status)");
 
     my $loop = $self->loop;
 
@@ -1986,6 +2035,13 @@ sub _on_connection {
         state             => $self->{state},
         tls_enabled       => $self->{tls_enabled} // 0,
         is_http2          => $is_http2,
+        h2c_enabled       => $self->{h2c_enabled} // 0,  # h2c detection for cleartext
+        http2_settings    => {
+            max_concurrent_streams => $self->{http2_max_concurrent_streams} // 100,
+            initial_window_size    => $self->{http2_initial_window_size} // 65535,
+            max_frame_size         => $self->{http2_max_frame_size} // 16384,
+            enable_push            => $self->{http2_enable_push} // 0,
+        },
         timeout           => $self->{timeout},
         request_timeout   => $self->{request_timeout},
         ws_idle_timeout   => $self->{ws_idle_timeout},

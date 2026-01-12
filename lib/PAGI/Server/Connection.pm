@@ -116,6 +116,8 @@ sub new {
         state         => $args{state} // {},
         tls_enabled   => $args{tls_enabled} // 0,
         is_http2      => $args{is_http2} // 0,  # HTTP/2 connection flag
+        h2c_enabled   => $args{h2c_enabled} // 0,  # h2c detection enabled
+        http2_settings => $args{http2_settings} // {},  # HTTP/2 protocol settings
         timeout       => $args{timeout} // 60,  # Idle timeout in seconds
         request_timeout => $args{request_timeout} // 0,  # Request stall timeout in seconds (0 = disabled, default for performance)
         ws_idle_timeout => $args{ws_idle_timeout} // 0,   # WebSocket idle timeout (0 = disabled)
@@ -225,14 +227,14 @@ sub start {
         $timer->start;
     }
 
-    # HTTP/2 initialization
+    # HTTP/2 initialization (from ALPN negotiation)
     if ($self->{is_http2}) {
         $self->_init_http2_session;
         $self->_setup_http2_read_handler;
         return;
     }
 
-    # Set up read handler (HTTP/1.1)
+    # Set up read handler (HTTP/1.1, with possible h2c upgrade)
     $stream->configure(
         on_read => sub  {
         my ($s, $buffref, $eof) = @_;
@@ -246,6 +248,31 @@ sub start {
 
             $weak_self->{buffer} .= $$buffref;
             $$buffref = '';
+
+            # h2c detection: check if first bytes are HTTP/2 client preface magic
+            # Only check on first read when h2c is enabled and not already in HTTP/2 mode
+            if ($weak_self->{h2c_enabled} && !$weak_self->{h2c_checked}) {
+                $weak_self->{h2c_checked} = 1;
+                # HTTP/2 client preface starts with "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+                if ($weak_self->{buffer} =~ /^PRI \* HTTP\/2\.0\r\n/) {
+                    # Switch to HTTP/2 mode
+                    $weak_self->{is_http2} = 1;
+                    # Create HTTP/2 protocol handler for h2c
+                    require PAGI::Server::Protocol::HTTP2;
+                    my $settings = $weak_self->{http2_settings} // {};
+                    $weak_self->{protocol} = PAGI::Server::Protocol::HTTP2->new(%$settings);
+                    $weak_self->_init_http2_session;
+                    # Feed the buffered data to HTTP/2 session
+                    if (length $weak_self->{buffer}) {
+                        $weak_self->{h2_session}->feed($weak_self->{buffer});
+                        $weak_self->{buffer} = '';
+                        $weak_self->_flush_http2;
+                    }
+                    # Reconfigure to use HTTP/2 read handler
+                    $weak_self->_setup_http2_read_handler;
+                    return 0;
+                }
+            }
 
             if ($eof) {
                 $weak_self->_handle_disconnect;

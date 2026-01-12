@@ -96,10 +96,10 @@ subtest 'Server starts with HTTP/2 enabled' => sub {
         host  => '127.0.0.1',
         port  => 0,
         quiet => 1,
+        http2 => 1,  # Enable HTTP/2 (opt-in)
         ssl   => {
-            cert_file    => $server_cert,
-            key_file     => $server_key,
-            enable_http2 => 1,
+            cert_file => $server_cert,
+            key_file  => $server_key,
         },
     );
 
@@ -120,10 +120,10 @@ subtest 'ALPN negotiates HTTP/2' => sub {
         host  => '127.0.0.1',
         port  => 0,
         quiet => 1,
+        http2 => 1,
         ssl   => {
-            cert_file    => $server_cert,
-            key_file     => $server_key,
-            enable_http2 => 1,
+            cert_file => $server_cert,
+            key_file  => $server_key,
         },
     );
 
@@ -159,10 +159,10 @@ subtest 'HTTP/2 request and response' => sub {
         host  => '127.0.0.1',
         port  => 0,
         quiet => 1,
+        http2 => 1,
         ssl   => {
-            cert_file    => $server_cert,
-            key_file     => $server_key,
-            enable_http2 => 1,
+            cert_file => $server_cert,
+            key_file  => $server_key,
         },
     );
 
@@ -327,10 +327,10 @@ subtest 'ALPN falls back to HTTP/1.1 when h2 not requested' => sub {
         host  => '127.0.0.1',
         port  => 0,
         quiet => 1,
+        http2 => 1,
         ssl   => {
-            cert_file    => $server_cert,
-            key_file     => $server_key,
-            enable_http2 => 1,
+            cert_file => $server_cert,
+            key_file  => $server_key,
         },
     );
 
