@@ -15,7 +15,19 @@ BEGIN {
 use strict;
 use warnings;
 
+use Getopt::Long qw(GetOptionsFromArray :config pass_through no_auto_abbrev no_ignore_case);
 use PAGI::Runner;
+
+# Parse PAGI::Server-specific options here to keep Runner server-agnostic
+my %server_opts;
+GetOptionsFromArray(
+    \@ARGV,
+    'http2'   => \$server_opts{http2},
+);
+
+# Pass server options via environment for Runner to pick up
+# (Runner will pass these to PAGI::Server->new)
+$ENV{_PAGI_SERVER_HTTP2} = 1 if $server_opts{http2};
 
 PAGI::Runner->run(@ARGV);
 

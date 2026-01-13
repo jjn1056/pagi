@@ -202,7 +202,6 @@ For PAGI::Server, these include:
     -w, --workers       Number of worker processes
     --reuseport         Enable SO_REUSEPORT mode
     --ssl-cert, --ssl-key  TLS configuration
-    --http2             Enable HTTP/2 support (experimental)
     --max-requests, --max-connections, --max-body-size
     --timeout, --log-level, etc.
 
@@ -538,9 +537,6 @@ sub _parse_server_options {
             'ssl-cert=s'            => \$opts{_ssl_cert},
             'ssl-key=s'             => \$opts{_ssl_key},
 
-            # HTTP/2 (experimental)
-            'http2'                 => \$opts{http2},
-
             # Timeouts
             'timeout=i'             => \$opts{timeout},
             'shutdown-timeout=i'    => \$opts{shutdown_timeout},
@@ -791,7 +787,6 @@ PAGI::Server Options (pass-through):
     -w, --workers NUM   Number of worker processes (default: 1)
     --ssl-cert FILE     SSL certificate file
     --ssl-key FILE      SSL private key file
-    --http2             Enable HTTP/2 support (experimental, requires nghttp2)
     --reuseport         SO_REUSEPORT mode (reduces accept contention)
     --max-requests NUM  Requests per worker before restart
     --max-connections N Max concurrent connections (0=auto)

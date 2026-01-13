@@ -117,7 +117,7 @@ sub new {
         tls_enabled   => $args{tls_enabled} // 0,
         is_http2      => $args{is_http2} // 0,  # HTTP/2 connection flag
         h2c_enabled   => $args{h2c_enabled} // 0,  # h2c detection enabled
-        http2_settings => $args{http2_settings} // {},  # HTTP/2 protocol settings
+        http2_protocol => $args{http2_protocol},  # HTTP/2 protocol singleton
         timeout       => $args{timeout} // 60,  # Idle timeout in seconds
         request_timeout => $args{request_timeout} // 0,  # Request stall timeout in seconds (0 = disabled, default for performance)
         ws_idle_timeout => $args{ws_idle_timeout} // 0,   # WebSocket idle timeout (0 = disabled)
@@ -255,12 +255,9 @@ sub start {
                 $weak_self->{h2c_checked} = 1;
                 # HTTP/2 client preface starts with "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
                 if ($weak_self->{buffer} =~ /^PRI \* HTTP\/2\.0\r\n/) {
-                    # Switch to HTTP/2 mode
+                    # Switch to HTTP/2 mode using protocol singleton
                     $weak_self->{is_http2} = 1;
-                    # Create HTTP/2 protocol handler for h2c
-                    require PAGI::Server::Protocol::HTTP2;
-                    my $settings = $weak_self->{http2_settings} // {};
-                    $weak_self->{protocol} = PAGI::Server::Protocol::HTTP2->new(%$settings);
+                    $weak_self->{protocol} = $weak_self->{http2_protocol};
                     $weak_self->_init_http2_session;
                     # Feed the buffered data to HTTP/2 session
                     if (length $weak_self->{buffer}) {

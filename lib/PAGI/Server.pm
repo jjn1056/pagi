@@ -1174,7 +1174,7 @@ sub _init {
     $self->{port}             = delete $params->{port} // 5000;
     $self->{ssl}              = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
-    $self->{http2}            = delete $params->{http2} // 0;  # HTTP/2 support (opt-in, experimental)
+    $self->{http2}            = delete $params->{http2} // $ENV{_PAGI_SERVER_HTTP2} // 0;  # HTTP/2 support (opt-in, experimental)
 
     # Validate HTTP/2 availability if requested
     if ($self->{http2}) {
@@ -1253,6 +1253,15 @@ END_HTTP2_ERROR
         max_header_size  => $self->{max_header_size},
         max_header_count => $self->{max_header_count},
     );
+    # Create HTTP/2 protocol singleton if available and enabled
+    if ($self->{http2} && $HTTP2_AVAILABLE) {
+        $self->{http2_protocol} = PAGI::Server::Protocol::HTTP2->new(
+            max_concurrent_streams => $self->{http2_max_concurrent_streams} // 100,
+            initial_window_size    => $self->{http2_initial_window_size} // 65535,
+            max_frame_size         => $self->{http2_max_frame_size} // 16384,
+            enable_push            => $self->{http2_enable_push} // 0,
+        );
+    }
     $self->{state}       = {};  # Shared state from lifespan
     $self->{worker_pids} = {};  # Track worker PIDs in multi-worker mode
     $self->{is_worker}   = 0;   # True if this is a worker process
@@ -2054,13 +2063,8 @@ sub _on_connection {
     my $is_http2 = ($alpn_protocol && $alpn_protocol eq 'h2');
 
     if ($is_http2) {
-        # Create HTTP/2 protocol handler for this connection
-        $protocol = PAGI::Server::Protocol::HTTP2->new(
-            max_concurrent_streams => $self->{http2_max_concurrent_streams} // 100,
-            initial_window_size    => $self->{http2_initial_window_size} // 65535,
-            max_frame_size         => $self->{http2_max_frame_size} // 16384,
-            enable_push            => $self->{http2_enable_push} // 0,
-        );
+        # Use HTTP/2 protocol singleton
+        $protocol = $self->{http2_protocol};
     }
 
     my $conn = PAGI::Server::Connection->new(
@@ -2073,12 +2077,7 @@ sub _on_connection {
         tls_enabled       => $self->{tls_enabled} // 0,
         is_http2          => $is_http2,
         h2c_enabled       => $self->{h2c_enabled} // 0,  # h2c detection for cleartext
-        http2_settings    => {
-            max_concurrent_streams => $self->{http2_max_concurrent_streams} // 100,
-            initial_window_size    => $self->{http2_initial_window_size} // 65535,
-            max_frame_size         => $self->{http2_max_frame_size} // 16384,
-            enable_push            => $self->{http2_enable_push} // 0,
-        },
+        http2_protocol    => $self->{http2_protocol},   # Singleton for h2c upgrade
         timeout           => $self->{timeout},
         request_timeout   => $self->{request_timeout},
         ws_idle_timeout   => $self->{ws_idle_timeout},
