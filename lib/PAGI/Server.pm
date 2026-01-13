@@ -4,6 +4,34 @@ use warnings;
 
 our $VERSION = '0.001007';
 
+# Future::XS support - opt-in via PAGI_FUTURE_XS=1 environment variable
+# Must be loaded before Future to take effect, so we check env var in BEGIN
+# Note: We declare these without initialization so BEGIN block values persist
+our ($FUTURE_XS_AVAILABLE, $FUTURE_XS_ENABLED);
+BEGIN {
+    $FUTURE_XS_AVAILABLE = eval { require Future::XS; 1 } ? 1 : 0;
+    $FUTURE_XS_ENABLED = 0;  # Default to disabled
+
+    if ($ENV{PAGI_FUTURE_XS}) {
+        if ($FUTURE_XS_AVAILABLE) {
+            # Future::XS is already loaded from the availability check
+            $FUTURE_XS_ENABLED = 1;
+        } else {
+            die <<"END_FUTURE_XS_ERROR";
+PAGI_FUTURE_XS=1 set but Future::XS is not installed.
+
+To install Future::XS:
+    cpanm Future::XS
+
+Or unset the PAGI_FUTURE_XS environment variable.
+END_FUTURE_XS_ERROR
+        }
+    } elsif ($FUTURE_XS_AVAILABLE) {
+        # Available but not requested - unload it
+        delete $INC{'Future/XS.pm'};
+    }
+}
+
 use parent 'IO::Async::Notifier';
 use IO::Async::Listener;
 use IO::Async::Stream;
@@ -1358,6 +1386,13 @@ sub _http2_status_string {
     return $HTTP2_AVAILABLE ? 'available' : 'not installed';
 }
 
+# Returns a human-readable Future::XS status string for the startup banner
+sub _future_xs_status_string {
+    return 'on' if $FUTURE_XS_ENABLED;
+    return 'available' if $FUTURE_XS_AVAILABLE;
+    return 'not installed';
+}
+
 # Check if TLS modules are available
 sub _check_tls_available {
     my ($self) = @_;
@@ -1621,6 +1656,7 @@ async sub _listen_singleworker {
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
     my $http2_status = $self->_http2_status_string;
+    my $future_xs_status = $self->_future_xs_status_string;
 
     # Warn if access_log is a terminal (slow for benchmarks)
     if ($self->{access_log} && -t $self->{access_log}) {
@@ -1630,7 +1666,7 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status)");
+    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     return $self;
 }
@@ -1681,6 +1717,7 @@ sub _listen_multiworker {
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
     my $http2_status = $self->_http2_status_string;
+    my $future_xs_status = $self->_future_xs_status_string;
 
     # Warn if access_log is a terminal (slow for benchmarks)
     if ($self->{access_log} && -t $self->{access_log}) {
@@ -1690,7 +1727,7 @@ sub _listen_multiworker {
         );
     }
 
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status)");
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     my $loop = $self->loop;
 
@@ -2436,12 +2473,33 @@ sub effective_max_connections {
     return $self->{max_connections} if $self->{max_connections} && $self->{max_connections} > 0;
 
     # Auto-detect from process soft limit (not system max)
-    # getrlimit returns the actual per-process limit, unlike sysconf which
-    # may return the system-wide maximum on some platforms
     my $ulimit = eval {
+        # Try POSIX::getrlimit first (works on Linux)
         my ($soft, $hard) = POSIX::getrlimit(POSIX::RLIMIT_NOFILE());
         $soft;
-    } // 1024;
+    };
+
+    # Fallback for macOS where POSIX::RLIMIT_NOFILE isn't available
+    if (!$ulimit) {
+        # On macOS, shell ulimit can exceed kern.maxfilesperproc
+        # Use the kernel limit if available (more accurate)
+        if ($^O eq 'darwin') {
+            $ulimit = eval {
+                my $out = `sysctl -n kern.maxfilesperproc 2>/dev/null`;
+                chomp $out;
+                $out =~ /^(\d+)$/ ? $1 : undef;
+            };
+        }
+        # Fall back to shell ulimit
+        $ulimit //= eval {
+            my $out = `ulimit -n 2>/dev/null`;
+            chomp $out;
+            $out =~ /^(\d+)$/ ? $1 : undef;
+        };
+    }
+
+    # Final fallback
+    $ulimit //= 1024;
 
     # Reserve FDs for: listen socket, worker IPC pipes, logging,
     # static files, TLS internals, DB connections, DNS, etc.
@@ -2521,6 +2579,9 @@ predictable performance without major outliers.
 
 =item * B<HTTP/2 overhead> - For trivial requests, HTTP/2 adds ~8% overhead
 vs HTTP/1.1. Benefits show with concurrent streams and header compression.
+
+=item * B<Future::XS optional> - Installing L<Future::XS> and enabling it
+with C<--future-xs> or C<PAGI_FUTURE_XS=1> provides ~3% HTTP/1.1 improvement.
 
 =back
 
@@ -2608,6 +2669,51 @@ B<Production command line example:>
         --no-access-log \
         -E production \
         --app app.pl
+
+=head2 Future::XS Optimization
+
+L<Future::XS> is an XS (C) implementation of L<Future> that can provide
+modest performance improvements for HTTP/1.1 workloads (~3%). The improvement
+is smaller for HTTP/2 due to the additional framing and flow control overhead.
+
+B<Installation:>
+
+    cpanm Future::XS
+
+B<Enabling:>
+
+Future::XS must be loaded before the standard Future module at compile time.
+There are two ways to enable it:
+
+=over 4
+
+=item * CLI flag: C<--future-xs>
+
+    pagi-server --future-xs --workers 16 app.pl
+
+=item * Environment variable: C<PAGI_FUTURE_XS=1>
+
+    PAGI_FUTURE_XS=1 pagi-server --workers 16 app.pl
+
+=back
+
+The environment variable takes precedence and is useful for deployment
+configurations.
+
+If enabled but not installed, PAGI::Server will die with an error message.
+The server startup banner shows the Future::XS status:
+
+    # When enabled:
+    PAGI Server listening ... (future_xs: on)
+
+    # When available but not enabled:
+    PAGI Server listening ... (future_xs: available)
+
+    # When not installed:
+    PAGI Server listening ... (future_xs: not installed)
+
+B<Note:> Future::XS is not enabled by default because the performance
+improvement is modest and it adds an additional dependency.
 
 =cut
 

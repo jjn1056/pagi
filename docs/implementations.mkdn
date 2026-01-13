@@ -4,7 +4,7 @@ Complete or upcoming implementations of PAGI-compatible components — servers, 
 
 ## Servers
 
-- **PAGI::Server** — Reference IO::Async-based server with HTTP/1.1, WebSocket, SSE, and TLS support. Features multi-worker pre-fork mode, async file streaming, graceful shutdown, and signal-based worker scaling. Protocols: `http`, `websocket`, `sse`, `lifespan`. Status: **stable**. [GitHub](https://github.com/jnapiorkowski/PAGI)
+- **PAGI::Server** — Reference IO::Async-based server with HTTP/1.1, HTTP/2, WebSocket, SSE, and TLS support. Features multi-worker pre-fork mode, async file streaming, graceful shutdown, and signal-based worker scaling. Optional performance optimizations include EV event loop and Future::XS. Protocols: `http`, `websocket`, `sse`, `lifespan`. Status: **stable**. [GitHub](https://github.com/jnapiorkowski/PAGI)
 
 ## Application Frameworks
 
@@ -19,4 +19,4 @@ Bundled with PAGI::Server:
 
 ## Tools / Utilities
 
-- **pagi-server** — CLI for running PAGI applications. Supports daemonization, PID files, privilege dropping, SSL, multi-worker mode, and graceful restarts via signals. Bundled with PAGI::Server.
+- **pagi-server** — CLI for running PAGI applications. Supports daemonization, PID files, privilege dropping, TLS/SSL, HTTP/2 (`--http2`), multi-worker mode, and graceful restarts via signals. Optional `--future-xs` flag for ~3% HTTP/1.1 performance boost. Bundled with PAGI::Server.

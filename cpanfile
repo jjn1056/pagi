@@ -29,6 +29,12 @@ recommends 'Net::HTTP2::nghttp2', '0.001';
 # To enable HTTP/2 support, install with:
 #   cpanm Net::HTTP2::nghttp2
 
+# Future::XS (optional - ~3% HTTP/1.1 performance boost)
+recommends 'Future::XS', '0.15';
+# To enable Future::XS support, install and use --future-xs flag:
+#   cpanm Future::XS
+#   pagi-server --future-xs ./app.pl
+
 # Zero-copy file transfer (optional but recommended for performance)
 recommends 'Sys::Sendfile', '0.11';
 
