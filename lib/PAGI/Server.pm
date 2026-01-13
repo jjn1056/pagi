@@ -2683,22 +2683,12 @@ B<Installation:>
 B<Enabling:>
 
 Future::XS must be loaded before the standard Future module at compile time.
-There are two ways to enable it:
-
-=over 4
-
-=item * CLI flag: C<--future-xs>
+Use either the CLI flag or environment variable:
 
     pagi-server --future-xs --workers 16 app.pl
 
-=item * Environment variable: C<PAGI_FUTURE_XS=1>
-
+    # Or via environment variable
     PAGI_FUTURE_XS=1 pagi-server --workers 16 app.pl
-
-=back
-
-The environment variable takes precedence and is useful for deployment
-configurations.
 
 If enabled but not installed, PAGI::Server will die with an error message.
 The server startup banner shows the Future::XS status:

@@ -36,8 +36,6 @@ This module bridges nghttp2's callback-based API to PAGI's event model.
 
 =cut
 
-our $VERSION = '0.001';
-
 # Check for nghttp2 availability
 our $AVAILABLE;
 BEGIN {

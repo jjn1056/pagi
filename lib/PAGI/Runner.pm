@@ -203,7 +203,6 @@ For PAGI::Server, these include:
     --reuseport         Enable SO_REUSEPORT mode
     --ssl-cert, --ssl-key  TLS configuration
     --http2             Enable HTTP/2 support (experimental)
-    --future-xs         Enable Future::XS (~3% HTTP/1.1 performance boost)
     --max-requests, --max-connections, --max-body-size
     --timeout, --log-level, etc.
 
@@ -473,18 +472,6 @@ sub load_server {
 
     my $server_class = $self->{server} // 'PAGI::Server';
 
-    # Pre-scan server options for compile-time settings (PAGI::Server specific)
-    # Future::XS must be loaded before the server's BEGIN block runs
-    if ($server_class eq 'PAGI::Server') {
-        my @args = @{$self->{server_options} // []};
-        for my $i (0 .. $#args) {
-            if ($args[$i] eq '--future-xs') {
-                $ENV{PAGI_FUTURE_XS} = 1;
-                last;
-            }
-        }
-    }
-
     # Load server class
     my $server_file = $server_class;
     $server_file =~ s{::}{/}g;
@@ -554,9 +541,6 @@ sub _parse_server_options {
             # HTTP/2 (experimental)
             'http2'                 => \$opts{http2},
 
-            # Performance (env var set via pre-scan, consumed here)
-            'future-xs'             => \$opts{_future_xs},
-
             # Timeouts
             'timeout=i'             => \$opts{timeout},
             'shutdown-timeout=i'    => \$opts{shutdown_timeout},
@@ -595,9 +579,6 @@ sub _parse_server_options {
         }
         delete $opts{_ssl_cert};
         delete $opts{_ssl_key};
-
-        # Future::XS is handled via env var pre-scan, just consume the option
-        delete $opts{_future_xs};
 
         # Handle workers (0 for single-process, >1 for multi-worker)
         if (defined $opts{workers}) {
@@ -811,7 +792,6 @@ PAGI::Server Options (pass-through):
     --ssl-cert FILE     SSL certificate file
     --ssl-key FILE      SSL private key file
     --http2             Enable HTTP/2 support (experimental, requires nghttp2)
-    --future-xs         Enable Future::XS for ~3% HTTP/1.1 performance boost
     --reuseport         SO_REUSEPORT mode (reduces accept contention)
     --max-requests NUM  Requests per worker before restart
     --max-connections N Max concurrent connections (0=auto)

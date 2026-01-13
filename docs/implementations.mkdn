@@ -19,4 +19,4 @@ Bundled with PAGI::Server:
 
 ## Tools / Utilities
 
-- **pagi-server** — CLI for running PAGI applications. Supports daemonization, PID files, privilege dropping, TLS/SSL, HTTP/2 (`--http2`), multi-worker mode, and graceful restarts via signals. Optional `--future-xs` flag for ~3% HTTP/1.1 performance boost. Bundled with PAGI::Server.
+- **pagi-server** — CLI for running PAGI applications. Supports daemonization, PID files, privilege dropping, TLS/SSL, HTTP/2 (`--http2`), multi-worker mode, and graceful restarts via signals. Bundled with PAGI::Server.

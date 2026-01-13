@@ -31,7 +31,7 @@ recommends 'Net::HTTP2::nghttp2', '0.001';
 
 # Future::XS (optional - ~3% HTTP/1.1 performance boost)
 recommends 'Future::XS', '0.15';
-# To enable Future::XS support, install and use --future-xs flag:
+# To enable Future::XS support:
 #   cpanm Future::XS
 #   pagi-server --future-xs ./app.pl
 
