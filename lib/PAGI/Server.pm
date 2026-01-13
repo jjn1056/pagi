@@ -2466,61 +2466,61 @@ for production workloads.
 
 =head2 Benchmark Results
 
-Tested on a 2.4 GHz 8-Core Intel Core i9 Mac with 8 workers, using
-L<hey|https://github.com/rakyll/hey> against a PAGI hello world
-application:
+Tested on Apple M3 Max (16 cores) with 16 workers using EV event loop,
+benchmarked with L<hey|https://github.com/rakyll/hey> against a hello
+world application:
 
-B<Peak Performance (100 concurrent, 10 seconds):>
+B<Protocol Comparison (500 concurrent, 30 seconds):>
 
-    Endpoint        Req/sec     p50      p99      Response
+    Protocol      Req/sec     p50       p99       Total Requests
     ----------------------------------------------------------------
-    / (text)        12,455      7.7ms    13.2ms   13 bytes
-    /html           10,932      8.4ms    19.3ms   143 bytes
-    /json           9,806       8.8ms    28.2ms   50 bytes
-    /greet/:name    10,722      8.9ms    15.4ms   17 bytes (path params)
+    HTTP/1.1      23,349      20.7ms    37.1ms    700,828
+    HTTP/2 (h2c)  21,611      21.7ms    46.5ms    648,672
 
-B<Concurrency Scaling:>
+B<Concurrency Scaling (HTTP/1.1):>
 
     Concurrent    Req/sec     p50       p99
     -----------------------------------------
-    10            9,757       0.9ms     2.1ms
-    100           12,100      7.8ms     14.1ms
-    500           11,299      43.3ms    63.7ms
+    50            34,000      1.4ms     2.8ms
+    100           38,000      2.5ms     4.2ms
+    500           23,349      20.7ms    37.1ms
 
-B<Sustained Load (30 seconds, 200 concurrent):>
+B<Sustained Load (30 seconds, 500 concurrent):>
 
-    Requests/sec:    9,934
-    Total requests:  298,171
-    Latency p99:     39.5ms
+    Requests/sec:    23,349
+    Total requests:  700,828
+    Latency p99:     37.1ms
     Errors:          0
 
-=head2 Comparison
+HTTP/2 is approximately 8% slower than HTTP/1.1 for simple requests due
+to binary framing overhead, HPACK compression, and flow control. HTTP/2
+benefits appear with header-heavy requests and multiplexed streams.
 
-    Server                  Req/sec     p99 Latency   Notes
-    ---------------------------------------------------------------
-    PAGI (8 workers)        10-12k      13-40ms       Async, zero errors
-    Uvicorn (Python)        10-15k      varies        ASGI reference
-    Hypercorn (Python)      8-12k       varies        ASGI
-    Starman (Perl)          8-10k       2-3ms*        Sync prefork
+=head2 HTTP/2 Conformance
 
-    * Starman shows lower latency at low concurrency but experiences
-      request timeouts under high concurrent load (500+ connections)
-      due to its synchronous prefork model.
+PAGI::Server achieves 94% h2spec conformance (137/146 tests), matching
+production servers like Caddy and Go's net/http2. The remaining failures
+are edge cases in the underlying nghttp2 library related to handling
+malformed client requests.
 
 =head2 Key Findings
 
 =over 4
 
+=item * B<EV loop recommended> - L<IO::Async::Loop::EV> with libev provides
+the best performance. Set C<LIBEV_FLAGS=8> for epoll on Linux.
+
 =item * B<Keep-alive is essential> - Without it, throughput drops 6x and
 port exhaustion errors occur under load.
 
-=item * B<Zero errors under sustained load> - 298k requests over 30 seconds
+=item * B<Zero errors under sustained load> - 700k+ requests over 30 seconds
 with no failures when using keep-alive connections.
 
 =item * B<Consistent tail latency> - p99 is typically only 2x p50, indicating
 predictable performance without major outliers.
 
-=item * B<JSON overhead> - JSON serialization adds ~20% overhead vs plain text.
+=item * B<HTTP/2 overhead> - For trivial requests, HTTP/2 adds ~8% overhead
+vs HTTP/1.1. Benefits show with concurrent streams and header compression.
 
 =back
 
@@ -2571,13 +2571,43 @@ default. This can be adjusted via the C<listen_backlog> option.
 
 =head2 Event Loop Selection
 
-PAGI::Server works with any L<IO::Async> compatible event loop. If
-you are on Linux, its recommended to install L<IO::Async::Loop::EPoll>
-because that is the best choice for Linux and if installed will be automatically
-used.
+PAGI::Server works with any L<IO::Async> compatible event loop. For
+best performance:
 
-For other systems I recommend testing the various backend loop options
-and find what works best.   Your notes and updates appreciated.
+B<Recommended: EV (libev)>
+
+    # Install IO::Async::Loop::EV
+    cpanm IO::Async::Loop::EV
+
+    # Run with EV loop (use LIBEV_FLAGS=8 for epoll on Linux)
+    LIBEV_FLAGS=8 perl -Ilib bin/pagi-server --loop EV --workers 16 ...
+
+L<IO::Async::Loop::EV> provides the best cross-platform performance
+using the libev library. On Linux, set C<LIBEV_FLAGS=8> to use epoll
+backend.
+
+B<Alternative: EPoll (Linux only)>
+
+    # Install IO::Async::Loop::Epoll
+    cpanm IO::Async::Loop::Epoll
+
+If installed, L<IO::Async::Loop::Epoll> will be automatically selected
+on Linux. This is a good choice if you don't want to install libev.
+
+B<Default: Poll>
+
+The default Poll loop works everywhere but is slower under high
+concurrency. Fine for development and moderate workloads.
+
+B<Production command line example:>
+
+    LIBEV_FLAGS=8 perl -Ilib bin/pagi-server \
+        --workers 16 \
+        --loop EV \
+        --timeout 0 \
+        --no-access-log \
+        -E production \
+        --app app.pl
 
 =cut
 
