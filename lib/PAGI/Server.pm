@@ -1719,6 +1719,19 @@ sub _listen_multiworker {
 
     $self->{running} = 1;
 
+    # Set HTTP/2 status flags (same logic as single-worker mode)
+    if ($self->{ssl}) {
+        $self->{tls_enabled} = 1;
+        if ($self->{http2}) {
+            $self->{http2_enabled} = 1;
+        }
+    } elsif ($self->{http2}) {
+        # h2c mode (HTTP/2 over cleartext)
+        $self->{http2_enabled} = 1;
+        $self->{h2c_enabled} = 1;
+        $self->_log(warn => "HTTP/2 enabled without TLS (h2c mode) - only h2c-capable clients will work");
+    }
+
     my $scheme = $self->{ssl} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
