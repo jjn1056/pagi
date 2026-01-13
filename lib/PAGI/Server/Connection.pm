@@ -413,8 +413,40 @@ sub _init_http2_session {
     # Store stream states: stream_id => { scope, receive_queue, send_future, ... }
     $self->{h2_streams} = {};
 
+    # Queue for pending response submissions (processed after feed() completes)
+    # This ensures nghttp2 can detect protocol errors before stream state changes
+    $self->{h2_pending_responses} = [];
+
     # Send initial SETTINGS frame
     $self->_flush_http2;
+}
+
+# Process queued response submissions after feed() completes
+sub _process_pending_responses {
+    my ($self) = @_;
+
+    my $pending = $self->{h2_pending_responses} // [];
+    $self->{h2_pending_responses} = [];
+
+    for my $resp (@$pending) {
+        my ($stream_id, $args) = @$resp;
+        my $h2_stream = $self->{h2_streams}{$stream_id};
+        next unless $h2_stream;  # Stream may have been closed
+
+        if ($args->{streaming}) {
+            $self->{h2_session}->submit_response_streaming($stream_id,
+                status        => $args->{status},
+                headers       => $args->{headers},
+                data_callback => $args->{data_callback},
+            );
+        } else {
+            $self->{h2_session}->submit_response($stream_id,
+                status  => $args->{status},
+                headers => $args->{headers},
+                body    => $args->{body},
+            );
+        }
+    }
 }
 
 sub _setup_http2_read_handler {
@@ -432,27 +464,26 @@ sub _setup_http2_read_handler {
             $weak_self->_reset_idle_timer;
 
             if (length($$buffref)) {
-                eval {
-                    # Feed data to nghttp2
-                    $weak_self->{h2_session}->feed($$buffref);
-                    $$buffref = '';
-
-                    # Extract and send any outgoing data
-                    $weak_self->_flush_http2;
-                };
-                if (my $error = $@) {
-                    warn "HTTP/2 protocol error: $error";
-                    # Try to send GOAWAY before closing
-                    eval {
-                        $weak_self->{h2_session}->terminate(1);  # PROTOCOL_ERROR
-                        $weak_self->_flush_http2;
-                    };
-                    $weak_self->_close;
-                    return 0;
+                # Feed data to nghttp2 - ignore errors, let nghttp2 handle protocol violations
+                # nghttp2 automatically queues GOAWAY/RST_STREAM for protocol errors
+                eval { $weak_self->{h2_session}->feed($$buffref) };
+                if (my $feed_error = $@) {
+                    # Log but don't die - nghttp2 may have queued error frames
+                    warn "HTTP/2 protocol issue: $feed_error" if $ENV{PAGI_DEBUG};
                 }
+                $$buffref = '';
+
+                # Schedule deferred response processing to allow more data to arrive
+                # This is important because TCP doesn't preserve HTTP/2 frame boundaries.
+                # If protocol error frames (like DATA on half-closed stream) arrive in a
+                # separate TCP segment, we need to process them before sending responses.
+                $weak_self->_schedule_h2_response_flush;
             }
 
             if ($eof) {
+                # On EOF, process immediately without deferral
+                $weak_self->_cancel_h2_response_flush;
+                $weak_self->_flush_and_process_h2;
                 $weak_self->_handle_disconnect;
                 return 0;
             }
@@ -461,9 +492,68 @@ sub _setup_http2_read_handler {
         },
         on_closed => sub {
             return unless $weak_self;
+            $weak_self->_cancel_h2_response_flush;
             $weak_self->_handle_disconnect;
         },
     );
+}
+
+# Schedule a deferred flush/response processing for HTTP/2
+# This gives time for more TCP data to arrive before we send responses
+sub _schedule_h2_response_flush {
+    my ($self) = @_;
+
+    return if $self->{closed};
+    return if $self->{h2_flush_scheduled};  # Already scheduled
+
+    $self->{h2_flush_scheduled} = 1;
+
+    # Use a small timer delay to allow more TCP data to arrive
+    # This is necessary because loop->later executes too quickly -
+    # additional TCP segments may arrive after the next event loop iteration
+    if ($self->{server} && $self->{server}->loop) {
+        weaken(my $weak_self = $self);
+        $self->{server}->loop->watch_time(
+            after => 0.001,  # 1ms delay
+            code => sub {
+                return unless $weak_self;
+                $weak_self->{h2_flush_scheduled} = 0;
+                $weak_self->_flush_and_process_h2;
+            },
+        );
+    } else {
+        # No loop available, process immediately
+        $self->{h2_flush_scheduled} = 0;
+        $self->_flush_and_process_h2;
+    }
+}
+
+# Cancel any pending deferred flush
+sub _cancel_h2_response_flush {
+    my ($self) = @_;
+    $self->{h2_flush_scheduled} = 0;
+}
+
+# Flush error frames, process responses, check session state
+sub _flush_and_process_h2 {
+    my ($self) = @_;
+
+    return if $self->{closed};
+
+    # IMPORTANT: Flush FIRST to send any error frames (GOAWAY, RST_STREAM)
+    # that nghttp2 queued while processing invalid frames.
+    eval { $self->_flush_http2 };
+
+    # Now process queued responses and flush them
+    $self->_process_pending_responses;
+    eval { $self->_flush_http2 };
+
+    # Check if session is done (nghttp2 closed it due to errors)
+    my $want_read = eval { $self->{h2_session}->want_read } // 0;
+    my $want_write = eval { $self->{h2_session}->want_write } // 0;
+    if (!$want_read && !$want_write) {
+        $self->_close;
+    }
 }
 
 sub _flush_http2 {
@@ -669,29 +759,32 @@ sub _send_http2_response_body {
     my $body = $event->{body} // '';
     my $more = $event->{more} // 0;
 
-    # If we haven't sent headers yet, send them now with body
+    # If we haven't sent headers yet, queue response for submission
+    # Response is queued and processed AFTER feed() completes to ensure
+    # nghttp2 can detect protocol errors before stream state changes
     if (!$h2_stream->{headers_sent}) {
         $h2_stream->{headers_sent} = 1;
 
         if (!$more) {
-            # Complete response - send all at once
-            $self->{h2_session}->submit_response($stream_id,
+            # Complete response - queue for batch submission
+            push @{$self->{h2_pending_responses}}, [$stream_id, {
                 status  => $h2_stream->{response_status} // 200,
                 headers => $h2_stream->{response_headers} // [],
                 body    => $body,
-            );
+            }];
         }
         else {
-            # Streaming response - use data callback
+            # Streaming response - queue with data callback
             $h2_stream->{pending_body} = $body;
             $h2_stream->{body_complete} = 0;
 
             weaken(my $weak_self = $self);
             my $weak_stream_id = $stream_id;
 
-            $self->{h2_session}->submit_response_streaming($stream_id,
-                status  => $h2_stream->{response_status} // 200,
-                headers => $h2_stream->{response_headers} // [],
+            push @{$self->{h2_pending_responses}}, [$stream_id, {
+                streaming => 1,
+                status    => $h2_stream->{response_status} // 200,
+                headers   => $h2_stream->{response_headers} // [],
                 data_callback => sub {
                     my ($sid, $max_len) = @_;
                     return ('', 1) unless $weak_self;
@@ -712,7 +805,7 @@ sub _send_http2_response_body {
                         return;  # Defer - no data ready
                     }
                 },
-            );
+            }];
         }
     }
     else {
@@ -726,8 +819,9 @@ sub _send_http2_response_body {
         }
     }
 
-    # Flush any pending output
-    $self->_flush_http2;
+    # NOTE: Don't flush here - let on_read handler flush after feed() completes.
+    # Flushing mid-callback prevents nghttp2 from detecting protocol errors
+    # on subsequent frames in the same packet.
 
     return Future->done;
 }
