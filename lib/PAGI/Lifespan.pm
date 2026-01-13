@@ -167,6 +167,12 @@ PAGI::Lifespan wraps any PAGI application with lifecycle management.
 It handles C<lifespan.startup> and C<lifespan.shutdown> events and
 injects application state into the scope for all requests.
 
+B<Important>: Lifespan events are delivered only to the top-level application.
+Routers, dispatchers, and middleware do NOT forward lifespan events to mounted
+sub-applications. This matches the ASGI ecosystem (Starlette, FastAPI) design.
+Use C<PAGI::Lifespan> at the top level to manage all startup/shutdown needs,
+and access shared resources via C<< $scope->{state} >> in your handlers.
+
 =head2 State Flow
 
 The C<startup> and C<shutdown> callbacks receive a C<$state> hashref
@@ -230,8 +236,110 @@ Returns the wrapped PAGI application coderef.
 
 Returns the state hashref.
 
+=head1 MIDDLEWARE AND SUB-APPLICATIONS
+
+Lifespan events are delivered B<only> to the top-level application. If you
+mount sub-applications via C<PAGI::App::Router> or similar, those sub-apps
+will NOT receive lifespan events.
+
+This is by design and matches the ASGI ecosystem:
+
+=over 4
+
+=item * B<Complexity>: Forwarding lifespan to multiple apps requires synthetic
+C<$receive>/C<$send> pairs and complex error aggregation
+
+=item * B<State sharing>: The C<< $scope->{state} >> mechanism provides a clean
+way to share initialized resources with all requests
+
+=item * B<Consistency>: Apps should not depend on receiving lifespan events
+when mounted as sub-applications
+
+=back
+
+B<Recommended pattern>: Initialize all resources at the top level and access
+them via C<< $scope->{state} >> in your handlers:
+
+    # Top-level app.pl
+    my $app = PAGI::Lifespan->wrap(
+        $router->to_app,
+        startup => async sub {
+            my ($state) = @_;
+            $state->{db} = await connect_db();
+            $state->{redis} = await connect_redis();
+        },
+        shutdown => async sub {
+            my ($state) = @_;
+            await $state->{redis}->disconnect;
+            await $state->{db}->disconnect;
+        },
+    );
+
+    # In any route handler (even mounted sub-apps)
+    async sub my_handler ($scope, $receive, $send) {
+        my $db = $scope->{state}{db};
+        my $redis = $scope->{state}{redis};
+        # Use the shared connections...
+    }
+
+=head1 COMMON PATTERNS
+
+=head2 Database Connection Pool
+
+    startup => async sub {
+        my ($state) = @_;
+        $state->{dbh} = DBI->connect(
+            $dsn, $user, $pass,
+            { RaiseError => 1, AutoCommit => 1 }
+        );
+    },
+    shutdown => async sub {
+        my ($state) = @_;
+        $state->{dbh}->disconnect if $state->{dbh};
+    },
+
+=head2 HTTP Client
+
+    use Net::Async::HTTP;
+
+    startup => async sub {
+        my ($state) = @_;
+        $state->{http} = Net::Async::HTTP->new;
+        $loop->add($state->{http});
+    },
+    shutdown => async sub {
+        my ($state) = @_;
+        $loop->remove($state->{http}) if $state->{http};
+    },
+
+=head2 Configuration Loading
+
+    startup => async sub {
+        my ($state) = @_;
+        $state->{config} = load_config('/etc/myapp/config.yaml');
+        $state->{version} = '1.0.0';
+    },
+
+=head1 MULTI-WORKER CONSIDERATIONS
+
+In multi-worker deployments, each worker process runs lifespan startup/shutdown
+independently. The C<< $scope->{pagi}{is_worker} >> and C<< $scope->{pagi}{worker_num} >>
+fields can be used to differentiate behavior:
+
+    startup => async sub {
+        my ($state) = @_;
+        $state->{db} = await connect_db();
+
+        # Only log from worker 1 to avoid duplicate messages
+        if (!$scope->{pagi}{is_worker} || $scope->{pagi}{worker_num} == 1) {
+            print STDERR "Application started\n";
+        }
+    },
+
 =head1 SEE ALSO
 
-L<PAGI::App::Router>, L<PAGI::Endpoint::Router>
+L<PAGI::App::Router>, L<PAGI::Endpoint::Router>, L<PAGI> (main spec)
+
+The lifespan specification: C<docs/specs/lifespan.mkdn>
 
 =cut

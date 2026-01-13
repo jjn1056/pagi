@@ -1,6 +1,6 @@
 # Lifespan Protocol
 
-**Version**: 0.2 (Draft)
+**Version**: 0.3 (Draft)
 
 The Lifespan **PAGI** sub-specification outlines how to communicate
 lifespan events such as startup and shutdown within PAGI.
@@ -112,6 +112,54 @@ interact with it other than to copy it.
 Nonetheless, applications should be cooperative by properly naming their keys such that they
 will not collide with other frameworks or middleware.
 
+## Middleware and Sub-Applications
+
+Lifespan events are delivered **only to the top-level application**. Routers,
+dispatchers, and middleware SHOULD NOT forward lifespan events to mounted
+sub-applications or routes.
+
+This design matches the ASGI ecosystem (Starlette, FastAPI) where "lifespan
+events will only be executed for the main application, not for Sub Applications
+- Mounts."
+
+### Rationale
+
+1. **Complexity**: Forwarding lifespan to multiple apps requires synthetic
+   `$receive`/`$send` pairs and complex error aggregation
+2. **State sharing**: The `$scope->{state}` mechanism already provides a way
+   to share initialized resources with all requests
+3. **Consistency**: Apps should not depend on receiving lifespan events when
+   mounted as sub-applications
+
+### Recommended Pattern
+
+Applications that need startup/shutdown resources should:
+
+1. Register handlers with the top-level lifespan manager (e.g., `PAGI::Lifespan`)
+2. Access shared resources via `$scope->{state}` in request handlers
+3. NOT assume they will receive lifespan events when used as a mounted sub-app
+
+```perl
+# Top-level app handles lifespan
+my $app = PAGI::Lifespan->wrap(
+    $router->to_app,
+    startup => async sub {
+        my ($state) = @_;
+        $state->{db} = await connect_db();
+    },
+    shutdown => async sub {
+        my ($state) = @_;
+        await $state->{db}->disconnect;
+    },
+);
+
+# Mounted apps access state, don't handle lifespan
+async sub mounted_app ($scope, $receive, $send) {
+    my $db = $scope->{state}{db};  # Use shared resource
+    # ...
+}
+```
+
 ## Startup - `receive` event
 
 Sent to the application when the server is ready to startup and receive connections,
@@ -170,6 +218,7 @@ sees this it should log/print the message provided and then terminate.
 
 ## Version History
 
+- 0.3 (Draft): Added Middleware and Sub-Applications guidance
 - 0.2 (Draft): Added is_worker and worker_num fields for multi-worker support
 - 0.1 (Draft): Initial lifespan specification
 
