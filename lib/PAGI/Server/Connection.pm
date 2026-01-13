@@ -455,7 +455,14 @@ sub _setup_http2_read_handler {
     my $stream = $self->{stream};
     weaken(my $weak_self = $self);
 
+    # Configure stream with read_all => 1 to drain all available data from kernel
+    # before invoking on_read. This is critical for HTTP/2 conformance: when multiple
+    # frames arrive in the same kernel buffer (e.g., HEADERS followed by invalid DATA),
+    # we need to process them together so nghttp2 can generate proper error responses.
+    # Combined with loop->later deferral, this achieves proper protocol error detection
+    # without requiring artificial timer delays.
     $stream->configure(
+        read_all => 1,
         on_read => sub {
             my ($s, $buffref, $eof) = @_;
             return 0 unless $weak_self;
@@ -473,10 +480,9 @@ sub _setup_http2_read_handler {
                 }
                 $$buffref = '';
 
-                # Schedule deferred response processing to allow more data to arrive
-                # This is important because TCP doesn't preserve HTTP/2 frame boundaries.
-                # If protocol error frames (like DATA on half-closed stream) arrive in a
-                # separate TCP segment, we need to process them before sending responses.
+                # Schedule deferred response processing - uses loop->later to defer
+                # to next event loop iteration, allowing all coalesced data to be
+                # processed before responses are sent.
                 $weak_self->_schedule_h2_response_flush;
             }
 
@@ -499,7 +505,10 @@ sub _setup_http2_read_handler {
 }
 
 # Schedule a deferred flush/response processing for HTTP/2
-# This gives time for more TCP data to arrive before we send responses
+# With read_all => 1, we drain all available kernel data before this callback.
+# Using loop->later defers processing to the next event loop iteration, which
+# is sufficient when combined with read_all to achieve proper protocol error
+# detection (no artificial timer delay needed).
 sub _schedule_h2_response_flush {
     my ($self) = @_;
 
@@ -508,19 +517,13 @@ sub _schedule_h2_response_flush {
 
     $self->{h2_flush_scheduled} = 1;
 
-    # Use a small timer delay to allow more TCP data to arrive
-    # This is necessary because loop->later executes too quickly -
-    # additional TCP segments may arrive after the next event loop iteration
     if ($self->{server} && $self->{server}->loop) {
         weaken(my $weak_self = $self);
-        $self->{server}->loop->watch_time(
-            after => 0.001,  # 1ms delay
-            code => sub {
-                return unless $weak_self;
-                $weak_self->{h2_flush_scheduled} = 0;
-                $weak_self->_flush_and_process_h2;
-            },
-        );
+        $self->{server}->loop->later(sub {
+            return unless $weak_self;
+            $weak_self->{h2_flush_scheduled} = 0;
+            $weak_self->_flush_and_process_h2;
+        });
     } else {
         # No loop available, process immediately
         $self->{h2_flush_scheduled} = 0;
