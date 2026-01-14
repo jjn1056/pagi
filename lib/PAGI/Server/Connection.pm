@@ -580,6 +580,32 @@ sub _on_http2_request {
     my $authority = $pseudo->{':authority'} // '';
     my $protocol = $pseudo->{':protocol'};  # RFC 8441: 'websocket' for WebSocket over HTTP/2
 
+    # RFC 8441: Detect extended CONNECT for WebSocket over HTTP/2
+    # Extended CONNECT requires: method=CONNECT, :protocol=websocket, plus :path, :scheme, :authority
+    if ($method eq 'CONNECT' && defined $protocol) {
+        if (lc($protocol) eq 'websocket') {
+            # Validate required pseudo-headers for extended CONNECT
+            if (!defined $pseudo->{':path'} || !defined $pseudo->{':scheme'} || !defined $pseudo->{':authority'}) {
+                # Malformed extended CONNECT - missing required pseudo-headers
+                $self->_send_http2_error_response($stream_id, 400, 'Bad Request: missing required pseudo-headers for extended CONNECT');
+                return;
+            }
+            # Route to WebSocket handler
+            $self->_handle_http2_websocket_connect($stream_id, $pseudo, $headers);
+            return;
+        }
+        # Other :protocol values could be handled here in the future
+        # For now, reject unknown protocols
+        $self->_send_http2_error_response($stream_id, 501, 'Not Implemented: unknown :protocol');
+        return;
+    }
+
+    # Regular CONNECT (proxy-style) without :protocol - not supported in PAGI
+    if ($method eq 'CONNECT' && !defined $protocol) {
+        $self->_send_http2_error_response($stream_id, 501, 'Not Implemented: CONNECT proxy not supported');
+        return;
+    }
+
     # Split path into path and query string
     my ($request_path, $query_string) = split /\?/, $path, 2;
     $query_string //= '';
@@ -827,6 +853,33 @@ sub _send_http2_response_body {
     # on subsequent frames in the same packet.
 
     return Future->done;
+}
+
+# Send an HTTP/2 error response (for protocol-level errors)
+sub _send_http2_error_response {
+    my ($self, $stream_id, $status, $message) = @_;
+
+    # Queue the error response for processing after feed() completes
+    push @{$self->{h2_pending_responses}}, [$stream_id, {
+        status  => $status,
+        headers => [['content-type', 'text/plain']],
+        body    => "$message\n",
+    }];
+
+    # Mark stream as having an error (no further processing needed)
+    $self->{h2_streams}{$stream_id} = {
+        error => 1,
+        scope => undef,
+    };
+}
+
+# Handle HTTP/2 WebSocket CONNECT (RFC 8441) - stub for Step 4+
+sub _handle_http2_websocket_connect {
+    my ($self, $stream_id, $pseudo, $headers) = @_;
+
+    # TODO: Implement in Steps 4-5
+    # For now, return 501 Not Implemented
+    $self->_send_http2_error_response($stream_id, 501, 'WebSocket over HTTP/2 not yet implemented');
 }
 
 # WebSocket idle timeout - closes connection if no activity
