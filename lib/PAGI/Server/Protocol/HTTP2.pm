@@ -52,14 +52,31 @@ sub new {
     my ($class, %args) = @_;
 
     my $self = bless {
-        max_concurrent_streams => $args{max_concurrent_streams} // 100,
-        initial_window_size    => $args{initial_window_size} // 65535,
-        max_frame_size         => $args{max_frame_size} // 16384,
-        enable_push            => $args{enable_push} // 0,
+        max_concurrent_streams  => $args{max_concurrent_streams} // 100,
+        initial_window_size     => $args{initial_window_size} // 65535,
+        max_frame_size          => $args{max_frame_size} // 16384,
+        enable_push             => $args{enable_push} // 0,
+        enable_connect_protocol => $args{enable_connect_protocol} // 1,  # RFC 8441
     }, $class;
 
     return $self;
 }
+
+=head2 new
+
+    my $proto = PAGI::Server::Protocol::HTTP2->new(
+        max_concurrent_streams  => 100,    # Default
+        initial_window_size     => 65535,  # Default
+        max_frame_size          => 16384,  # Default
+        enable_push             => 0,      # Default (disabled)
+        enable_connect_protocol => 1,      # Default (enabled, RFC 8441)
+    );
+
+Creates a new HTTP/2 protocol handler with the specified settings.
+
+C<enable_connect_protocol> enables RFC 8441 extended CONNECT protocol support,
+which allows WebSocket connections to be bootstrapped over HTTP/2 streams.
+This is enabled by default.
 
 =head2 create_session
 
@@ -85,10 +102,11 @@ sub create_session {
         on_body    => $callbacks{on_body},
         on_close   => $callbacks{on_close},
         settings   => {
-            max_concurrent_streams => $self->{max_concurrent_streams},
-            initial_window_size    => $self->{initial_window_size},
-            max_frame_size         => $self->{max_frame_size},
-            enable_push            => $self->{enable_push},
+            max_concurrent_streams  => $self->{max_concurrent_streams},
+            initial_window_size     => $self->{initial_window_size},
+            max_frame_size          => $self->{max_frame_size},
+            enable_push             => $self->{enable_push},
+            enable_connect_protocol => $self->{enable_connect_protocol},
         },
     );
 }
