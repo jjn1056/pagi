@@ -300,9 +300,9 @@ subtest 'server has validation hooks' => sub {
         'validate_events in Connection constructor'
     );
 
-    # Verify validation calls in send handlers
+    # Verify validation calls in send handlers (HTTP, SSE, WS HTTP/1.1, WS HTTP/2)
     my @validation_calls = $source =~ /EventValidator::validate_/g;
-    is(scalar @validation_calls, 3, 'three validation calls (HTTP, SSE, WebSocket)');
+    is(scalar @validation_calls, 4, 'four validation calls (HTTP, SSE, WebSocket HTTP/1.1, WebSocket HTTP/2)');
 
     # Verify conditional on validate_events
     like(

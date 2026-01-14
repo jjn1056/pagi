@@ -668,7 +668,13 @@ sub _on_http2_body {
     my $h2_stream = $self->{h2_streams}{$stream_id};
     return unless $h2_stream;
 
-    # Queue body data
+    # WebSocket streams: process data as WebSocket frames
+    if ($h2_stream->{ws_mode}) {
+        $self->_on_http2_websocket_data($stream_id, $data, $eof);
+        return;
+    }
+
+    # Regular HTTP streams: queue body data
     if (length($data)) {
         push @{$h2_stream->{body_chunks}}, $data;
     }
@@ -676,6 +682,115 @@ sub _on_http2_body {
     # If this is the last body chunk, start handling
     if ($eof) {
         $self->_handle_http2_stream($stream_id);
+    }
+}
+
+# Process incoming WebSocket data on HTTP/2 stream
+# Data arrives as HTTP/2 DATA frames containing WebSocket frames
+sub _on_http2_websocket_data {
+    my ($self, $stream_id, $data, $eof) = @_;
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return unless $h2_stream;
+
+    # If WebSocket not yet accepted, client shouldn't be sending data
+    # but queue it anyway - it will be processed after accept
+    if (!$h2_stream->{ws_accepted}) {
+        $h2_stream->{ws_pending_data} //= '';
+        $h2_stream->{ws_pending_data} .= $data;
+        return;
+    }
+
+    # Parse WebSocket frames from the data
+    my $frame_parser = $h2_stream->{ws_frame};
+    $frame_parser->append($data);
+
+    while (my $frame_data = $frame_parser->next) {
+        my $opcode = $frame_parser->opcode;
+
+        if ($opcode == 1) {
+            # Text frame
+            push @{$h2_stream->{receive_queue}}, {
+                type => 'websocket.receive',
+                text => $frame_data,
+            };
+        }
+        elsif ($opcode == 2) {
+            # Binary frame
+            push @{$h2_stream->{receive_queue}}, {
+                type  => 'websocket.receive',
+                bytes => $frame_data,
+            };
+        }
+        elsif ($opcode == 8) {
+            # Close frame - extract code and reason
+            my ($code, $reason) = (1000, '');
+            if (length($frame_data) >= 2) {
+                $code = unpack('n', substr($frame_data, 0, 2));
+                $reason = substr($frame_data, 2) // '';
+            }
+
+            $h2_stream->{ws_close_received} = 1;
+            push @{$h2_stream->{receive_queue}}, {
+                type   => 'websocket.disconnect',
+                code   => $code,
+                reason => $reason,
+            };
+
+            # If we already sent close, mark as closed
+            if ($h2_stream->{ws_close_sent}) {
+                $h2_stream->{ws_close_state} = 'closed';
+            }
+            else {
+                $h2_stream->{ws_close_state} = 'closing';
+            }
+        }
+        elsif ($opcode == 9) {
+            # Ping frame - respond with pong (queued as WebSocket data)
+            my $pong_frame = Protocol::WebSocket::Frame->new(
+                type   => 'pong',
+                buffer => $frame_data,
+                masked => 0,
+            );
+            $h2_stream->{pending_ws_data} //= '';
+            $h2_stream->{pending_ws_data} .= $pong_frame->to_bytes;
+
+            # Resume stream to send pong
+            if ($self->{h2_session}->is_stream_deferred($stream_id)) {
+                $self->{h2_session}->resume_stream($stream_id);
+                $self->_flush_http2;
+            }
+        }
+        elsif ($opcode == 10) {
+            # Pong frame - clear waiting_pong flag and stop timeout
+            if ($h2_stream->{ws_waiting_pong}) {
+                $h2_stream->{ws_waiting_pong} = 0;
+                $self->_stop_http2_ws_pong_timeout($stream_id);
+            }
+        }
+    }
+
+    # Resolve pending receive future if we have events
+    if (@{$h2_stream->{receive_queue}} && $h2_stream->{receive_pending} && !$h2_stream->{receive_pending}->is_ready) {
+        my $f = $h2_stream->{receive_pending};
+        $h2_stream->{receive_pending} = undef;
+        $f->done;
+    }
+
+    # If EOF received (stream ended), deliver disconnect if not already closed
+    if ($eof && $h2_stream->{ws_close_state} ne 'closed') {
+        push @{$h2_stream->{receive_queue}}, {
+            type   => 'websocket.disconnect',
+            code   => 1006,
+            reason => 'Stream ended unexpectedly',
+        };
+        $h2_stream->{ws_close_state} = 'closed';
+
+        if ($h2_stream->{receive_pending} && !$h2_stream->{receive_pending}->is_ready) {
+            my $f = $h2_stream->{receive_pending};
+            $h2_stream->{receive_pending} = undef;
+            $f->done;
+        }
     }
 }
 
@@ -909,11 +1024,530 @@ sub _handle_http2_websocket_connect {
     my ($self, $stream_id, $pseudo, $headers) = @_;
 
     # Initialize per-stream WebSocket state (Risk 3 mitigation)
-    $self->_init_http2_websocket_stream($stream_id, $pseudo, $headers);
+    my $h2_stream = $self->_init_http2_websocket_stream($stream_id, $pseudo, $headers);
 
-    # TODO: Implement scope creation and app invocation in Step 5
-    # For now, return 501 Not Implemented
-    $self->_send_http2_error_response($stream_id, 501, 'WebSocket over HTTP/2 not yet implemented');
+    # Create WebSocket scope for HTTP/2
+    my $scope = $self->_create_http2_websocket_scope($stream_id, $h2_stream);
+    $h2_stream->{scope} = $scope;
+
+    # Create receive and send closures bound to this stream
+    my $receive = $self->_create_http2_websocket_receive($stream_id);
+    my $send = $self->_create_http2_websocket_send($stream_id);
+
+    # Invoke the app asynchronously (don't block nghttp2 callback)
+    $self->_invoke_http2_websocket_app($stream_id, $scope, $receive, $send);
+}
+
+# Create WebSocket scope for HTTP/2 (RFC 8441)
+# Similar to HTTP/1.1 _create_websocket_scope but adapted for HTTP/2
+sub _create_http2_websocket_scope {
+    my ($self, $stream_id, $h2_stream) = @_;
+
+    my $pseudo = $h2_stream->{ws_pseudo};
+    my $headers = $h2_stream->{ws_headers};
+
+    # Parse path and query string from :path pseudo-header
+    my $path = $pseudo->{':path'} // '/';
+    my ($request_path, $query_string) = split /\?/, $path, 2;
+    $query_string //= '';
+
+    # Decode percent-encoded path for decoded path
+    my $decoded_path = $request_path;
+    $decoded_path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+
+    # Parse authority into host/port
+    my $authority = $pseudo->{':authority'} // '';
+    my ($host, $port) = split /:/, $authority, 2;
+    $host //= $self->{server_host} // 'localhost';
+    $port //= $self->{server_port} // 443;
+
+    # Extract subprotocols from headers
+    my @subprotocols;
+    for my $header (@$headers) {
+        my ($name, $value) = @$header;
+        if (lc($name) eq 'sec-websocket-protocol') {
+            push @subprotocols, map { s/^\s+|\s+$//gr } split /,/, $value;
+        }
+    }
+
+    # Determine WebSocket scheme (wss for https, ws for http)
+    my $scheme = $pseudo->{':scheme'} // 'https';
+    my $ws_scheme = ($scheme eq 'https') ? 'wss' : 'ws';
+
+    my $scope = {
+        type         => 'websocket',
+        pagi         => {
+            version      => '0.2',
+            spec_version => '0.2',
+            features     => {},
+        },
+        http_version => '2',
+        scheme       => $ws_scheme,
+        path         => $decoded_path,
+        raw_path     => $request_path,
+        query_string => $query_string,
+        root_path    => '',
+        headers      => $headers,
+        client       => [$self->{client_host} // '127.0.0.1', int($self->{client_port} // 0)],
+        server       => [$host, int($port)],
+        subprotocols => \@subprotocols,
+        state        => %{$self->{state}} ? { %{$self->{state}} } : {},
+        extensions   => {
+            %{$self->{extensions}},
+            'http2' => {
+                stream_id => $stream_id,
+            },
+        },
+    };
+
+    # Add TLS info if enabled
+    if ($self->{tls_enabled} && $self->{tls_info}) {
+        $scope->{extensions}{tls} = $self->{tls_info};
+    }
+
+    return $scope;
+}
+
+# Create receive closure for HTTP/2 WebSocket
+# Returns websocket.connect first, then messages from receive_queue
+sub _create_http2_websocket_receive {
+    my ($self, $stream_id) = @_;
+
+    my $connect_sent = 0;
+    weaken(my $weak_self = $self);
+
+    return sub {
+        return Future->done({ type => 'websocket.disconnect', code => 1006, reason => '' })
+            unless $weak_self;
+
+        my $h2_stream = $weak_self->{h2_streams}{$stream_id};
+        return Future->done({ type => 'websocket.disconnect', code => 1006, reason => '' })
+            unless $h2_stream;
+
+        my $future = (async sub {
+            return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                unless $weak_self;
+
+            my $stream = $weak_self->{h2_streams}{$stream_id};
+            return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                unless $stream;
+
+            # Check queue first
+            if (@{$stream->{receive_queue}}) {
+                return shift @{$stream->{receive_queue}};
+            }
+
+            # First call returns websocket.connect
+            if (!$connect_sent) {
+                $connect_sent = 1;
+                return { type => 'websocket.connect' };
+            }
+
+            # If not accepted yet, wait for accept
+            while (!$stream->{ws_accepted} && $stream->{ws_close_state} eq 'open') {
+                if (!$stream->{receive_pending}) {
+                    $stream->{receive_pending} = Future->new;
+                }
+                await $stream->{receive_pending};
+                $stream->{receive_pending} = undef;
+
+                $stream = $weak_self->{h2_streams}{$stream_id};
+                return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                    unless $stream;
+
+                if (@{$stream->{receive_queue}}) {
+                    return shift @{$stream->{receive_queue}};
+                }
+            }
+
+            # Return disconnect if stream closed
+            return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                if !$stream || $stream->{ws_close_state} eq 'closed';
+
+            # Wait for events from frame processing
+            while (1) {
+                $stream = $weak_self->{h2_streams}{$stream_id};
+                return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                    unless $stream;
+
+                if (@{$stream->{receive_queue}}) {
+                    return shift @{$stream->{receive_queue}};
+                }
+
+                return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                    if $stream->{ws_close_state} eq 'closed';
+
+                if (!$stream->{receive_pending}) {
+                    $stream->{receive_pending} = Future->new;
+                }
+                await $stream->{receive_pending};
+                $stream->{receive_pending} = undef;
+            }
+        })->();
+
+        return $future;
+    };
+}
+
+# Create send closure for HTTP/2 WebSocket
+# Handles websocket.accept, websocket.send, websocket.close
+sub _create_http2_websocket_send {
+    my ($self, $stream_id) = @_;
+
+    weaken(my $weak_self = $self);
+
+    return async sub {
+        my ($event) = @_;
+        return Future->done unless $weak_self;
+
+        my $h2_stream = $weak_self->{h2_streams}{$stream_id};
+        return Future->done unless $h2_stream;
+
+        my $type = $event->{type} // '';
+
+        # Dev-mode event validation (PAGI spec compliance)
+        if ($weak_self->{validate_events}) {
+            require PAGI::Server::EventValidator;
+            PAGI::Server::EventValidator::validate_websocket_send($event);
+        }
+
+        if ($type eq 'websocket.accept') {
+            return if $h2_stream->{ws_accepted};
+
+            # RFC 8441: HTTP/2 WebSocket accept sends 200 OK (not 101)
+            # No Sec-WebSocket-Accept header needed (no key exchange in HTTP/2)
+            my @headers = ();
+
+            # Add subprotocol if specified (with validation)
+            if (my $subprotocol = $event->{subprotocol}) {
+                $subprotocol = _validate_subprotocol($subprotocol);
+                $h2_stream->{ws_subprotocol} = $subprotocol;
+                push @headers, ['sec-websocket-protocol', $subprotocol];
+            }
+
+            # Add custom headers if specified (with CRLF injection validation)
+            if (my $extra_headers = $event->{headers}) {
+                for my $h (@$extra_headers) {
+                    my ($name, $value) = @$h;
+                    $name = _validate_header_name($name);
+                    $value = _validate_header_value($value);
+                    push @headers, [$name, $value];
+                }
+            }
+
+            # Queue 200 response (will be sent after callback returns)
+            # For HTTP/2 WebSocket, we use streaming response to keep stream open
+            push @{$weak_self->{h2_pending_responses}}, [$stream_id, {
+                streaming     => 1,
+                status        => 200,
+                headers       => \@headers,
+                data_callback => $weak_self->_create_http2_ws_data_callback($stream_id),
+            }];
+
+            $h2_stream->{ws_accepted} = 1;
+
+            # Process any data that arrived before accept
+            if (defined $h2_stream->{ws_pending_data} && length($h2_stream->{ws_pending_data})) {
+                my $pending = delete $h2_stream->{ws_pending_data};
+                $weak_self->_on_http2_websocket_data($stream_id, $pending, 0);
+            }
+
+            # Notify any waiting receive
+            if ($h2_stream->{receive_pending} && !$h2_stream->{receive_pending}->is_ready) {
+                my $f = $h2_stream->{receive_pending};
+                $h2_stream->{receive_pending} = undef;
+                $f->done;
+            }
+        }
+        elsif ($type eq 'websocket.send') {
+            return unless $h2_stream->{ws_accepted};
+            return if $h2_stream->{ws_close_state} ne 'open';
+
+            # Build WebSocket frame (unmasked for server->client per RFC 6455)
+            my $frame;
+            if (defined $event->{text}) {
+                $frame = Protocol::WebSocket::Frame->new(
+                    buffer => $event->{text},
+                    type   => 'text',
+                    masked => 0,  # Server frames are unmasked
+                );
+            }
+            elsif (defined $event->{bytes}) {
+                $frame = Protocol::WebSocket::Frame->new(
+                    buffer => $event->{bytes},
+                    type   => 'binary',
+                    masked => 0,  # Server frames are unmasked
+                );
+            }
+            else {
+                return;  # Nothing to send
+            }
+
+            # Queue frame data to be sent via HTTP/2 DATA frames
+            my $frame_bytes = $frame->to_bytes;
+            $h2_stream->{pending_ws_data} //= '';
+            $h2_stream->{pending_ws_data} .= $frame_bytes;
+
+            # Resume stream if it was deferred waiting for data
+            if ($weak_self->{h2_session}->is_stream_deferred($stream_id)) {
+                $weak_self->{h2_session}->resume_stream($stream_id);
+                $weak_self->_flush_http2;
+            }
+        }
+        elsif ($type eq 'websocket.close') {
+            # If not accepted yet, reject the connection
+            if (!$h2_stream->{ws_accepted}) {
+                push @{$weak_self->{h2_pending_responses}}, [$stream_id, {
+                    status  => 403,
+                    headers => [['content-type', 'text/plain']],
+                    body    => "Forbidden\n",
+                }];
+                return;
+            }
+
+            return if $h2_stream->{ws_close_state} eq 'closed';
+
+            # Build close frame
+            my $code = $event->{code} // 1000;
+            my $reason = $event->{reason} // '';
+
+            my $frame = Protocol::WebSocket::Frame->new(
+                type   => 'close',
+                buffer => pack('n', $code) . $reason,
+                masked => 0,
+            );
+
+            # Queue close frame data
+            $h2_stream->{pending_ws_data} //= '';
+            $h2_stream->{pending_ws_data} .= $frame->to_bytes;
+            $h2_stream->{ws_close_sent} = 1;
+            $h2_stream->{ws_close_state} = 'closing';
+
+            # Resume stream to send the close frame
+            if ($weak_self->{h2_session}->is_stream_deferred($stream_id)) {
+                $weak_self->{h2_session}->resume_stream($stream_id);
+                $weak_self->_flush_http2;
+            }
+        }
+        elsif ($type eq 'websocket.keepalive') {
+            return unless $h2_stream->{ws_accepted};
+
+            my $interval = $event->{interval} // 0;
+            my $timeout = $event->{timeout};
+
+            if ($interval > 0) {
+                $weak_self->_start_http2_ws_keepalive($stream_id, $interval, $timeout);
+            }
+            else {
+                $weak_self->_stop_http2_ws_keepalive($stream_id);
+            }
+        }
+        else {
+            # Per PAGI spec: servers must raise exceptions for unrecognized event types
+            _unrecognized_event_type($type, 'websocket');
+        }
+
+        return;
+    };
+}
+
+# Create data callback for HTTP/2 WebSocket streaming response
+# This callback is called by nghttp2 when it needs data to send
+sub _create_http2_ws_data_callback {
+    my ($self, $stream_id) = @_;
+
+    weaken(my $weak_self = $self);
+
+    return sub {
+        my ($sid, $max_len) = @_;
+        return ('', 1) unless $weak_self;  # EOF if connection gone
+
+        my $h2_stream = $weak_self->{h2_streams}{$stream_id};
+        return ('', 1) unless $h2_stream;  # EOF if stream gone
+
+        # Check if we have WebSocket frame data to send
+        if (defined $h2_stream->{pending_ws_data} && length($h2_stream->{pending_ws_data})) {
+            # Send up to max_len bytes
+            my $chunk = substr($h2_stream->{pending_ws_data}, 0, $max_len, '');
+
+            # If close was sent and buffer is empty, signal EOF
+            if ($h2_stream->{ws_close_sent} && !length($h2_stream->{pending_ws_data})) {
+                $h2_stream->{ws_close_state} = 'closed';
+                return ($chunk, 1);  # Data + EOF
+            }
+
+            return ($chunk, 0);  # Data, no EOF
+        }
+
+        # No data available, defer until we have some
+        # Return undef to signal NGHTTP2_ERR_DEFERRED
+        return (undef, 0);
+    };
+}
+
+# Invoke HTTP/2 WebSocket app asynchronously
+sub _invoke_http2_websocket_app {
+    my ($self, $stream_id, $scope, $receive, $send) = @_;
+
+    weaken(my $weak_self = $self);
+
+    # Run app asynchronously so we don't block nghttp2 callback
+    my $app_future = (async sub {
+        return unless $weak_self;
+
+        eval {
+            await $weak_self->{app}->($scope, $receive, $send);
+        };
+
+        if (my $error = $@) {
+            warn "PAGI application error (HTTP/2 WebSocket stream $stream_id): $error\n";
+
+            my $h2_stream = $weak_self->{h2_streams}{$stream_id};
+            if ($h2_stream && !$h2_stream->{ws_accepted}) {
+                # If handshake not yet done, send error response
+                push @{$weak_self->{h2_pending_responses}}, [$stream_id, {
+                    status  => 500,
+                    headers => [['content-type', 'text/plain']],
+                    body    => "Internal Server Error\n",
+                }];
+            }
+        }
+    })->();
+
+    # Retain the future to prevent premature cleanup
+    $self->{h2_streams}{$stream_id}{app_future} = $app_future;
+}
+
+# Start HTTP/2 WebSocket keepalive for a stream
+sub _start_http2_ws_keepalive {
+    my ($self, $stream_id, $interval, $timeout) = @_;
+
+    # Stop existing timer first
+    $self->_stop_http2_ws_keepalive($stream_id);
+
+    return unless $interval && $interval > 0;
+    return unless $self->{server};
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return unless $h2_stream && $h2_stream->{ws_accepted};
+
+    $h2_stream->{ws_keepalive_timeout} = $timeout // 0;
+
+    weaken(my $weak_self = $self);
+
+    my $timer = IO::Async::Timer::Periodic->new(
+        interval => $interval,
+        on_tick  => sub {
+            return unless $weak_self;
+
+            my $stream = $weak_self->{h2_streams}{$stream_id};
+            return unless $stream && $stream->{ws_accepted};
+            return if $stream->{ws_close_state} ne 'open';
+
+            # Send ping frame via HTTP/2 DATA
+            my $ping = Protocol::WebSocket::Frame->new(
+                type   => 'ping',
+                buffer => '',
+                masked => 0,
+            );
+            $stream->{pending_ws_data} //= '';
+            $stream->{pending_ws_data} .= $ping->to_bytes;
+
+            # Resume stream to send ping
+            if ($weak_self->{h2_session}->is_stream_deferred($stream_id)) {
+                $weak_self->{h2_session}->resume_stream($stream_id);
+                $weak_self->_flush_http2;
+            }
+
+            # Start pong timeout if configured
+            if ($stream->{ws_keepalive_timeout} > 0) {
+                $stream->{ws_waiting_pong} = 1;
+                $weak_self->_start_http2_ws_pong_timeout($stream_id);
+            }
+        },
+    );
+
+    $h2_stream->{ws_ping_timer} = $timer;
+    $self->{server}->add_child($timer);
+    $timer->start;
+}
+
+# Stop HTTP/2 WebSocket keepalive for a stream
+sub _stop_http2_ws_keepalive {
+    my ($self, $stream_id) = @_;
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return unless $h2_stream;
+
+    if ($h2_stream->{ws_ping_timer}) {
+        $h2_stream->{ws_ping_timer}->stop;
+        if ($self->{server}) {
+            $self->{server}->remove_child($h2_stream->{ws_ping_timer});
+        }
+        $h2_stream->{ws_ping_timer} = undef;
+    }
+
+    $self->_stop_http2_ws_pong_timeout($stream_id);
+}
+
+# Start pong timeout for HTTP/2 WebSocket stream
+sub _start_http2_ws_pong_timeout {
+    my ($self, $stream_id) = @_;
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return unless $h2_stream;
+    return if $h2_stream->{ws_pong_timeout};
+    return unless $h2_stream->{ws_keepalive_timeout} > 0;
+    return unless $self->{server};
+
+    weaken(my $weak_self = $self);
+
+    my $timer = IO::Async::Timer::Countdown->new(
+        delay     => $h2_stream->{ws_keepalive_timeout},
+        on_expire => sub {
+            return unless $weak_self;
+
+            my $stream = $weak_self->{h2_streams}{$stream_id};
+            return unless $stream;
+
+            if ($stream->{ws_waiting_pong}) {
+                # Pong not received in time - close with error
+                push @{$stream->{receive_queue}}, {
+                    type   => 'websocket.disconnect',
+                    code   => 1006,
+                    reason => 'Keepalive timeout',
+                };
+                $stream->{ws_close_state} = 'closed';
+
+                # Resolve pending receive
+                if ($stream->{receive_pending} && !$stream->{receive_pending}->is_ready) {
+                    my $f = $stream->{receive_pending};
+                    $stream->{receive_pending} = undef;
+                    $f->done;
+                }
+            }
+        },
+    );
+
+    $h2_stream->{ws_pong_timeout} = $timer;
+    $self->{server}->add_child($timer);
+    $timer->start;
+}
+
+# Stop pong timeout for HTTP/2 WebSocket stream
+sub _stop_http2_ws_pong_timeout {
+    my ($self, $stream_id) = @_;
+
+    my $h2_stream = $self->{h2_streams}{$stream_id};
+    return unless $h2_stream;
+    return unless $h2_stream->{ws_pong_timeout};
+
+    $h2_stream->{ws_pong_timeout}->stop if $h2_stream->{ws_pong_timeout}->is_running;
+    if ($self->{server}) {
+        $self->{server}->remove_child($h2_stream->{ws_pong_timeout});
+    }
+    $h2_stream->{ws_pong_timeout} = undef;
+    $h2_stream->{ws_waiting_pong} = 0;
 }
 
 # Initialize per-stream WebSocket state for HTTP/2 (Risk 3 mitigation)
