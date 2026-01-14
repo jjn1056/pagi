@@ -685,7 +685,38 @@ sub _on_http2_stream_close {
     my $h2_stream = delete $self->{h2_streams}{$stream_id};
     return unless $h2_stream;
 
-    # Cancel any pending receive futures
+    # WebSocket-specific cleanup (Risk 3 mitigation)
+    if ($h2_stream->{ws_mode}) {
+        # Stop ping timer if active
+        if ($h2_stream->{ws_ping_timer}) {
+            $h2_stream->{ws_ping_timer}->stop;
+            if ($self->{server}) {
+                $self->{server}->remove_child($h2_stream->{ws_ping_timer});
+            }
+            $h2_stream->{ws_ping_timer} = undef;
+        }
+
+        # Deliver disconnect event if WebSocket was accepted and not cleanly closed
+        if ($h2_stream->{ws_accepted} && $h2_stream->{ws_close_state} ne 'closed') {
+            # RST_STREAM or unexpected close = abnormal closure (code 1006)
+            my $close_code = ($error_code == 0) ? 1000 : 1006;
+            push @{$h2_stream->{receive_queue}}, {
+                type => 'websocket.disconnect',
+                code => $close_code,
+                reason => ($error_code == 0) ? '' : "Stream error: $error_code",
+            };
+            $h2_stream->{ws_close_state} = 'closed';
+
+            # Resolve pending receive if waiting
+            if ($h2_stream->{receive_pending} && !$h2_stream->{receive_pending}->is_ready) {
+                my $event = shift @{$h2_stream->{receive_queue}};
+                $h2_stream->{receive_pending}->done($event);
+                return;
+            }
+        }
+    }
+
+    # Cancel any pending receive futures (for non-WebSocket or unhandled cases)
     if ($h2_stream->{receive_pending} && !$h2_stream->{receive_pending}->is_ready) {
         $h2_stream->{receive_pending}->fail("Stream closed");
     }
@@ -873,13 +904,47 @@ sub _send_http2_error_response {
     };
 }
 
-# Handle HTTP/2 WebSocket CONNECT (RFC 8441) - stub for Step 4+
+# Handle HTTP/2 WebSocket CONNECT (RFC 8441)
 sub _handle_http2_websocket_connect {
     my ($self, $stream_id, $pseudo, $headers) = @_;
 
-    # TODO: Implement in Steps 4-5
+    # Initialize per-stream WebSocket state (Risk 3 mitigation)
+    $self->_init_http2_websocket_stream($stream_id, $pseudo, $headers);
+
+    # TODO: Implement scope creation and app invocation in Step 5
     # For now, return 501 Not Implemented
     $self->_send_http2_error_response($stream_id, 501, 'WebSocket over HTTP/2 not yet implemented');
+}
+
+# Initialize per-stream WebSocket state for HTTP/2 (Risk 3 mitigation)
+# Each stream gets isolated state to prevent cross-stream contamination
+sub _init_http2_websocket_stream {
+    my ($self, $stream_id, $pseudo, $headers) = @_;
+
+    # Load Protocol::WebSocket::Frame if not already loaded
+    require Protocol::WebSocket::Frame;
+
+    # Create per-stream WebSocket state
+    $self->{h2_streams}{$stream_id} = {
+        # Standard stream state
+        scope           => undef,  # Will be set in Step 5
+        receive_queue   => [],
+        receive_pending => undef,
+
+        # WebSocket-specific state (per-stream isolation)
+        ws_mode         => 1,                                    # Flag: this is a WebSocket stream
+        ws_frame        => Protocol::WebSocket::Frame->new(),   # Per-stream frame parser
+        ws_close_state  => 'open',                              # open|closing|closed
+        ws_accepted     => 0,                                    # Has websocket.accept been sent?
+        ws_ping_timer   => undef,                               # Per-stream keepalive timer
+        ws_subprotocol  => undef,                               # Negotiated subprotocol
+
+        # Store original request info for scope building
+        ws_pseudo       => $pseudo,
+        ws_headers      => $headers,
+    };
+
+    return $self->{h2_streams}{$stream_id};
 }
 
 # WebSocket idle timeout - closes connection if no activity
