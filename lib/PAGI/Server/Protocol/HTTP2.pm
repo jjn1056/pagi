@@ -407,8 +407,69 @@ integrates with this.
 
 =back
 
+=head1 WEBSOCKET OVER HTTP/2 (RFC 8441)
+
+PAGI supports WebSocket connections over HTTP/2 via RFC 8441 "Bootstrapping
+WebSockets with HTTP/2". This is enabled by default when HTTP/2 is available.
+
+=head2 How It Works
+
+=over 4
+
+=item 1. Server advertises C<SETTINGS_ENABLE_CONNECT_PROTOCOL=1>
+
+=item 2. Client sends extended CONNECT with C<:protocol: websocket>
+
+=item 3. Server responds with C<200 OK> (not C<101> like HTTP/1.1)
+
+=item 4. WebSocket frames are sent as HTTP/2 DATA frames on the stream
+
+=item 5. Multiple WebSocket connections can share one HTTP/2 connection
+
+=back
+
+=head2 App-Level Differences
+
+For PAGI applications, WebSocket over HTTP/2 is mostly transparent:
+
+    async sub app ($scope, $receive, $send) {
+        if ($scope->{type} eq 'websocket') {
+            # Works the same for HTTP/1.1 and HTTP/2
+            my $event = await $receive->();
+            if ($event->{type} eq 'websocket.connect') {
+                await $send->({ type => 'websocket.accept' });
+            }
+            # ... handle messages
+        }
+    }
+
+To detect which protocol is in use:
+
+    if ($scope->{http_version} eq '2') {
+        # WebSocket over HTTP/2
+    } else {
+        # WebSocket over HTTP/1.1
+    }
+
+The C<extensions.http2.stream_id> key is available for HTTP/2 WebSocket:
+
+    my $stream_id = $scope->{extensions}{http2}{stream_id};
+
+=head2 Benefits
+
+=over 4
+
+=item * Multiple WebSocket connections share a single TCP connection
+
+=item * Better resource utilization for apps with many WebSocket clients
+
+=item * Reduced connection establishment overhead
+
+=back
+
 =head1 SEE ALSO
 
-L<Net::HTTP2::nghttp2>, L<PAGI::Server::Protocol::HTTP1>
+L<Net::HTTP2::nghttp2>, L<PAGI::Server::Protocol::HTTP1>,
+L<RFC 8441|https://datatracker.ietf.org/doc/html/rfc8441>
 
 =cut
