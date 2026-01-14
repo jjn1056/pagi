@@ -8,6 +8,7 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 ## Spec Versions
 
+- `0.2.1`: Added WebSocket over HTTP/2 support (RFC 8441). WebSocket `http_version` scope key now accepts `"2"` in addition to `"1.1"`. Added `extensions.http2.stream_id` scope key for HTTP/2 WebSocket. Documented HTTP/2-specific header behavior (no upgrade/connection headers).
 - `0.2`: Added keepalive events (`websocket.keepalive`, `sse.keepalive`), send timeouts, disconnect reasons, SSE support for all HTTP methods (not just GET) with `sse.request` receive event for request body. Added `pagi.connection` scope key for non-destructive disconnect detection.
 - `0.1`: Initial draft, based on ASGI 2.5, including Server-Side Events support.
 
@@ -543,12 +544,14 @@ async sub long_poll_handler {
 
 WebSocket servers handle fragmentation and PING/PONG messages. Servers MUST wait for a reply to `websocket.connect` before completing the handshake. If `websocket.close` is sent instead of `websocket.accept`, the server MUST reject the connection with HTTP 403.
 
+PAGI supports WebSocket over both HTTP/1.1 (RFC 6455) and HTTP/2 (RFC 8441). The application interface is identical for both; the only visible difference is `http_version` in the scope (`"1.1"` vs `"2"`). Internal protocol differences (response status 101 vs 200, handshake headers) are handled transparently by the server.
+
 ### WebSocket Connection Scope
 
 - `type` (String) -- `"websocket"`
 - `pagi["version"]` (String) -- PAGI version
 - `pagi["spec_version"]` (String) -- PAGI HTTP spec version (default `"0.2"`)
-- `http_version` (String, default `"1.1"`) -- HTTP version used for handshake
+- `http_version` (String, default `"1.1"`) -- HTTP version used for handshake (`"1.1"` for RFC 6455, `"2"` for RFC 8441)
 - `scheme` (String, default `"ws"`) -- URL scheme (`"ws"` or `"wss"`)
 - `path` (String) -- Decoded path string
 - `raw_path` (Bytes, optional) -- Original path bytes from request, before percent-decoding. Immutable; middleware MUST NOT modify. See HTTP scope for details.
@@ -559,11 +562,18 @@ WebSocket servers handle fragmentation and PING/PONG messages. Servers MUST wait
 - `server` (ArrayRef[String, Optional[Int]], optional)
 - `subprotocols` (ArrayRef[String], default `[]`)
 - `state` (HashRef, optional)
-  
+- `extensions["http2"]["stream_id"]` (Int, optional) -- For HTTP/2 WebSocket (RFC 8441), the HTTP/2 stream ID. Not present for HTTP/1.1.
+
 #### Handshake Headers and Subprotocols
+
+**HTTP/1.1 WebSocket (RFC 6455):**
 The `headers` arrayref **must** include all WebSocket handshake headers as raw byte strings, lower-cased, for example:
   - `upgrade`, `connection`, `sec-websocket-key`, `sec-websocket-version`, `host`, etc.
   - `sec-websocket-protocol` (if present)
+
+**HTTP/2 WebSocket (RFC 8441):**
+For HTTP/2 WebSocket, the handshake uses extended CONNECT with `:protocol: websocket` pseudo-header. HTTP/1.1-specific headers (`upgrade`, `connection`, `sec-websocket-key`, `sec-websocket-accept`) are NOT present. The `headers` arrayref contains only request headers such as `host`, `sec-websocket-protocol`, etc.
+
 The `subprotocols` key is an arrayref of strings parsed from the `Sec-WebSocket-Protocol` header by splitting on commas and trimming whitespace. If the header is absent, `subprotocols` MUST be an empty arrayref.
 
 ### WebSocket Events
