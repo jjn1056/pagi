@@ -572,10 +572,13 @@ sub _on_http2_request {
     my ($self, $stream_id, $pseudo, $headers, $has_body) = @_;
 
     # Build PAGI scope from HTTP/2 pseudo-headers and headers
+    # Standard pseudo-headers: :method, :path, :scheme, :authority
+    # RFC 8441 extended CONNECT also includes: :protocol (e.g., 'websocket')
     my $method = $pseudo->{':method'} // 'GET';
     my $path = $pseudo->{':path'} // '/';
     my $scheme = $pseudo->{':scheme'} // 'https';
     my $authority = $pseudo->{':authority'} // '';
+    my $protocol = $pseudo->{':protocol'};  # RFC 8441: 'websocket' for WebSocket over HTTP/2
 
     # Split path into path and query string
     my ($request_path, $query_string) = split /\?/, $path, 2;
