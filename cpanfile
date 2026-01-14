@@ -25,7 +25,7 @@ recommends 'IO::Socket::SSL', '2.074';
 #   cpanm IO::Async::SSL IO::Socket::SSL
 
 # HTTP/2 support (optional - falls back to HTTP/1.1)
-recommends 'Net::HTTP2::nghttp2', '0.001';
+recommends 'Net::HTTP2::nghttp2', '0.002';
 # To enable HTTP/2 support, install with:
 #   cpanm Net::HTTP2::nghttp2
 
