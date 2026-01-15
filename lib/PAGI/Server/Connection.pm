@@ -487,7 +487,9 @@ sub _setup_http2_read_handler {
                 # On EOF, process immediately without deferral
                 $weak_self->_cancel_h2_response_flush;
                 $weak_self->_flush_and_process_h2;
-                $weak_self->_handle_disconnect;
+                # Note: _flush_and_process_h2 may call _close which already handles disconnect,
+                # so check if weak ref is still valid and connection not already closed
+                $weak_self->_handle_disconnect if $weak_self && !$weak_self->{closed};
                 return 0;
             }
 

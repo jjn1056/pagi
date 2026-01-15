@@ -1905,6 +1905,11 @@ sub _spawn_worker {
 
         # Check if all workers have exited (for shutdown)
         if ($weak_self->{shutting_down} && !keys %{$weak_self->{worker_pids}}) {
+            # Signal the shutdown future if waiting (programmatic shutdown)
+            if ($weak_self->{_shutdown_complete} && !$weak_self->{_shutdown_complete}->is_ready) {
+                $weak_self->{_shutdown_complete}->done;
+            }
+            # Also stop the loop (signal-based shutdown via _initiate_multiworker_shutdown)
             $loop->stop;
         }
     });
@@ -1940,6 +1945,7 @@ sub _run_as_worker {
         host            => $self->{host},
         port            => $self->{port},
         ssl             => $self->{ssl},
+        http2           => $self->{http2},  # Pass HTTP/2 setting to workers
         extensions      => $self->{extensions},
         on_error        => $self->{on_error},
         access_log      => $self->{access_log},
@@ -1956,6 +1962,21 @@ sub _run_as_worker {
     $worker_server->{worker_num} = $worker_num;  # Store for lifespan scope
     $worker_server->{_request_count} = 0;  # Track requests handled
     $worker_server->{bound_port} = $listen_socket->sockport;
+
+    # Initialize HTTP/2 settings for worker (normally done in listen())
+    if ($self->{http2} && !$self->{ssl}) {
+        $worker_server->{http2_enabled} = 1;
+        $worker_server->{h2c_enabled} = 1;  # h2c mode for cleartext HTTP/2
+    } elsif ($self->{http2} && $self->{ssl}) {
+        $worker_server->{http2_enabled} = 1;
+        $worker_server->{tls_enabled} = 1;
+    }
+
+    # Ensure HTTP/2 protocol singleton exists in worker
+    if ($worker_server->{http2_enabled} && !$worker_server->{http2_protocol}) {
+        require PAGI::Server::Protocol::HTTP2;
+        $worker_server->{http2_protocol} = PAGI::Server::Protocol::HTTP2->new;
+    }
 
     $loop->add($worker_server);
 
@@ -2014,12 +2035,58 @@ sub _run_as_worker {
     # Set up listener using the inherited socket
     weaken(my $weak_server = $worker_server);
 
+    # Build SSL parameters if TLS is enabled
+    my %ssl_params;
+    if (my $ssl = $self->{ssl}) {
+        $ssl_params{SSL_server} = 1;
+        $ssl_params{SSL_cert_file} = $ssl->{cert_file} if $ssl->{cert_file};
+        $ssl_params{SSL_key_file} = $ssl->{key_file} if $ssl->{key_file};
+        $ssl_params{SSL_version} = $ssl->{min_version} // 'TLSv1_2';
+        $ssl_params{SSL_cipher_list} = $ssl->{cipher_list} //
+            'ECDHE+AESGCM:DHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA';
+
+        if ($ssl->{verify_client}) {
+            $ssl_params{SSL_verify_mode} = 0x03;  # SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT
+            $ssl_params{SSL_ca_file} = $ssl->{ca_file} if $ssl->{ca_file};
+        } else {
+            $ssl_params{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
+        }
+
+        # ALPN for HTTP/2 support
+        if ($self->{http2}) {
+            $ssl_params{SSL_alpn_protocols} = ['h2', 'http/1.1'];
+        } else {
+            $ssl_params{SSL_alpn_protocols} = ['http/1.1'];
+        }
+    }
+    my $tls_enabled = !!$self->{ssl};
+
     my $listener = IO::Async::Listener->new(
         handle => $listen_socket,
         on_stream => sub  {
-        my ($listener, $stream) = @_;
+            my ($listener, $stream) = @_;
             return unless $weak_server;
-            $weak_server->_on_connection($stream);
+
+            if ($tls_enabled) {
+                # Upgrade the connection to SSL before handling
+                my $ssl_future = $loop->SSL_upgrade(
+                    handle => $stream,
+                    %ssl_params,
+                )->on_done(sub {
+                    my ($ssl_stream) = @_;
+                    return unless $weak_server;
+                    $weak_server->_on_connection($ssl_stream);
+                })->on_fail(sub {
+                    my ($error) = @_;
+                    return unless $weak_server;
+                    $weak_server->_log(debug => "SSL accept attempt failed $error");
+                    # Stream is already closed by SSL_upgrade on failure
+                });
+                # Tie future to server lifecycle (better than ->retain)
+                $weak_server->adopt_future($ssl_future) if $weak_server;
+            } else {
+                $weak_server->_on_connection($stream);
+            }
         },
     );
 
@@ -2382,6 +2449,12 @@ async sub shutdown {
     $self->{running} = 0;
     $self->{shutting_down} = 1;
 
+    # Multi-worker parent mode: delegate to multiworker shutdown
+    if ($self->{worker_pids} && keys %{$self->{worker_pids}}) {
+        return await $self->_shutdown_multiworker;
+    }
+
+    # Single-worker or worker process mode
     # Cancel accept pause timer if active
     if ($self->{_accept_pause_timer}) {
         $self->loop->unwatch_time($self->{_accept_pause_timer});
@@ -2406,6 +2479,50 @@ async sub shutdown {
         $self->_log(warn => "PAGI Server shutdown warning: $message");
     }
 
+    return $self;
+}
+
+# Shutdown in multi-worker parent mode
+async sub _shutdown_multiworker {
+    my ($self) = @_;
+
+    # Close the listen socket to stop accepting new connections
+    if ($self->{listen_socket}) {
+        close($self->{listen_socket});
+        delete $self->{listen_socket};
+    }
+
+    # Signal all workers to shutdown
+    for my $pid (keys %{$self->{worker_pids}}) {
+        kill 'TERM', $pid;
+    }
+
+    # If no workers left, we're done
+    return $self if !keys %{$self->{worker_pids}};
+
+    # Create a Future that resolves when all workers exit
+    # (watch_process callbacks will signal this)
+    my $loop = $self->loop;
+    $self->{_shutdown_complete} = $loop->new_future;
+
+    # Wait for workers with timeout
+    my $timeout = $self->{shutdown_timeout} // 30;
+    my $timeout_f = $loop->delay_future(after => $timeout);
+
+    await Future->wait_any($self->{_shutdown_complete}, $timeout_f);
+
+    # Force kill any remaining workers after timeout
+    if (keys %{$self->{worker_pids}}) {
+        my $remaining = scalar keys %{$self->{worker_pids}};
+        $self->_log(warn => "Shutdown timeout: force-killing $remaining workers");
+        for my $pid (keys %{$self->{worker_pids}}) {
+            kill 'KILL', $pid;
+        }
+        # Brief wait for SIGKILL to take effect
+        await $loop->delay_future(after => 0.5);
+    }
+
+    delete $self->{_shutdown_complete};
     return $self;
 }
 
