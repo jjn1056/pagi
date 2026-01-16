@@ -2,7 +2,7 @@ package PAGI::Server;
 use strict;
 use warnings;
 
-our $VERSION = '0.001007';
+our $VERSION = '0.001008';
 
 # Future::XS support - opt-in via PAGI_FUTURE_XS=1 environment variable
 # Must be loaded before Future to take effect, so we check env var in BEGIN
