@@ -329,14 +329,22 @@ sub path_params {
     return $params // {};
 }
 
+sub _default_path_param_strict_opt { return 1 }
+
 sub path_param {
-    my ($self, $name) = @_;
-    my $params = $self->{scope}{path_params};
-    if (!defined $params && $CONFIG{path_param_strict}) {
-        croak "path_params not set in scope (no router configured?). "
-            . "Set PAGI::Request->configure(path_param_strict => 0) to allow this.";
+    my ($self, $name, %opts) = @_;
+    my $strict = exists $opts{strict} ? delete $opts{strict} : $self->_default_path_param_strict_opt;
+    croak("Unknown options to path_param: " . join(', ', keys %opts)) if %opts;
+
+    my $params = $self->path_params;
+
+    if ($strict && !exists $params->{$name}) {
+        my @available = keys %$params;
+        croak "path_param '$name' not found. "
+            . (@available ? "Available: " . join(', ', sort @available) : "No path params set (no router?)");
     }
-    return ($params // {})->{$name};
+
+    return $params->{$name};
 }
 
 # Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
@@ -755,14 +763,31 @@ Get all headers as a L<Hash::MultiValue> object.
 =head2 query_params
 
     my $params = $req->query_params;  # Hash::MultiValue
+    my $params = $req->query_params(strict => 1);  # Die on invalid UTF-8
+    my $params = $req->query_params(raw => 1);     # Skip UTF-8 decoding
 
 Get query parameters as L<Hash::MultiValue>.
+
+B<Options:>
+
+=over 4
+
+=item * C<strict> - If true, die on invalid UTF-8 sequences. Default: false
+(invalid bytes replaced with U+FFFD).
+
+=item * C<raw> - If true, skip UTF-8 decoding entirely and return raw bytes.
+Default: false.
+
+=back
 
 =head2 query
 
     my $value = $req->query('page');
+    my $value = $req->query('page', strict => 1);
+    my $value = $req->query('page', raw => 1);
 
-Shortcut for C<< $req->query_params->get($name) >>.
+Shortcut for C<< $req->query_params(%opts)->get($name) >>. Accepts the same
+C<strict> and C<raw> options as C<query_params>.
 
 =head1 PATH PARAMETERS
 
@@ -782,15 +807,38 @@ has set path parameters.
     my $params = $req->path_params;
     # { id => '42', post_id => '100' }
 
+B<Note:> This method can be overridden in subclasses for custom parameter
+handling (e.g., lazy conversion from positional to named parameters).
+The C<path_param> method delegates to this method.
+
 =head2 path_param
 
     my $id = $req->path_param('id');
+    my $id = $req->path_param('id', strict => 0);  # Don't die if missing
 
-Get a single path parameter by name. Returns C<undef> if not found.
+Get a single path parameter by name.
 
     # Route: /users/:id
     # URL: /users/42
     my $id = $req->path_param('id');  # '42'
+
+B<Strict by default:> Unlike C<query()>, this method dies if the requested
+parameter does not exist. This catches typos early since path parameters are
+defined by the route - if the route matched, the expected parameters must
+exist.
+
+    # Route defines :userId but you typed :user_id
+    my $id = $req->path_param('user_id');
+    # Dies: "path_param 'user_id' not found. Available: userId, postId"
+
+B<Options:>
+
+=over 4
+
+=item * C<strict> - If false, return C<undef> for missing parameters instead
+of dying. Default: true.
+
+=back
 
 =head2 Strict Mode
 

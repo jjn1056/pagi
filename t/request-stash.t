@@ -80,7 +80,16 @@ subtest 'param returns route parameters from scope' => sub {
 
     is($req->path_param('id'), '123', 'param returns route param from scope');
     is($req->path_param('action'), 'edit', 'param returns another param');
-    is($req->path_param('missing'), undef, 'param returns undef for missing');
+
+    # Strict by default - missing param dies with helpful message
+    like(
+        dies { $req->path_param('missing') },
+        qr/path_param 'missing' not found.*Available:.*action.*id/s,
+        'path_param dies on missing key (strict by default)'
+    );
+
+    # Can opt out with strict => 0
+    is($req->path_param('missing', strict => 0), undef, 'strict => 0 returns undef for missing');
 };
 
 subtest 'path_param only returns path params, not query params' => sub {
@@ -94,14 +103,28 @@ subtest 'path_param only returns path params, not query params' => sub {
 
     my $req = PAGI::Request->new($scope_with_query, $receive);
 
-    # path_param only returns path params, not query params
-    is($req->path_param('foo'), undef, 'path_param returns undef when no path params');
+    # path_param dies when no path params set (strict by default)
+    like(
+        dies { $req->path_param('foo') },
+        qr/path_param 'foo' not found.*No path params set/,
+        'path_param dies when no path params set'
+    );
+
+    # With strict => 0, returns undef
+    is($req->path_param('foo', strict => 0), undef, 'strict => 0 returns undef when no path params');
     is($req->query('foo'), 'bar', 'query() returns query param');
 
     # With route params in scope, path_param returns them
     $scope_with_query->{path_params} = { foo => 'route_value' };
     is($req->path_param('foo'), 'route_value', 'path_param returns path param');
-    is($req->path_param('baz'), undef, 'path_param does not fall back to query');
+
+    # Missing path param dies even when other path params exist
+    like(
+        dies { $req->path_param('baz') },
+        qr/path_param 'baz' not found.*Available:.*foo/,
+        'path_param dies for missing key (does not fall back to query)'
+    );
+    is($req->path_param('baz', strict => 0), undef, 'strict => 0 returns undef for missing');
     is($req->query('baz'), 'qux', 'query() returns query param');
 };
 

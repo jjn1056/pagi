@@ -24,7 +24,14 @@ subtest 'params from scope' => sub {
     is($req->path_params, { user_id => '42', post_id => '100' }, 'params returns hashref');
     is($req->path_param('user_id'), '42', 'param() gets single value');
     is($req->path_param('post_id'), '100', 'param() another value');
-    is($req->path_param('missing'), undef, 'missing param is undef');
+
+    # path_param is strict by default - dies on missing key
+    like(
+        dies { $req->path_param('missing') },
+        qr/path_param 'missing' not found/,
+        'missing param dies (strict by default)'
+    );
+    is($req->path_param('missing', strict => 0), undef, 'strict => 0 returns undef');
 };
 
 subtest 'params set via scope' => sub {
@@ -46,7 +53,14 @@ subtest 'no params' => sub {
     my $req = PAGI::Request->new($scope);
 
     is($req->path_params, {}, 'empty params by default');
-    is($req->path_param('anything'), undef, 'missing returns undef');
+
+    # path_param dies when no path params set (strict by default)
+    like(
+        dies { $req->path_param('anything') },
+        qr/path_param 'anything' not found.*No path params set/,
+        'path_param dies when no params set'
+    );
+    is($req->path_param('anything', strict => 0), undef, 'strict => 0 returns undef');
 };
 
 subtest 'path_param does not include query params' => sub {
@@ -61,13 +75,30 @@ subtest 'path_param does not include query params' => sub {
 
     # path_param only returns path params, not query params
     is($req->path_param('id'), '42', 'path param exists');
-    is($req->path_param('foo'), undef, 'query param not returned by path_param');
-    is($req->path_param('baz'), undef, 'query params accessed via query method');
+
+    # path_param dies for missing keys (doesn't fall back to query params)
+    like(
+        dies { $req->path_param('foo') },
+        qr/path_param 'foo' not found/,
+        'query param not returned by path_param (dies)'
+    );
+    like(
+        dies { $req->path_param('baz') },
+        qr/path_param 'baz' not found/,
+        'path_param does not fall back to query params'
+    );
+
     # Query params should be accessed via $req->query('foo')
     is($req->query('foo'), 'bar', 'query() returns query param');
+    is($req->query('baz'), 'qux', 'query() returns another query param');
 };
 
-subtest 'path_param_strict mode' => sub {
+subtest 'path_param_strict mode (class config)' => sub {
+    # This tests the CLASS-LEVEL path_param_strict config, which controls
+    # whether path_params/path_param die when $scope->{path_params} is not set
+    # (i.e., no router configured). This is separate from the PER-CALL strict
+    # option which controls whether path_param dies on missing keys.
+
     # Save original config
     my $orig_strict = PAGI::Request->config->{path_param_strict};
 
@@ -77,7 +108,8 @@ subtest 'path_param_strict mode' => sub {
     my $req = PAGI::Request->new($scope_no_params);
 
     is($req->path_params, {}, 'non-strict: path_params returns empty hashref');
-    is($req->path_param('id'), undef, 'non-strict: path_param returns undef');
+    # Need strict => 0 to avoid the per-call key-existence check
+    is($req->path_param('id', strict => 0), undef, 'non-strict: path_param returns undef');
 
     # Test strict mode - dies when path_params not in scope
     PAGI::Request->configure(path_param_strict => 1);
@@ -92,7 +124,7 @@ subtest 'path_param_strict mode' => sub {
     like(
         dies { $req->path_param('id') },
         qr/path_params not set in scope/,
-        'strict: path_param dies when not set'
+        'strict: path_param dies when not set (class-level strict)'
     );
 
     # Strict mode should NOT die when path_params IS set
