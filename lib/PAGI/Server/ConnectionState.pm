@@ -44,7 +44,7 @@ The C<disconnect_future()> method lazily creates a Future only when called,
 avoiding allocation overhead for simple request/response handlers that don't
 need async disconnect detection.
 
-See L<PAGI Specification 0.3|docs/specs/0.3-connection-state.md> for the
+See the "Connection State" section in L<docs/specs/www.mkdn> for the
 full specification.
 
 =head1 METHODS
