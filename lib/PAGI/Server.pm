@@ -381,59 +381,62 @@ B<CLI:> C<--max-ws-frame-size 1048576>
 =item max_connections => $count
 
 Maximum number of concurrent connections before returning HTTP 503.
-Default: 0 (auto-detect based on process file descriptor limit).
+B<Default: 1000> (same as Mojolicious).
 
 When at capacity, new connections receive a 503 Service Unavailable
-response with a Retry-After header. This prevents file descriptor
-exhaustion crashes under heavy load.
-
-The auto-detected limit uses the process soft limit (from
-C<getrlimit(RLIMIT_NOFILE)>) minus C<fd_headroom> (default 100).
+response with a Retry-After header. This prevents resource exhaustion
+under heavy load.
 
 B<Example:>
 
     my $server = PAGI::Server->new(
         app             => $app,
-        max_connections => 200,  # Explicit limit
+        max_connections => 5000,  # Higher limit for production
     );
 
-B<CLI:> C<--max-connections 200>
+B<CLI:> C<--max-connections 5000>
 
 B<Monitoring:> Use C<< $server->connection_count >> and
 C<< $server->effective_max_connections >> to monitor usage.
 
-=item fd_headroom => $count
+B<Production Tuning:>
 
-B<Power user setting.> Number of file descriptors to reserve for
-non-connection use when auto-detecting C<max_connections>.
-Default: 100.
+For high-traffic production deployments, you'll likely want to increase
+this value. The optimal setting depends on your workload, available
+memory, and system file descriptor limits.
 
-This headroom accounts for: listen socket, worker IPC pipes, log files,
-static file handles, TLS internals, database connections, DNS lookups,
-and other system resources.
+I<Linux - Check and increase file descriptor limits:>
 
-B<When to adjust:>
+    # Check current limits
+    ulimit -n           # Soft limit (per-process)
+    cat /proc/sys/fs/file-max  # System-wide limit
 
-=over 4
+    # Increase for current session
+    ulimit -n 65536
 
-=item * B<Increase> (e.g., 150-200) if your application opens many
-database connections, serves many static files simultaneously, or
-uses middleware that opens additional file handles.
+    # Permanent: add to /etc/security/limits.conf
+    *  soft  nofile  65536
+    *  hard  nofile  65536
 
-=item * B<Decrease> (e.g., 50-75) if running a minimal setup with no
-database, no static files, and you want to maximize connection capacity.
+    # Or for systemd services, in your unit file:
+    [Service]
+    LimitNOFILE=65536
 
-=back
+I<macOS - Check and increase file descriptor limits:>
 
-B<Note:> This setting is ignored if C<max_connections> is set explicitly.
+    # Check current limits
+    ulimit -n           # Soft limit
+    sysctl kern.maxfilesperproc  # Per-process max
 
-B<Example:>
+    # Increase for current session
+    ulimit -n 65536
 
-    # Heavy database usage - reserve more headroom
-    my $server = PAGI::Server->new(
-        app         => $app,
-        fd_headroom => 200,
-    );
+    # Permanent: add to /etc/launchd.conf or use launchctl
+    sudo launchctl limit maxfiles 65536 200000
+
+I<Rule of thumb:> Set C<max_connections> to roughly 80% of your file
+descriptor limit to leave headroom for database connections, log files,
+and other resources.
 
 =item write_high_watermark => $bytes
 
@@ -796,8 +799,8 @@ Returns the current number of active connections.
     my $max = $server->effective_max_connections;
 
 Returns the effective maximum connections limit. If C<max_connections>
-was set explicitly, returns that value. Otherwise returns the
-auto-detected limit (ulimit - 50).
+was set explicitly, returns that value. Otherwise returns the default
+of 1000.
 
 =head1 FILE RESPONSE STREAMING
 
@@ -1163,8 +1166,7 @@ sub _init {
     $self->{reuseport}         = delete $params->{reuseport} // 0;  # SO_REUSEPORT mode for multi-worker
     $self->{max_receive_queue} = delete $params->{max_receive_queue} // 1000;  # Max WebSocket receive queue size (messages)
     $self->{max_ws_frame_size} = delete $params->{max_ws_frame_size} // 65536;  # Max WebSocket frame size in bytes (64KB default)
-    $self->{max_connections}     = delete $params->{max_connections} // 0;  # 0 = auto-detect
-    $self->{fd_headroom}         = delete $params->{fd_headroom} // 100;  # FDs reserved for non-connection use
+    $self->{max_connections}     = delete $params->{max_connections} // 0;  # 0 = use default (1000)
     $self->{sync_file_threshold} = delete $params->{sync_file_threshold} // 65536;  # Threshold for sync file reads (0=always async)
     $self->{request_timeout}     = delete $params->{request_timeout} // 0;  # Request stall timeout in seconds (0 = disabled, default for performance)
     $self->{ws_idle_timeout}     = delete $params->{ws_idle_timeout} // 0;   # WebSocket idle timeout (0 = disabled)
@@ -1259,9 +1261,6 @@ sub configure {
     }
     if (exists $params{max_connections}) {
         $self->{max_connections} = delete $params{max_connections};
-    }
-    if (exists $params{fd_headroom}) {
-        $self->{fd_headroom} = delete $params{fd_headroom};
     }
     if (exists $params{request_timeout}) {
         $self->{request_timeout} = delete $params{request_timeout};
@@ -1557,6 +1556,14 @@ async sub _listen_singleworker {
 
     $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, tls: $tls_status)");
 
+    # Warn in production if using default max_connections
+    if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
+        $self->_log(warn =>
+            "Using default max_connections (1000). For production, consider tuning this value " .
+            "based on your workload. See 'perldoc PAGI::Server' for guidance."
+        );
+    }
+
     return $self;
 }
 
@@ -1615,6 +1622,14 @@ sub _listen_multiworker {
     }
 
     $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, tls: $tls_status)");
+
+    # Warn in production if using default max_connections
+    if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
+        $self->_log(warn =>
+            "Using default max_connections (1000). For production, consider tuning this value " .
+            "based on your workload. See 'perldoc PAGI::Server' for guidance."
+        );
+    }
 
     my $loop = $self->loop;
 
@@ -2264,14 +2279,14 @@ async sub _drain_connections {
     # Keep-alive connections waiting for next request should be closed
     my @idle = grep { !$_->{handling_request} } values %{$self->{connections}};
     for my $conn (@idle) {
-        $conn->_close if $conn && $conn->can('_close');
+        $conn->_handle_disconnect_and_close('server_shutdown');
     }
 
     # Also close long-lived connections (SSE, WebSocket) immediately
     # These never become "idle" so would wait for full timeout otherwise
     my @longlived = grep { $_->{sse_mode} || $_->{websocket_mode} } values %{$self->{connections}};
     for my $conn (@longlived) {
-        $conn->_close if $conn && $conn->can('_close');
+        $conn->_handle_disconnect_and_close('server_shutdown');
     }
 
     # If all connections are now closed, we're done
@@ -2324,26 +2339,11 @@ sub connection_count {
 sub effective_max_connections {
     my ($self) = @_;
 
-    # If explicitly set, use that
-    return $self->{max_connections} if $self->{max_connections} && $self->{max_connections} > 0;
-
-    # Auto-detect from process soft limit (not system max)
-    # getrlimit returns the actual per-process limit, unlike sysconf which
-    # may return the system-wide maximum on some platforms
-    my $ulimit = eval {
-        my ($soft, $hard) = POSIX::getrlimit(POSIX::RLIMIT_NOFILE());
-        $soft;
-    } // 1024;
-
-    # Reserve FDs for: listen socket, worker IPC pipes, logging,
-    # static files, TLS internals, DB connections, DNS, etc.
-    my $headroom = $self->{fd_headroom} // 100;
-
-    # Each connection uses 1 FD (or 2 if proxying)
-    my $safe_limit = $ulimit - $headroom;
-
-    # Minimum of 10 connections
-    return $safe_limit > 10 ? $safe_limit : 10;
+    # If explicitly set, use that; otherwise default to 1000
+    # (Same default as Mojolicious - simple, predictable, no platform-specific hacks)
+    return $self->{max_connections} && $self->{max_connections} > 0
+        ? $self->{max_connections}
+        : 1000;
 }
 
 1;

@@ -148,6 +148,8 @@ sub new {
         receive_futures => [],
         # Track request handling Future to prevent "lost future" warning
         request_future  => undef,
+        # Idempotency guard for disconnect handling
+        _disconnect_handled => 0,
         # WebSocket state
         websocket_mode    => 0,
         websocket_frame   => undef,  # Protocol::WebSocket::Frame for parsing
@@ -215,8 +217,7 @@ sub start {
                 return unless $weak_self;
                 return if $weak_self->{closed};
                 # Close idle connection
-                $weak_self->_handle_disconnect('idle_timeout');
-                $weak_self->_close;
+                $weak_self->_handle_disconnect_and_close('idle_timeout');
             },
         );
         $self->{idle_timer} = $timer;
@@ -240,7 +241,8 @@ sub start {
             $$buffref = '';
 
             if ($eof) {
-                $weak_self->_handle_disconnect;
+                # EOF means client closed - handle disconnect and cleanup
+                $weak_self->_handle_disconnect_and_close('client_closed');
                 return 0;
             }
 
@@ -266,13 +268,15 @@ sub start {
             if (my $error = $@) {
                 # Log the error and close the connection gracefully
                 warn "PAGI connection error: $error";
-                $weak_self->_close;
+                return 0 unless $weak_self;
+                $weak_self->_handle_disconnect_and_close('server_error');
             }
             return 0;
         },
         on_closed => sub {
             return unless $weak_self;
-            $weak_self->_handle_disconnect;
+            # Stream closed - handle disconnect and remove from connections hash
+            $weak_self->_handle_disconnect_and_close('client_closed');
         },
     );
 }
@@ -318,8 +322,7 @@ sub _start_stall_timer {
                 $weak_self->{server}->_log(warn =>
                     "Request stall timeout ($weak_self->{request_timeout}s) - closing connection");
             }
-            $weak_self->_handle_disconnect('client_timeout');
-            $weak_self->_close;
+            $weak_self->_handle_disconnect_and_close('client_timeout');
         },
     );
     $self->{stall_timer} = $timer;
@@ -365,7 +368,7 @@ sub _start_ws_idle_timer {
                 $weak_self->{server}->_log(warn =>
                     "WebSocket idle timeout ($weak_self->{ws_idle_timeout}s) - closing connection");
             }
-            $weak_self->_close;
+            $weak_self->_handle_disconnect_and_close('idle_timeout');
         },
     );
     $self->{ws_idle_timer} = $timer;
@@ -412,7 +415,7 @@ sub _start_sse_idle_timer {
                     "SSE idle timeout ($weak_self->{sse_idle_timeout}s) - closing connection");
             }
             $weak_self->{sse_disconnect_reason} = 'idle_timeout';
-            $weak_self->_close;
+            $weak_self->_handle_disconnect_and_close('idle_timeout');
         },
     );
     $self->{sse_idle_timer} = $timer;
@@ -611,22 +614,7 @@ sub _start_ws_pong_timeout {
                     $weak_self->{server}->_log(warn =>
                         "WebSocket keepalive timeout - no pong received within $weak_self->{ws_keepalive_timeout}s");
                 }
-
-                # Queue disconnect event with reason
-                push @{$weak_self->{receive_queue}}, {
-                    type   => 'websocket.disconnect',
-                    code   => 1006,
-                    reason => 'keepalive timeout',
-                };
-
-                # Notify waiting receive
-                if ($weak_self->{receive_pending} && !$weak_self->{receive_pending}->is_ready) {
-                    my $f = $weak_self->{receive_pending};
-                    $weak_self->{receive_pending} = undef;
-                    $f->done;
-                }
-
-                $weak_self->_close;
+                $weak_self->_handle_disconnect_and_close('keepalive_timeout');
             }
         },
     );
@@ -738,6 +726,7 @@ sub _try_handle_request {
     # Check Content-Length against max_body_size limit (0 = unlimited)
     if ($self->{max_body_size} && defined $request->{content_length}) {
         if ($request->{content_length} > $self->{max_body_size}) {
+            $self->_handle_disconnect('body_too_large');
             $self->_send_error_response(413, 'Payload Too Large');
             $self->_close;
             return;
@@ -840,6 +829,7 @@ async sub _handle_request {
         # Notify server that request completed (for max_requests tracking)
         $self->{server}->_on_request_complete if $self->{server};
         # Always close connection after exception (3.2) - don't try keep-alive
+        $self->_handle_disconnect('server_error');
         $self->_close;
         return;
     }
@@ -871,7 +861,8 @@ async sub _handle_request {
             $self->_try_handle_request;
         }
     } else {
-        $self->_close;
+        # Not keeping alive - close connection
+        $self->_handle_disconnect_and_close('request_complete');
     }
 }
 
@@ -1032,6 +1023,7 @@ sub _create_receive {
 
                 # Check for parse error (invalid chunk size)
                 if (ref($data) eq 'HASH' && $data->{error}) {
+                    $weak_self->_handle_disconnect('protocol_error');
                     $weak_self->_send_error_response($data->{error}, $data->{message} // 'Bad Request');
                     $weak_self->_close;
                     return { type => 'http.disconnect' };
@@ -1404,6 +1396,11 @@ sub _write_access_log {
 sub _handle_disconnect {
     my ($self, $reason) = @_;
 
+    # Idempotency guard - prevent duplicate disconnect handling
+    # Multiple paths can trigger disconnect (timeout, protocol error, session end)
+    return if $self->{_disconnect_handled};
+    $self->{_disconnect_handled} = 1;
+
     # Cancel any pending drain waiters (backpressure)
     $self->_cancel_drain_waiters($reason);
 
@@ -1506,8 +1503,9 @@ sub _close {
     $self->_stop_ws_keepalive;
     $self->_stop_sse_keepalive;
 
-    # Complete any pending receive with disconnect
-    $self->_handle_disconnect;
+    # Note: _close is resource cleanup ONLY. Callers should use
+    # _handle_disconnect_and_close() which handles both protocol
+    # notification and cleanup.
 
     # Determine disconnect event type based on mode
     my $disconnect_event;
@@ -1535,6 +1533,15 @@ sub _close {
     if ($self->{stream}) {
         $self->{stream}->close_when_empty;
     }
+}
+
+# Combined disconnect and close - use this from callbacks where $weak_self may
+# become undefined after _handle_disconnect completes its Future callbacks.
+# This method holds a strong reference to $self throughout the operation.
+sub _handle_disconnect_and_close {
+    my ($self, $reason) = @_;
+    $self->_handle_disconnect($reason);
+    $self->_close;
 }
 
 #
@@ -1731,7 +1738,7 @@ async sub _handle_sse_request {
     $self->_write_access_log;
 
     # Close connection after SSE stream ends
-    $self->_close;
+    $self->_handle_disconnect_and_close('stream_complete');
 }
 
 sub _create_sse_scope {
@@ -2049,7 +2056,7 @@ async sub _handle_websocket_request {
     $self->_write_access_log;
 
     # Close connection after WebSocket session ends
-    $self->_close;
+    $self->_handle_disconnect_and_close('session_complete');
 }
 
 sub _create_websocket_scope {
@@ -2107,19 +2114,26 @@ sub _create_websocket_receive {
     return sub {
         return Future->done({ type => 'websocket.disconnect', code => 1006, reason => '' })
             unless $weak_self;
+
+        # Check queue first - drain queued messages even if closed
+        if (@{$weak_self->{receive_queue}}) {
+            return Future->done(shift @{$weak_self->{receive_queue}});
+        }
+
         return Future->done({ type => 'websocket.disconnect', code => 1006, reason => '' })
             if $weak_self->{closed};
 
         my $future = (async sub {
             return { type => 'websocket.disconnect', code => 1006, reason => '' }
                 unless $weak_self;
-            return { type => 'websocket.disconnect', code => 1006, reason => '' }
-                if $weak_self->{closed};
 
-            # Check queue first
+            # Check queue first - drain queued messages even if closed
             if (@{$weak_self->{receive_queue}}) {
                 return shift @{$weak_self->{receive_queue}};
             }
+
+            return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                if $weak_self->{closed};
 
             # First call returns websocket.connect
             if (!$connect_sent) {
@@ -2298,7 +2312,7 @@ sub _create_websocket_send {
             # If we received a close frame, close immediately
             # Otherwise wait for close from client (handled in frame processing)
             if ($weak_self->{close_received}) {
-                $weak_self->_close;
+                $weak_self->_handle_disconnect_and_close('client_closed');
             }
         }
         elsif ($type eq 'websocket.keepalive') {
@@ -2349,7 +2363,7 @@ sub _process_websocket_frames {
         if ($rsv && ref($rsv) eq 'ARRAY') {
             if (grep { $_ } @$rsv) {
                 $self->_send_close_frame(1002, 'RSV bits must be 0');
-                $self->_close;
+                $self->_handle_disconnect_and_close('protocol_error');
                 return;
             }
         }
@@ -2358,7 +2372,7 @@ sub _process_websocket_frames {
         # Must fail connection with 1002 Protocol Error
         if (($opcode >= 3 && $opcode <= 7) || ($opcode >= 11 && $opcode <= 15)) {
             $self->_send_close_frame(1002, 'Reserved opcode');
-            $self->_close;
+            $self->_handle_disconnect_and_close('protocol_error');
             return;
         }
 
@@ -2366,7 +2380,7 @@ sub _process_websocket_frames {
         # payload length <= 125 bytes
         if (($opcode == 8 || $opcode == 9 || $opcode == 10) && length($bytes) > 125) {
             $self->_send_close_frame(1002, 'Control frame too large');
-            $self->_close;
+            $self->_handle_disconnect_and_close('protocol_error');
             return;
         }
 
@@ -2376,13 +2390,13 @@ sub _process_websocket_frames {
             unless (defined $text) {
                 # Invalid UTF-8 - close with 1007 per RFC 6455
                 $self->_send_close_frame(1007, 'Invalid UTF-8');
-                $self->_close;
+                $self->_handle_disconnect_and_close('protocol_error');
                 return;
             }
             # Check queue limit before adding (DoS protection)
             if (@{$self->{receive_queue}} >= $self->{max_receive_queue}) {
                 $self->_send_close_frame(1008, 'Message queue overflow');  # Policy Violation
-                $self->_close;
+                $self->_handle_disconnect_and_close('policy_violation');
                 return;
             }
             push @{$self->{receive_queue}}, {
@@ -2395,7 +2409,7 @@ sub _process_websocket_frames {
             # Check queue limit before adding (DoS protection)
             if (@{$self->{receive_queue}} >= $self->{max_receive_queue}) {
                 $self->_send_close_frame(1008, 'Message queue overflow');  # Policy Violation
-                $self->_close;
+                $self->_handle_disconnect_and_close('policy_violation');
                 return;
             }
             push @{$self->{receive_queue}}, {
@@ -2412,7 +2426,7 @@ sub _process_websocket_frames {
             # 1 byte is invalid
             if (length($bytes) == 1) {
                 $self->_send_close_frame(1002, 'Invalid close frame');
-                $self->_close;
+                $self->_handle_disconnect_and_close('protocol_error');
                 return;
             }
 
@@ -2435,7 +2449,7 @@ sub _process_websocket_frames {
                 }
                 unless ($valid_code) {
                     $self->_send_close_frame(1002, 'Invalid close code');
-                    $self->_close;
+                    $self->_handle_disconnect_and_close('protocol_error');
                     return;
                 }
 
@@ -2444,7 +2458,7 @@ sub _process_websocket_frames {
                     my $decoded = eval { Encode::decode('UTF-8', $reason, Encode::FB_CROAK) };
                     unless (defined $decoded) {
                         $self->_send_close_frame(1007, 'Invalid UTF-8 in close reason');
-                        $self->_close;
+                        $self->_handle_disconnect_and_close('protocol_error');
                         return;
                     }
                 }
