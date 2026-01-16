@@ -108,8 +108,7 @@ subtest 'on_disconnect after disconnect invokes immediately' => sub {
 # =============================================================================
 
 subtest 'disconnect_future resolves on disconnect' => sub {
-    my $future = Future->new;
-    my $conn = PAGI::Server::ConnectionState->new(future => $future);
+    my $conn = PAGI::Server::ConnectionState->new();
     my $req = PAGI::Request->new(
         { type => 'http', method => 'GET', path => '/', headers => [],
           'pagi.connection' => $conn },
@@ -127,18 +126,24 @@ subtest 'disconnect_future resolves on disconnect' => sub {
 };
 
 # =============================================================================
-# Test: disconnect_future returns undef when not provided
+# Test: disconnect_future is lazily created
 # =============================================================================
 
-subtest 'disconnect_future returns undef when not provided' => sub {
-    my $conn = PAGI::Server::ConnectionState->new();  # No future
+subtest 'disconnect_future is lazily created' => sub {
+    my $conn = PAGI::Server::ConnectionState->new();
     my $req = PAGI::Request->new(
         { type => 'http', method => 'GET', path => '/', headers => [],
           'pagi.connection' => $conn },
         undef
     );
 
-    is($req->disconnect_future, undef, 'returns undef');
+    my $future = $req->disconnect_future;
+    ok($future, 'returns a Future');
+    ok(!$future->is_ready, 'Future not ready while connected');
+
+    # Same Future returned on subsequent calls
+    my $future2 = $req->disconnect_future;
+    is($future, $future2, 'same Future returned');
 };
 
 # =============================================================================

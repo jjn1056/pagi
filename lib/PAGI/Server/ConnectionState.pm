@@ -2,6 +2,7 @@ package PAGI::Server::ConnectionState;
 
 use strict;
 use warnings;
+use Scalar::Util qw(weaken);
 
 =head1 NAME
 
@@ -39,6 +40,10 @@ This addresses a fundamental limitation in the PAGI (and ASGI) model where
 checking for disconnect via C<receive()> may inadvertently consume request
 body data.
 
+The C<disconnect_future()> method lazily creates a Future only when called,
+avoiding allocation overhead for simple request/response handlers that don't
+need async disconnect detection.
+
 See L<PAGI Specification 0.3|docs/specs/0.3-connection-state.md> for the
 full specification.
 
@@ -46,11 +51,10 @@ full specification.
 
 =head2 new
 
-    my $conn = PAGI::Server::ConnectionState->new();
-    my $conn = PAGI::Server::ConnectionState->new(future => $disconnect_future);
+    my $conn = PAGI::Server::ConnectionState->new(connection => $connection);
 
-Creates a new connection state object. The optional C<future> argument
-provides a Future that will be resolved when disconnect occurs.
+Creates a new connection state object. The C<connection> argument provides
+a reference to the parent Connection object for lazy Future creation.
 
 =cut
 
@@ -60,12 +64,25 @@ sub new {
     my $connected = 1;
     my $reason = undef;
 
-    return bless {
+    my $self = bless {
+        # Connection reference for lazy Future creation (will be weakened)
+        _connection => $args{connection},
+
+        # State (scalar refs - for internal consistency)
         _connected => \$connected,
         _reason    => \$reason,
+
+        # Lazy Future (only created if disconnect_future() called)
+        _future => undef,
+
+        # Callbacks registered via on_disconnect()
         _callbacks => [],
-        _future    => $args{future},  # Optional, provided by server
     }, $class;
+
+    # Weaken to avoid circular reference: Connection -> ConnectionState -> Connection
+    weaken($self->{_connection}) if $self->{_connection};
+
+    return $self;
 }
 
 =head2 is_connected
@@ -126,8 +143,10 @@ sub disconnect_reason {
     my $future = $conn->disconnect_future;  # Future or undef
     my $reason = await $future;
 
-Returns a Future that resolves when the connection closes, or C<undef>
-if the server does not support this feature.
+Returns a Future that resolves when the connection closes.
+
+The Future is created lazily on first call, avoiding allocation overhead
+for handlers that don't need async disconnect detection.
 
 The Future resolves with the disconnect reason string.
 
@@ -139,7 +158,28 @@ This is useful for racing against other async operations:
 
 sub disconnect_future {
     my $self = shift;
-    return $self->{_future};  # May be undef
+
+    # Return cached Future if exists
+    return $self->{_future} if $self->{_future};
+
+    # Create new Future (lazy)
+    my $conn = $self->{_connection};
+    my $loop = $conn && $conn->{server} ? $conn->{server}->loop : undef;
+
+    if ($loop) {
+        $self->{_future} = $loop->new_future;
+    } else {
+        # Fallback if no loop available (shouldn't happen in practice)
+        require Future;
+        $self->{_future} = Future->new;
+    }
+
+    # If already disconnected, resolve immediately
+    unless (${$self->{_connected}}) {
+        $self->{_future}->done(${$self->{_reason}});
+    }
+
+    return $self->{_future};
 }
 
 =head2 on_disconnect
@@ -173,8 +213,8 @@ sub on_disconnect {
     my ($self, $cb) = @_;
 
     # If already disconnected, invoke immediately
-    unless ($self->is_connected) {
-        eval { $cb->($self->disconnect_reason) };
+    unless (${$self->{_connected}}) {
+        eval { $cb->(${$self->{_reason}}) };
         warn "on_disconnect callback error: $@" if $@;
         return;
     }
@@ -199,7 +239,7 @@ State transitions occur in this order:
 
 =item 2. C<disconnect_reason()> returns the reason string
 
-=item 3. C<disconnect_future()> resolves with the reason (if provided)
+=item 3. C<disconnect_future()> resolves with the reason (if it was created)
 
 =item 4. C<on_disconnect> callbacks are invoked in registration order
 
@@ -210,23 +250,26 @@ State transitions occur in this order:
 sub _mark_disconnected {
     my ($self, $reason) = @_;
 
-    # Already disconnected - no-op
-    return unless $self->is_connected;
+    # Already disconnected - no-op (idempotent)
+    return unless ${$self->{_connected}};
 
     # 1. Update state
     ${$self->{_connected}} = 0;
-    ${$self->{_reason}} = $reason;
+    ${$self->{_reason}} = $reason // 'unknown';
 
-    # 2. Resolve future (if provided)
+    # 2. Resolve future if it exists (lazy - may not have been created)
     if ($self->{_future} && !$self->{_future}->is_ready) {
-        $self->{_future}->done($reason);
+        $self->{_future}->done(${$self->{_reason}});
     }
 
     # 3. Invoke callbacks
     for my $cb (@{$self->{_callbacks}}) {
-        eval { $cb->($reason) };
+        eval { $cb->(${$self->{_reason}}) };
         warn "on_disconnect callback error: $@" if $@;
     }
+
+    # 4. Clear callbacks to release references
+    $self->{_callbacks} = [];
 }
 
 1;

@@ -27,21 +27,25 @@ subtest 'initial state' => sub {
 
     ok($conn->is_connected, 'initially connected');
     is($conn->disconnect_reason, undef, 'no reason while connected');
-    is($conn->disconnect_future, undef, 'no future when not provided');
+    # disconnect_future is lazily created - always returns a Future
+    my $future = $conn->disconnect_future;
+    ok($future, 'disconnect_future returns a Future');
+    ok(!$future->is_ready, 'future not ready while connected');
 };
 
 # =============================================================================
-# Test: Initial state with Future
+# Test: Lazy Future is cached
 # =============================================================================
 
-subtest 'initial state with future' => sub {
-    my $future = Future->new;
-    my $conn = PAGI::Server::ConnectionState->new(future => $future);
+subtest 'lazy future is cached' => sub {
+    my $conn = PAGI::Server::ConnectionState->new();
 
-    ok($conn->is_connected, 'initially connected');
-    is($conn->disconnect_reason, undef, 'no reason while connected');
-    ok($conn->disconnect_future, 'future returned when provided');
-    ok(!$future->is_ready, 'future not ready initially');
+    my $future1 = $conn->disconnect_future;
+    my $future2 = $conn->disconnect_future;
+
+    ok($future1, 'first call returns Future');
+    ok($future2, 'second call returns Future');
+    is($future1, $future2, 'same Future returned on subsequent calls');
 };
 
 # =============================================================================
@@ -115,9 +119,9 @@ subtest 'on_disconnect after already disconnected' => sub {
 # =============================================================================
 
 subtest 'disconnect_future resolves' => sub {
-    my $future = Future->new;
-    my $conn = PAGI::Server::ConnectionState->new(future => $future);
+    my $conn = PAGI::Server::ConnectionState->new();
 
+    my $future = $conn->disconnect_future;
     ok(!$future->is_ready, 'future pending initially');
 
     $conn->_mark_disconnected('write_error');
@@ -127,12 +131,20 @@ subtest 'disconnect_future resolves' => sub {
 };
 
 # =============================================================================
-# Test: disconnect_future optional
+# Test: disconnect_future called after disconnect resolves immediately
 # =============================================================================
 
-subtest 'disconnect_future optional' => sub {
-    my $conn = PAGI::Server::ConnectionState->new();  # No future
-    is($conn->disconnect_future, undef, 'returns undef when not provided');
+subtest 'disconnect_future called after disconnect resolves immediately' => sub {
+    my $conn = PAGI::Server::ConnectionState->new();
+
+    # Disconnect first, before calling disconnect_future
+    $conn->_mark_disconnected('client_closed');
+
+    # Now get the future - should be created and immediately resolved
+    my $future = $conn->disconnect_future;
+    ok($future, 'future created even after disconnect');
+    ok($future->is_ready, 'future is already resolved');
+    is($future->get, 'client_closed', 'future resolved with reason');
 };
 
 # =============================================================================
@@ -197,17 +209,22 @@ subtest 'standard disconnect reasons' => sub {
 };
 
 # =============================================================================
-# Test: Future already ready is not touched
+# Test: Disconnect without calling disconnect_future - no Future created
 # =============================================================================
 
-subtest 'future already ready is not touched' => sub {
-    my $future = Future->done('pre-resolved');
-    my $conn = PAGI::Server::ConnectionState->new(future => $future);
+subtest 'disconnect without calling disconnect_future' => sub {
+    my $conn = PAGI::Server::ConnectionState->new();
 
-    # Should not die when trying to resolve already-resolved future
+    # Disconnect without ever calling disconnect_future
+    # This should work and not create any Future
     $conn->_mark_disconnected('test');
 
-    is($future->get, 'pre-resolved', 'original value preserved');
+    ok(!$conn->is_connected, 'disconnected');
+    is($conn->disconnect_reason, 'test', 'reason set');
+
+    # Now if we call disconnect_future, it should be created resolved
+    my $future = $conn->disconnect_future;
+    ok($future->is_ready, 'late future is already resolved');
 };
 
 # =============================================================================

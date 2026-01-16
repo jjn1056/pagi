@@ -900,9 +900,9 @@ sub _create_scope {
     my ($self, $request) = @_;
 
     # Create connection state object for disconnect tracking (PAGI spec 0.3)
-    my $disconnect_future = Future->new;
+    # Uses lazy Future creation - Future only allocated if disconnect_future() is called
     my $connection_state = PAGI::Server::ConnectionState->new(
-        future => $disconnect_future,
+        connection => $self,
     );
     $self->{current_connection_state} = $connection_state;
 
