@@ -4,6 +4,34 @@ use warnings;
 
 our $VERSION = '0.001007';
 
+# Future::XS support - opt-in via PAGI_FUTURE_XS=1 environment variable
+# Must be loaded before Future to take effect, so we check env var in BEGIN
+# Note: We declare these without initialization so BEGIN block values persist
+our ($FUTURE_XS_AVAILABLE, $FUTURE_XS_ENABLED);
+BEGIN {
+    $FUTURE_XS_AVAILABLE = eval { require Future::XS; 1 } ? 1 : 0;
+    $FUTURE_XS_ENABLED = 0;  # Default to disabled
+
+    if ($ENV{PAGI_FUTURE_XS}) {
+        if ($FUTURE_XS_AVAILABLE) {
+            # Future::XS is already loaded from the availability check
+            $FUTURE_XS_ENABLED = 1;
+        } else {
+            die <<"END_FUTURE_XS_ERROR";
+PAGI_FUTURE_XS=1 set but Future::XS is not installed.
+
+To install Future::XS:
+    cpanm Future::XS
+
+Or unset the PAGI_FUTURE_XS environment variable.
+END_FUTURE_XS_ERROR
+        }
+    } elsif ($FUTURE_XS_AVAILABLE) {
+        # Available but not requested - unload it
+        delete $INC{'Future/XS.pm'};
+    }
+}
+
 use parent 'IO::Async::Notifier';
 use IO::Async::Listener;
 use IO::Async::Stream;
@@ -1300,6 +1328,13 @@ sub _tls_status_string {
     return $TLS_AVAILABLE ? 'available' : 'not installed';
 }
 
+# Returns a human-readable Future::XS status string for the startup banner
+sub _future_xs_status_string {
+    return 'on' if $FUTURE_XS_ENABLED;
+    return 'available' if $FUTURE_XS_AVAILABLE;
+    return 'not installed';
+}
+
 # Check if TLS modules are available
 sub _check_tls_available {
     my ($self) = @_;
@@ -1545,6 +1580,7 @@ async sub _listen_singleworker {
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
+    my $future_xs_status = $self->_future_xs_status_string;
 
     # Warn if access_log is a terminal (slow for benchmarks)
     if ($self->{access_log} && -t $self->{access_log}) {
@@ -1554,7 +1590,7 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, tls: $tls_status)");
+    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -1612,6 +1648,7 @@ sub _listen_multiworker {
     my $mode = $reuseport ? 'reuseport' : 'shared-socket';
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
+    my $future_xs_status = $self->_future_xs_status_string;
 
     # Warn if access_log is a terminal (slow for benchmarks)
     if ($self->{access_log} && -t $self->{access_log}) {
@@ -1621,7 +1658,7 @@ sub _listen_multiworker {
         );
     }
 
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, tls: $tls_status)");
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {

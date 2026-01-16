@@ -1,4 +1,17 @@
 #!/usr/bin/env perl
+
+# Handle compile-time options before loading any modules
+# Future::XS must be loaded before Future, so check early
+BEGIN {
+    for my $i (0 .. $#ARGV) {
+        if ($ARGV[$i] eq '--future-xs') {
+            $ENV{PAGI_FUTURE_XS} = 1;
+            splice @ARGV, $i, 1;  # Remove from ARGV
+            last;
+        }
+    }
+}
+
 use strict;
 use warnings;
 
@@ -249,6 +262,13 @@ SSE idle timeout in seconds (default: 0, disabled)
 =item B<--sync-file-threshold> NUM
 
 Sync file read threshold in bytes (default: 65536)
+
+=item B<--future-xs>
+
+Enable L<Future::XS> for improved Future performance.
+Must be installed separately: C<cpanm Future::XS>
+
+Can also be enabled via environment variable: C<PAGI_FUTURE_XS=1>
 
 =back
 
