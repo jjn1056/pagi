@@ -1,5 +1,28 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001014 - 2026-01-16
+  [New Features]
+  - Add Future::XS opt-in support for improved performance (~4% multi-worker)
+    Use --future-xs flag or PAGI_FUTURE_XS=1 environment variable
+  - path_param() now strict by default - dies with helpful message on missing
+    keys, catching typos early. Use strict => 0 to opt out.
+
+  [Bug Fixes]
+  - Fix connection leak where connections weren't removed from tracking hash
+    on EOF/disconnect, causing memory growth under sustained load
+  - Fix POD reference to connection state specification (was pointing to
+    non-existent file)
+
+  [Improvements]
+  - Simplify max_connections default to 1000 (removed unreliable auto-detection)
+  - Lazy disconnect_future() allocation - Future only created when called,
+    reducing per-request overhead for simple handlers
+  - path_param() now delegates to path_params(), allowing subclasses to
+    override path_params for custom parameter handling (e.g., lazy conversion
+    from positional to named parameters)
+  - Add _default_path_param_strict_opt() hook for subclasses to change default
+  - Document query_params/query strict and raw options in POD
+
 0.001013 - 2026-01-04
   [New Features]
   - Add PAGI::Utils::handle_lifespan utility for simplified lifespan handling
