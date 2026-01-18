@@ -11,16 +11,39 @@ use PAGI::Test::Response;
 sub new {
     my ($class, %args) = @_;
 
-    croak "app is required" unless $args{app};
+    # Validate: need either app (direct mode) or base_url/socket (server mode)
+    my $has_app = exists $args{app};
+    my $has_server = exists $args{base_url} || exists $args{socket};
 
-    return bless {
+    croak "Must provide either 'app' (direct mode) or 'base_url'/'socket' (server mode)"
+        unless $has_app || $has_server;
+    croak "Cannot provide both 'app' and 'base_url'/'socket'"
+        if $has_app && $has_server;
+
+    my $self = bless {
         app                  => $args{app},
+        base_url             => $args{base_url},
+        socket               => $args{socket},
         headers              => $args{headers} // {},
         cookies              => {},
         lifespan             => $args{lifespan} // 0,
         raise_app_exceptions => $args{raise_app_exceptions} // 0,
         started              => 0,
     }, $class;
+
+    # Parse base_url if provided
+    if ($self->{base_url}) {
+        if ($self->{base_url} =~ m{^(https?)://([^:/]+)(?::(\d+))?(.*)$}) {
+            $self->{_scheme} = $1;
+            $self->{_host}   = $2;
+            $self->{_port}   = $3 // ($1 eq 'https' ? 443 : 80);
+            $self->{_path_prefix} = $4 || '';
+        } else {
+            croak "Invalid base_url: $self->{base_url}";
+        }
+    }
+
+    return $self;
 }
 
 sub get     { shift->_request('GET', @_) }
@@ -83,6 +106,10 @@ sub _request {
     elsif (defined $opts{body}) {
         _set_header(\$opts{headers}, 'Content-Length', length($opts{body}), 0);
     }
+
+    # Dispatch to server mode if configured
+    return $self->_server_request($method, $path, \%opts)
+        if $self->{base_url} || $self->{socket};
 
     # Build scope
     my $scope = $self->_build_scope($method, $path, \%opts);
@@ -203,6 +230,176 @@ sub _build_response {
     # Extract Set-Cookie headers and store cookies
     for my $h (@headers) {
         if (lc($h->[0]) eq 'set-cookie') {
+            if ($h->[1] =~ /^([^=]+)=([^;]*)/) {
+                $self->{cookies}{$1} = $2;
+            }
+        }
+    }
+
+    return PAGI::Test::Response->new(
+        status  => $status,
+        headers => \@headers,
+        body    => $body,
+    );
+}
+
+# Server mode: make real HTTP request over TCP or Unix socket
+sub _server_request {
+    my ($self, $method, $path, $opts) = @_;
+
+    # Build full path with prefix and query string
+    my $full_path = ($self->{_path_prefix} // '') . $path;
+
+    # Handle query params
+    my $query_string = '';
+    if ($full_path =~ s/\?(.*)$//) {
+        $query_string = $1;
+    }
+    if ($opts->{query}) {
+        my $pairs = _normalize_pairs($opts->{query});
+        my @encoded;
+        for my $pair (@$pairs) {
+            my $key = _url_encode($pair->[0]);
+            my $val = _url_encode($pair->[1] // '');
+            push @encoded, "$key=$val";
+        }
+        my $new_params = join('&', @encoded);
+        $query_string = $query_string ? "$query_string&$new_params" : $new_params;
+    }
+    $full_path .= "?$query_string" if $query_string;
+
+    # Build headers
+    my @headers;
+    my $host = $self->{_host} // 'localhost';
+
+    # Add Host header
+    push @headers, "Host: $host";
+
+    # Add default headers
+    my $default_pairs = _normalize_pairs($self->{headers});
+    my $request_pairs = _normalize_pairs($opts->{headers});
+    my %replace_keys = map { lc($_->[0]) => 1 } @$request_pairs;
+
+    for my $pair (@$default_pairs) {
+        push @headers, "$pair->[0]: $pair->[1]"
+            unless $replace_keys{lc($pair->[0])};
+    }
+    for my $pair (@$request_pairs) {
+        push @headers, "$pair->[0]: $pair->[1]";
+    }
+
+    # Add cookies
+    if (keys %{$self->{cookies}}) {
+        my $cookie = join('; ', map { "$_=$self->{cookies}{$_}" } sort keys %{$self->{cookies}});
+        push @headers, "Cookie: $cookie";
+    }
+
+    # Add Content-Length if body present
+    my $body = $opts->{body} // '';
+    push @headers, "Content-Length: " . length($body) if length($body);
+
+    # Build HTTP request
+    my $request = "$method $full_path HTTP/1.1\r\n";
+    $request .= join("\r\n", @headers) . "\r\n" if @headers;
+    $request .= "\r\n";
+    $request .= $body;
+
+    # Connect and send
+    my $sock = $self->_connect_socket;
+    print $sock $request;
+
+    # Read response
+    my $response = $self->_read_http_response($sock);
+    close $sock;
+
+    return $response;
+}
+
+sub _connect_socket {
+    my ($self) = @_;
+
+    if ($self->{socket}) {
+        require IO::Socket::UNIX;
+        my $sock = IO::Socket::UNIX->new(
+            Peer => $self->{socket},
+            Type => IO::Socket::UNIX::SOCK_STREAM(),
+        ) or croak "Cannot connect to Unix socket $self->{socket}: $!";
+        return $sock;
+    }
+    else {
+        require IO::Socket::INET;
+        my $sock = IO::Socket::INET->new(
+            PeerAddr => $self->{_host},
+            PeerPort => $self->{_port},
+            Proto    => 'tcp',
+        ) or croak "Cannot connect to $self->{_host}:$self->{_port}: $!";
+        return $sock;
+    }
+}
+
+sub _read_http_response {
+    my ($self, $sock) = @_;
+
+    # Read status line
+    my $status_line = <$sock>;
+    croak "No response from server" unless defined $status_line;
+    $status_line =~ s/\r?\n$//;
+
+    my ($version, $status, $reason) = split(' ', $status_line, 3);
+    $status //= 500;
+
+    # Read headers
+    my @headers;
+    my %header_lc;
+    while (my $line = <$sock>) {
+        $line =~ s/\r?\n$//;
+        last if $line eq '';
+
+        if ($line =~ /^([^:]+):\s*(.*)$/) {
+            my ($name, $value) = ($1, $2);
+            push @headers, [lc($name), $value];
+            $header_lc{lc($name)} = $value;
+        }
+    }
+
+    # Read body based on Content-Length or chunked
+    my $body = '';
+    my $content_length = $header_lc{'content-length'};
+    my $transfer_encoding = $header_lc{'transfer-encoding'} // '';
+
+    if ($transfer_encoding =~ /chunked/i) {
+        # Chunked transfer encoding
+        while (1) {
+            my $chunk_header = <$sock>;
+            last unless defined $chunk_header;
+            $chunk_header =~ s/\r?\n$//;
+            my $chunk_size = hex($chunk_header);
+            last if $chunk_size == 0;
+
+            my $chunk = '';
+            while (length($chunk) < $chunk_size) {
+                my $remaining = $chunk_size - length($chunk);
+                my $bytes_read = read($sock, my $buf, $remaining);
+                last unless $bytes_read;
+                $chunk .= $buf;
+            }
+            $body .= $chunk;
+            <$sock>;  # Read trailing \r\n
+        }
+        <$sock>;  # Read final \r\n after 0-length chunk
+    }
+    elsif (defined $content_length && $content_length > 0) {
+        while (length($body) < $content_length) {
+            my $remaining = $content_length - length($body);
+            my $bytes_read = read($sock, my $buf, $remaining);
+            last unless $bytes_read;
+            $body .= $buf;
+        }
+    }
+
+    # Extract Set-Cookie headers and store cookies
+    for my $h (@headers) {
+        if ($h->[0] eq 'set-cookie') {
             if ($h->[1] =~ /^([^=]+)=([^;]*)/) {
                 $self->{cookies}{$1} = $2;
             }
@@ -603,6 +800,7 @@ PAGI::Test::Client - Test client for PAGI applications
 
     use PAGI::Test::Client;
 
+    # Direct mode: test app without starting a server (fast unit tests)
     my $client = PAGI::Test::Client->new(app => $app);
 
     # Simple GET
@@ -642,11 +840,29 @@ PAGI::Test::Client - Test client for PAGI applications
     $client->post('/login', form => { user => 'admin', pass => 'secret' });
     my $res = $client->get('/dashboard');  # authenticated!
 
+    # Server mode: connect to a real running server (integration tests)
+    my $client = PAGI::Test::Client->new(base_url => 'http://127.0.0.1:5000');
+    my $res = $client->get('/api/status');
+
+    # Unix socket mode: connect via Unix domain socket
+    my $client = PAGI::Test::Client->new(socket => '/tmp/pagi.sock');
+    my $res = $client->get('/api/status');
+
 =head1 DESCRIPTION
 
-PAGI::Test::Client allows you to test PAGI applications without starting
-a real server. It invokes your app directly by constructing the PAGI
-protocol messages ($scope, $receive, $send), making tests fast and simple.
+PAGI::Test::Client provides two modes of operation:
+
+=head2 Direct Mode (Unit Testing)
+
+When you provide an C<app> coderef, the client invokes your app directly
+by constructing PAGI protocol messages ($scope, $receive, $send). This
+makes tests fast and simple - no network overhead, no server startup.
+
+=head2 Server Mode (Integration Testing)
+
+When you provide a C<base_url> or C<socket>, the client makes real HTTP
+requests over TCP or Unix domain sockets. Use this to test the full stack
+including PAGI::Server, or to connect to external services.
 
 This is inspired by Starlette's TestClient but adapted for Perl and PAGI's
 specific features like first-class SSE support.
@@ -655,19 +871,51 @@ specific features like first-class SSE support.
 
 =head2 new
 
+    # Direct mode (unit testing)
     my $client = PAGI::Test::Client->new(
-        app      => $app,           # Required: PAGI app coderef
+        app      => $app,           # PAGI app coderef
         headers  => { ... },        # Optional: default headers
         lifespan => 1,              # Optional: enable lifespan (default: 0)
     );
+
+    # Server mode via TCP (integration testing)
+    my $client = PAGI::Test::Client->new(
+        base_url => 'http://127.0.0.1:5000',
+        headers  => { ... },        # Optional: default headers
+    );
+
+    # Server mode via Unix socket
+    my $client = PAGI::Test::Client->new(
+        socket  => '/tmp/pagi.sock',
+        headers => { ... },         # Optional: default headers
+    );
+
+You must provide exactly one of: C<app>, C<base_url>, or C<socket>.
 
 =head3 Options
 
 =over 4
 
-=item app (required)
+=item app
 
-The PAGI application coderef to test.
+The PAGI application coderef to test. Use this for direct mode (unit testing).
+
+=item base_url
+
+URL of a running HTTP server to connect to. Use this for server mode
+(integration testing) over TCP. Examples:
+
+    base_url => 'http://127.0.0.1:5000'
+    base_url => 'http://localhost:8080/api'  # with path prefix
+
+=item socket
+
+Path to a Unix domain socket to connect to. Use this for server mode
+when the server is listening on a Unix socket (common for nginx proxying
+or benchmark scenarios).
+
+    socket => '/tmp/pagi.sock'
+    socket => '/run/myapp/app.sock'
 
 =item headers
 
