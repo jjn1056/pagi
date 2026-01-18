@@ -195,6 +195,64 @@ rules are in place. For production, consider a reverse proxy (nginx, etc.)
 
 Bind port. Default: 5000
 
+=item socket => $path
+
+Unix domain socket path for listening instead of TCP host:port.
+
+When specified, the server listens on a Unix domain socket at the given path.
+This is B<mutually exclusive> with C<host> and C<port> options - specifying
+both will cause an error.
+
+Unix sockets are useful for:
+
+=over 4
+
+=item * Communicating with a reverse proxy (nginx, etc.) on the same machine
+
+=item * Benchmark scenarios (TechEmpower FrameworkBenchmarks)
+
+=item * Reduced networking overhead for local connections
+
+=back
+
+Example:
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+Example nginx configuration:
+
+    upstream pagi {
+        server unix:/tmp/pagi.sock;
+    }
+
+    server {
+        listen 80;
+        location / {
+            proxy_pass http://pagi;
+        }
+    }
+
+B<Notes:>
+
+=over 4
+
+=item * The socket file is automatically created when the server starts
+
+=item * Any existing socket file at the path is removed before binding
+
+=item * The socket file is cleaned up on graceful shutdown
+
+=item * Works with both single-worker and multi-worker modes
+
+=item * C<reuseport> option is ignored when using Unix sockets
+
+=back
+
+B<CLI:> C<--socket /tmp/pagi.sock>
+
 =item ssl => \%config
 
 Optional TLS/HTTPS configuration. B<Requires additional modules> - see
@@ -809,6 +867,13 @@ shutdown is complete.
     my $port = $server->port;
 
 Returns the bound port number. Useful when port => 0 is used.
+
+=head2 socket_path
+
+    my $path = $server->socket_path;
+
+Returns the Unix socket path if the server was configured with C<socket>,
+or undef if using TCP host:port.
 
 =head2 is_running
 
