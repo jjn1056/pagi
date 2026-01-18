@@ -7,7 +7,7 @@ use Cookie::Baker qw(crush_cookie);
 use MIME::Base64 qw(decode_base64);
 use Future::AsyncAwait;
 use JSON::MaybeXS qw(decode_json);
-use Carp qw(croak);
+use Carp qw(croak carp);
 use PAGI::Request::MultiPartHandler;
 use PAGI::Request::Upload;
 use PAGI::Request::Negotiate;
@@ -169,15 +169,29 @@ sub raw_query_params {
 }
 
 # Shortcut for single query param
-sub query {
+sub query_param {
     my ($self, $name, %opts) = @_;
     return $self->query_params(%opts)->get($name);
 }
 
+# DEPRECATED: Alias with warning
+sub query {
+    my $self = shift;
+    carp "query() is deprecated; use query_param() instead";
+    return $self->query_param(@_);
+}
+
 # Raw single query param
-sub raw_query {
+sub raw_query_param {
     my ($self, $name) = @_;
-    return $self->query($name, raw => 1);
+    return $self->query_param($name, raw => 1);
+}
+
+# DEPRECATED: Alias with warning
+sub raw_query {
+    my $self = shift;
+    carp "raw_query() is deprecated; use raw_query_param() instead";
+    return $self->raw_query_param(@_);
 }
 
 # All cookies as hashref (cached in scope)
@@ -445,7 +459,7 @@ async sub json {
 
 # Parse URL-encoded form body (async, returns Hash::MultiValue, cached in scope)
 # Options: strict => 1 (croak on invalid UTF-8), raw => 1 (skip UTF-8 decoding)
-async sub form {
+async sub form_params {
     my ($self, %opts) = @_;
     my $strict = delete $opts{strict} // 0;
     my $raw    = delete $opts{raw}    // 0;
@@ -455,7 +469,7 @@ async sub form {
     for my $key (qw(max_field_size max_file_size spool_threshold max_files max_fields temp_dir)) {
         $multipart_opts{$key} = delete $opts{$key} if exists $opts{$key};
     }
-    croak("Unknown options to form: " . join(', ', keys %opts)) if %opts;
+    croak("Unknown options to form_params: " . join(', ', keys %opts)) if %opts;
 
     my $cache_key = $raw ? 'pagi.request.form.raw' : ($strict ? 'pagi.request.form.strict' : 'pagi.request.form');
 
@@ -495,10 +509,37 @@ async sub form {
     return $self->{scope}{$cache_key};
 }
 
+# DEPRECATED: Alias with warning
+async sub form {
+    my $self = shift;
+    carp "form() is deprecated; use form_params() instead";
+    return await $self->form_params(@_);
+}
+
+# Singular accessor for form params
+async sub form_param {
+    my ($self, $name, %opts) = @_;
+    my $form = await $self->form_params(%opts);
+    return $form->get($name);
+}
+
 # Raw form params (no UTF-8 decoding)
-async sub raw_form {
+async sub raw_form_params {
     my ($self, %opts) = @_;
-    return await $self->form(%opts, raw => 1);
+    return await $self->form_params(%opts, raw => 1);
+}
+
+# DEPRECATED: Alias with warning
+async sub raw_form {
+    my $self = shift;
+    carp "raw_form() is deprecated; use raw_form_params() instead";
+    return await $self->raw_form_params(@_);
+}
+
+# Raw singular accessor
+async sub raw_form_param {
+    my ($self, $name) = @_;
+    return await $self->form_param($name, raw => 1);
 }
 
 # Parse multipart form (internal, cached in scope)
@@ -589,7 +630,7 @@ PAGI::Request - Convenience wrapper for PAGI request scope
         my $host   = $req->host;          # example.com
 
         # Query parameters (Hash::MultiValue)
-        my $page = $req->query('page');
+        my $page = $req->query_param('page');
         my @tags = $req->query_params->get_all('tags');
 
         # Headers
@@ -600,8 +641,9 @@ PAGI::Request - Convenience wrapper for PAGI request scope
         my $session = $req->cookie('session');
 
         # Body parsing (async)
-        my $json = await $req->json;      # Parse JSON body
-        my $form = await $req->form;      # Parse form data
+        my $json = await $req->json;           # Parse JSON body
+        my $form = await $req->form_params;    # Parse form data (Hash::MultiValue)
+        my $name = await $req->form_param('name');  # Single form value
 
         # File uploads
         my $avatar = await $req->upload('avatar');
@@ -780,14 +822,21 @@ Default: false.
 
 =back
 
-=head2 query
+=head2 query_param
 
-    my $value = $req->query('page');
-    my $value = $req->query('page', strict => 1);
-    my $value = $req->query('page', raw => 1);
+    my $value = $req->query_param('page');
+    my $value = $req->query_param('page', strict => 1);
+    my $value = $req->query_param('page', raw => 1);
 
 Shortcut for C<< $req->query_params(%opts)->get($name) >>. Accepts the same
 C<strict> and C<raw> options as C<query_params>.
+
+=head2 raw_query_param
+
+    my $value = $req->raw_query_param('page');
+
+Shortcut for C<< $req->query_param($name, raw => 1) >>. Returns the raw bytes
+without UTF-8 decoding.
 
 =head1 PATH PARAMETERS
 
@@ -822,7 +871,7 @@ Get a single path parameter by name.
     # URL: /users/42
     my $id = $req->path_param('id');  # '42'
 
-B<Strict by default:> Unlike C<query()>, this method dies if the requested
+B<Strict by default:> Unlike C<query_param()>, this method dies if the requested
 parameter does not exist. This catches typos early since path parameters are
 defined by the route - if the route matched, the expected parameters must
 exist.
@@ -905,7 +954,7 @@ B<Options:>
 =back
 
 B<Important:> Body streaming is mutually exclusive with buffered body methods
-(C<body>, C<text>, C<json>, C<form>). Once you start streaming, you cannot use
+(C<body>, C<text>, C<json>, C<form_params>). Once you start streaming, you cannot use
 those methods, and vice versa.
 
 Example:
@@ -936,11 +985,45 @@ Read body as UTF-8 decoded text.
 
 Parse body as JSON. Dies on parse error.
 
-=head2 form
+=head2 form_params
 
-    my $form = await $req->form;  # Hash::MultiValue
+    my $form = await $req->form_params;  # Hash::MultiValue
+    my $form = await $req->form_params(strict => 1);  # Die on invalid UTF-8
+    my $form = await $req->form_params(raw => 1);     # Skip UTF-8 decoding
 
-Parse URL-encoded or multipart form data.
+Parse URL-encoded or multipart form data, returning a L<Hash::MultiValue>.
+
+B<Options:>
+
+=over 4
+
+=item * C<strict> - If true, die on invalid UTF-8 sequences. Default: false.
+
+=item * C<raw> - If true, skip UTF-8 decoding entirely. Default: false.
+
+=back
+
+=head2 form_param
+
+    my $value = await $req->form_param('name');
+    my $value = await $req->form_param('name', strict => 1);
+
+Shortcut for C<< (await $req->form_params(%opts))->get($name) >>. Accepts the
+same C<strict> and C<raw> options as C<form_params>.
+
+=head2 raw_form_params
+
+    my $form = await $req->raw_form_params;
+
+Shortcut for C<< $req->form_params(raw => 1) >>. Returns form data without
+UTF-8 decoding.
+
+=head2 raw_form_param
+
+    my $value = await $req->raw_form_param('name');
+
+Shortcut for C<< $req->form_param($name, raw => 1) >>. Returns a single form
+value without UTF-8 decoding.
 
 =head1 UPLOAD METHODS (ASYNC)
 

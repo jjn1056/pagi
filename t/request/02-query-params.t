@@ -25,7 +25,7 @@ subtest 'query_params returns Hash::MultiValue' => sub {
     is(\@foos, ['bar', 'second'], 'get_all returns all values');
 };
 
-subtest 'query() shortcut method' => sub {
+subtest 'query_param() shortcut method' => sub {
     my $scope = {
         type         => 'http',
         method       => 'GET',
@@ -35,9 +35,9 @@ subtest 'query() shortcut method' => sub {
 
     my $req = PAGI::Request->new($scope);
 
-    is($req->query('page'), '5', 'query returns single value');
-    is($req->query('tags'), 'async', 'query returns last for multi');
-    is($req->query('missing'), undef, 'query returns undef for missing');
+    is($req->query_param('page'), '5', 'query returns single value');
+    is($req->query_param('tags'), 'async', 'query returns last for multi');
+    is($req->query_param('missing'), undef, 'query returns undef for missing');
 };
 
 subtest 'percent-decoding' => sub {
@@ -50,8 +50,8 @@ subtest 'percent-decoding' => sub {
 
     my $req = PAGI::Request->new($scope);
 
-    is($req->query('name'), 'John Doe', 'spaces decoded');
-    is($req->query('emoji'), "\x{1F525}", 'UTF-8 emoji decoded');
+    is($req->query_param('name'), 'John Doe', 'spaces decoded');
+    is($req->query_param('emoji'), "\x{1F525}", 'UTF-8 emoji decoded');
 };
 
 subtest 'empty and missing query string' => sub {
@@ -64,7 +64,7 @@ subtest 'empty and missing query string' => sub {
     isa_ok $req1->query_params, 'Hash::MultiValue';
     isa_ok $req2->query_params, 'Hash::MultiValue';
 
-    is($req1->query('foo'), undef, 'missing key returns undef');
+    is($req1->query_param('foo'), undef, 'missing key returns undef');
 };
 
 done_testing;

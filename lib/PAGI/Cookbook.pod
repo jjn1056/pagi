@@ -1079,7 +1079,7 @@ See C<examples/background-tasks/> for complete working examples.
       my $res = PAGI::Response->new($scope, $send);
 
       if ($req->method eq 'POST') {
-          my $form = await $req->form;
+          my $form = await $req->form_params;
           my $username = $form->{username};
           my $password = $form->{password};
 

@@ -88,9 +88,9 @@ subtest 'path_param does not include query params' => sub {
         'path_param does not fall back to query params'
     );
 
-    # Query params should be accessed via $req->query('foo')
-    is($req->query('foo'), 'bar', 'query() returns query param');
-    is($req->query('baz'), 'qux', 'query() returns another query param');
+    # Query params should be accessed via $req->query_param('foo')
+    is($req->query_param('foo'), 'bar', 'query() returns query param');
+    is($req->query_param('baz'), 'qux', 'query() returns another query param');
 };
 
 subtest 'path_param_strict mode (class config)' => sub {

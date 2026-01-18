@@ -55,7 +55,7 @@ my $app = async sub {
 async sub _handle_submit {
     my ($req, $send) = @_;
 
-    my $form = await $req->form;
+    my $form = await $req->form_params;
     my @errors;
 
     # Validate required fields
