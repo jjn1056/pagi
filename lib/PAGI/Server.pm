@@ -1148,9 +1148,28 @@ sub _init {
     my ($self, $params) = @_;
 
     $self->{app}              = delete $params->{app} or die "app is required";
+
+    # Track if host/port were explicitly provided (before deleting)
+    my $explicit_host = exists $params->{host};
+    my $explicit_port = exists $params->{port};
+
     $self->{host}             = delete $params->{host} // '127.0.0.1';
     $self->{port}             = delete $params->{port} // 5000;
+    $self->{socket}           = delete $params->{socket};  # Unix socket path
     $self->{ssl}              = delete $params->{ssl};
+
+    # Validate socket option is mutually exclusive with host/port
+    if ($self->{socket}) {
+        if ($explicit_host) {
+            die "Cannot specify both 'socket' and 'host' options\n";
+        }
+        if ($explicit_port) {
+            die "Cannot specify both 'socket' and 'port' options\n";
+        }
+        # Clear host/port when using socket
+        $self->{host} = undef;
+        $self->{port} = undef;
+    }
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
 
     # Validate SSL certificate files at startup (fail fast)
