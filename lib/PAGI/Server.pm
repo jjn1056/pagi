@@ -2445,6 +2445,12 @@ sub port {
     return $self->{bound_port} // $self->{port};
 }
 
+sub socket_path {
+    my ($self) = @_;
+
+    return $self->{socket};
+}
+
 sub is_running {
     my ($self) = @_;
 

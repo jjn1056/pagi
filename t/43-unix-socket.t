@@ -23,6 +23,7 @@ subtest 'socket option is accepted' => sub {
     );
 
     is($server->{socket}, $socket_path, 'socket path is stored');
+    is($server->socket_path, $socket_path, 'socket_path accessor returns path');
     ok(!defined $server->{host}, 'host is undef when socket is set');
     ok(!defined $server->{port}, 'port is undef when socket is set');
 
