@@ -138,6 +138,15 @@ default> for development. For remote access:
 
 Bind port (default: 5000)
 
+=item B<--socket> PATH
+
+Unix socket path. When specified, the server listens on a Unix domain socket
+instead of TCP host:port. Mutually exclusive with C<--host> and C<--port>.
+
+Useful for reverse proxy setups (nginx) or benchmark scenarios.
+
+    pagi-server --socket /tmp/pagi.sock ./app.pl
+
 =item B<-s>, B<--server> CLASS
 
 Server class to use (default: PAGI::Server). Reserved for future use

@@ -175,6 +175,7 @@ are collected for pass-through to the server.
     -M MODULE           Load MODULE before -e (repeatable, like perl -M)
     -o, --host HOST     Bind address (default: 127.0.0.1)
     -p, --port PORT     Bind port (default: 5000)
+    --socket PATH       Unix socket path (instead of host:port)
     -s, --server CLASS  Server class (default: PAGI::Server)
     -E, --env MODE      Environment mode (development, production, none)
     -I, --lib PATH      Add PATH to @INC (repeatable)
@@ -232,6 +233,7 @@ sub parse_options {
         # Network
         'o|host=s'            => \$opts{host},
         'p|port=i'            => \$opts{port},
+        'socket=s'            => \$opts{socket},
 
         # Server selection (future: pluggable servers)
         's|server=s'          => \$opts{server},
@@ -274,6 +276,7 @@ sub parse_options {
     # Apply parsed options
     $self->{host}       = $opts{host}       if defined $opts{host};
     $self->{port}       = $opts{port}       if defined $opts{port};
+    $self->{socket}     = $opts{socket}     if defined $opts{socket};
     $self->{server}     = $opts{server}     if defined $opts{server};
     $self->{env}        = $opts{env}        if defined $opts{env};
     $self->{loop}       = $opts{loop}       if defined $opts{loop};
@@ -506,10 +509,18 @@ sub load_server {
     # else: development mode uses server default (STDERR)
 
     # Build server
+    # When using Unix socket, don't pass host/port
+    my %network_opts;
+    if ($self->{socket}) {
+        $network_opts{socket} = $self->{socket};
+    } else {
+        $network_opts{host} = $self->{host} // '127.0.0.1';
+        $network_opts{port} = $self->{port} // 5000;
+    }
+
     return $server_class->new(
         app        => $self->{app},
-        host       => $self->{host} // '127.0.0.1',
-        port       => $self->{port} // 5000,
+        %network_opts,
         quiet      => $self->{quiet} // 0,
         ($self->{loop} ? (loop_type => $self->{loop}) : ()),
         (defined $access_log || $disable_log
@@ -769,6 +780,7 @@ Common Options:
     -a, --app FILE      Load app from file (legacy option)
     -o, --host HOST     Bind address (default: 127.0.0.1)
     -p, --port PORT     Bind port (default: 5000)
+    --socket PATH       Unix socket path (instead of host:port)
     -s, --server CLASS  Server class (default: PAGI::Server)
     -E, --env MODE      Environment mode (development, production, none)
     -l, --loop BACKEND  Event loop backend (EV, Epoll, UV, Poll)
