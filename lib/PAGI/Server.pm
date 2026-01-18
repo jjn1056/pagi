@@ -1501,43 +1501,61 @@ async sub _listen_singleworker {
     # Build listener options
     my %listen_opts = (
         queuesize => $self->{listener_backlog},
-        addr => {
+    );
+
+    if ($self->{socket}) {
+        # Unix socket mode
+        # Remove stale socket file if it exists
+        unlink $self->{socket} if -e $self->{socket};
+
+        $listen_opts{addr} = {
+            family   => 'unix',
+            socktype => 'stream',
+            path     => $self->{socket},
+        };
+    } else {
+        # TCP mode
+        $listen_opts{addr} = {
             family   => 'inet',
             socktype => 'stream',
             ip       => $self->{host},
             port     => $self->{port},
-        },
-    );
+        };
+    }
 
-    # Add SSL options if configured
+    # Add SSL options if configured (not supported with Unix sockets)
     if (my $ssl = $self->{ssl}) {
-        $self->_check_tls_available;
-        $listen_opts{extensions} = ['SSL'];
-        $listen_opts{SSL_server} = 1;
-        $listen_opts{SSL_cert_file} = $ssl->{cert_file} if $ssl->{cert_file};
-        $listen_opts{SSL_key_file} = $ssl->{key_file} if $ssl->{key_file};
-
-        # TLS hardening: minimum version TLS 1.2 (configurable)
-        $listen_opts{SSL_version} = $ssl->{min_version} // 'TLSv1_2';
-
-        # TLS hardening: secure cipher suites (configurable)
-        $listen_opts{SSL_cipher_list} = $ssl->{cipher_list} //
-            'ECDHE+AESGCM:DHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA';
-
-        # Client certificate verification
-        if ($ssl->{verify_client}) {
-            # SSL_VERIFY_PEER (0x01) | SSL_VERIFY_FAIL_IF_NO_PEER_CERT (0x02)
-            $listen_opts{SSL_verify_mode} = 0x03;
-            $listen_opts{SSL_ca_file} = $ssl->{ca_file} if $ssl->{ca_file};
+        if ($self->{socket}) {
+            $self->_log(warn => "TLS not supported with Unix sockets; use a reverse proxy for TLS termination");
         } else {
-            $listen_opts{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
+            $self->_check_tls_available;
+            $listen_opts{extensions} = ['SSL'];
+            $listen_opts{SSL_server} = 1;
+            $listen_opts{SSL_cert_file} = $ssl->{cert_file} if $ssl->{cert_file};
+            $listen_opts{SSL_key_file} = $ssl->{key_file} if $ssl->{key_file};
+
+            # TLS hardening: minimum version TLS 1.2 (configurable)
+            $listen_opts{SSL_version} = $ssl->{min_version} // 'TLSv1_2';
+
+            # TLS hardening: secure cipher suites (configurable)
+            $listen_opts{SSL_cipher_list} = $ssl->{cipher_list} //
+                'ECDHE+AESGCM:DHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA';
+
+            # Client certificate verification
+            if ($ssl->{verify_client}) {
+                # SSL_VERIFY_PEER (0x01) | SSL_VERIFY_FAIL_IF_NO_PEER_CERT (0x02)
+                $listen_opts{SSL_verify_mode} = 0x03;
+                $listen_opts{SSL_ca_file} = $ssl->{ca_file} if $ssl->{ca_file};
+            } else {
+                $listen_opts{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
+            }
+
+            # Mark that TLS is enabled
+            $self->{tls_enabled} = 1;
+
+            # Auto-add tls extension when SSL is configured
+            $self->{extensions}{tls} = {} unless exists $self->{extensions}{tls};
         }
-
-        # Mark that TLS is enabled
-        $self->{tls_enabled} = 1;
-
-        # Auto-add tls extension when SSL is configured
-        $self->{extensions}{tls} = {} unless exists $self->{extensions}{tls};
     }
 
     # Start listening
@@ -1560,9 +1578,11 @@ async sub _listen_singleworker {
         $self->_log(debug => "Could not configure on_accept_error (likely SSL listener): $@");
     }
 
-    # Store the actual bound port from the listener's read handle
+    # Store the actual bound port from the listener's read handle (TCP only)
     my $socket = $listener->read_handle;
-    $self->{bound_port} = $socket->sockport if $socket && $socket->can('sockport');
+    if (!$self->{socket} && $socket && $socket->can('sockport')) {
+        $self->{bound_port} = $socket->sockport;
+    }
     $self->{running} = 1;
 
     # Set up signal handlers for graceful shutdown (single-worker mode)
@@ -1609,7 +1629,11 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, tls: $tls_status, future_xs: $future_xs_status)");
+    if ($self->{socket}) {
+        $self->_log(info => "PAGI Server listening on unix:$self->{socket} (loop: $loop_class, max_conn: $max_conn)");
+    } else {
+        $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, tls: $tls_status, future_xs: $future_xs_status)");
+    }
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -2307,6 +2331,11 @@ async sub shutdown {
     if ($self->{listener}) {
         $self->remove_child($self->{listener});
         $self->{listener} = undef;
+    }
+
+    # Clean up Unix socket file
+    if ($self->{socket} && -e $self->{socket}) {
+        unlink $self->{socket};
     }
 
     # Wait for active connections to drain (graceful shutdown)
