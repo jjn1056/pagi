@@ -175,7 +175,6 @@ are collected for pass-through to the server.
     -M MODULE           Load MODULE before -e (repeatable, like perl -M)
     -o, --host HOST     Bind address (default: 127.0.0.1)
     -p, --port PORT     Bind port (default: 5000)
-    --socket PATH       Unix socket path (instead of host:port)
     -s, --server CLASS  Server class (default: PAGI::Server)
     -E, --env MODE      Environment mode (development, production, none)
     -I, --lib PATH      Add PATH to @INC (repeatable)
@@ -200,6 +199,7 @@ Example with C<-e> and C<-M>:
 All unrecognized options starting with C<-> are passed to the server.
 For PAGI::Server, these include:
 
+    --socket            Unix socket path (instead of host:port)
     -w, --workers       Number of worker processes
     --reuseport         Enable SO_REUSEPORT mode
     --ssl-cert, --ssl-key  TLS configuration
@@ -233,7 +233,6 @@ sub parse_options {
         # Network
         'o|host=s'            => \$opts{host},
         'p|port=i'            => \$opts{port},
-        'socket=s'            => \$opts{socket},
 
         # Server selection (future: pluggable servers)
         's|server=s'          => \$opts{server},
@@ -276,7 +275,6 @@ sub parse_options {
     # Apply parsed options
     $self->{host}       = $opts{host}       if defined $opts{host};
     $self->{port}       = $opts{port}       if defined $opts{port};
-    $self->{socket}     = $opts{socket}     if defined $opts{socket};
     $self->{server}     = $opts{server}     if defined $opts{server};
     $self->{env}        = $opts{env}        if defined $opts{env};
     $self->{loop}       = $opts{loop}       if defined $opts{loop};
@@ -509,18 +507,10 @@ sub load_server {
     # else: development mode uses server default (STDERR)
 
     # Build server
-    # When using Unix socket, don't pass host/port
-    my %network_opts;
-    if ($self->{socket}) {
-        $network_opts{socket} = $self->{socket};
-    } else {
-        $network_opts{host} = $self->{host} // '127.0.0.1';
-        $network_opts{port} = $self->{port} // 5000;
-    }
-
     return $server_class->new(
         app        => $self->{app},
-        %network_opts,
+        host       => $self->{host} // '127.0.0.1',
+        port       => $self->{port} // 5000,
         quiet      => $self->{quiet} // 0,
         ($self->{loop} ? (loop_type => $self->{loop}) : ()),
         (defined $access_log || $disable_log
@@ -538,6 +528,9 @@ sub _parse_server_options {
     if ($server_class eq 'PAGI::Server') {
         GetOptionsFromArray(
             \@args,
+            # Network (Unix socket)
+            'socket=s'              => \$opts{socket},
+
             # Workers/scaling
             'w|workers=i'           => \$opts{workers},
             'reuseport'             => \$opts{reuseport},
@@ -780,7 +773,6 @@ Common Options:
     -a, --app FILE      Load app from file (legacy option)
     -o, --host HOST     Bind address (default: 127.0.0.1)
     -p, --port PORT     Bind port (default: 5000)
-    --socket PATH       Unix socket path (instead of host:port)
     -s, --server CLASS  Server class (default: PAGI::Server)
     -E, --env MODE      Environment mode (development, production, none)
     -l, --loop BACKEND  Event loop backend (EV, Epoll, UV, Poll)
@@ -796,6 +788,7 @@ Common Options:
     --help              Show this help
 
 PAGI::Server Options (pass-through):
+    --socket PATH       Unix socket path (instead of host:port)
     -w, --workers NUM   Number of worker processes (default: 1)
     --ssl-cert FILE     SSL certificate file
     --ssl-key FILE      SSL private key file
