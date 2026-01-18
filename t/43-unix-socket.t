@@ -144,4 +144,102 @@ subtest 'server listens on Unix socket (single worker)' => sub {
     ok(!-e $socket_path, 'Socket file cleaned up after shutdown');
 };
 
+subtest 'server listens on Unix socket (multi-worker)' => sub {
+    use POSIX ':sys_wait_h';
+
+    my $socket_path = tmpnam() . '.sock';
+    my $resp_file = "/tmp/pagi_mw_test_response_$$";
+
+    # Fork server process
+    my $server_pid = fork();
+    die "Fork failed: $!" unless defined $server_pid;
+
+    if ($server_pid == 0) {
+        # Child: run the server
+        my $app = async sub {
+            my ($scope, $receive, $send) = @_;
+            if ($scope->{type} eq 'lifespan') {
+                while (1) {
+                    my $event = await $receive->();
+                    if ($event->{type} eq 'lifespan.startup') {
+                        await $send->({ type => 'lifespan.startup.complete' });
+                    } elsif ($event->{type} eq 'lifespan.shutdown') {
+                        await $send->({ type => 'lifespan.shutdown.complete' });
+                        last;
+                    }
+                }
+                return;
+            }
+            await $send->({
+                type    => 'http.response.start',
+                status  => 200,
+                headers => [['content-type', 'text/plain']],
+            });
+            await $send->({
+                type => 'http.response.body',
+                body => 'Hello Multi-Worker Unix Socket',
+                more => 0,
+            });
+        };
+
+        my $child_loop = IO::Async::Loop->new;
+        my $server = PAGI::Server->new(
+            app     => $app,
+            socket  => $socket_path,
+            workers => 2,
+            quiet   => 1,
+        );
+        $child_loop->add($server);
+        $server->listen->get;
+        $child_loop->run;
+        exit(0);
+    }
+
+    # Parent: wait for server to start, then test
+    sleep(1);
+
+    # Verify socket file exists
+    ok(-S $socket_path, 'Socket file exists');
+
+    # Make a request to the server
+    my $response = '';
+    my $client = IO::Socket::UNIX->new(Peer => $socket_path);
+    if ($client) {
+        print $client "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+        while (<$client>) { $response .= $_; }
+        close $client;
+    }
+
+    like($response, qr/200 OK/, 'Got 200 response');
+    like($response, qr/Hello Multi-Worker Unix Socket/, 'Got expected body');
+
+    # Send SIGTERM to shut down the server
+    kill 'TERM', $server_pid;
+
+    # Wait for termination (with timeout)
+    my $terminated = 0;
+    for my $i (1..5) {
+        my $result = waitpid($server_pid, WNOHANG);
+        if ($result > 0) {
+            $terminated = 1;
+            last;
+        }
+        sleep(1);
+    }
+
+    ok($terminated, 'Server terminated on SIGTERM within timeout');
+
+    # Clean up if not terminated
+    unless ($terminated) {
+        kill 'KILL', $server_pid;
+        waitpid($server_pid, 0);
+    }
+
+    # Socket should be cleaned up
+    ok(!-e $socket_path, 'Socket file cleaned up after shutdown');
+
+    # Clean up any leftover temp files
+    unlink $resp_file if -e $resp_file;
+};
+
 done_testing;
