@@ -15,9 +15,76 @@ BEGIN {
 use strict;
 use warnings;
 
+use Getopt::Long qw(GetOptionsFromArray :config pass_through no_auto_abbrev);
 use PAGI::Runner;
 
-PAGI::Runner->run(@ARGV);
+# Parse PAGI::Server-specific options before passing to Runner
+# This keeps Runner server-agnostic
+my %server_opts;
+
+GetOptionsFromArray(
+    \@ARGV,
+    # Network (Unix socket)
+    'socket=s'              => \$server_opts{socket},
+
+    # Workers/scaling
+    'w|workers=i'           => \$server_opts{workers},
+    'reuseport'             => \$server_opts{reuseport},
+    'max-requests=i'        => \$server_opts{max_requests},
+    'max-connections=i'     => \$server_opts{max_connections},
+
+    # TLS
+    'ssl-cert=s'            => \$server_opts{_ssl_cert},
+    'ssl-key=s'             => \$server_opts{_ssl_key},
+
+    # Timeouts
+    'timeout=i'             => \$server_opts{timeout},
+    'shutdown-timeout=i'    => \$server_opts{shutdown_timeout},
+    'request-timeout=i'     => \$server_opts{request_timeout},
+    'ws-idle-timeout=i'     => \$server_opts{ws_idle_timeout},
+    'sse-idle-timeout=i'    => \$server_opts{sse_idle_timeout},
+
+    # Limits
+    'max-body-size=i'       => \$server_opts{max_body_size},
+    'max-header-size=i'     => \$server_opts{max_header_size},
+    'max-header-count=i'    => \$server_opts{max_header_count},
+    'max-receive-queue=i'   => \$server_opts{max_receive_queue},
+    'max-ws-frame-size=i'   => \$server_opts{max_ws_frame_size},
+    'b|listener-backlog=i'  => \$server_opts{listener_backlog},
+
+    # Misc
+    'log-level=s'           => \$server_opts{log_level},
+    'sync-file-threshold=i' => \$server_opts{sync_file_threshold},
+);
+
+# Build ssl hash if certs provided
+if ($server_opts{_ssl_cert} || $server_opts{_ssl_key}) {
+    die "--ssl-cert and --ssl-key must be specified together\n"
+        unless $server_opts{_ssl_cert} && $server_opts{_ssl_key};
+
+    die "SSL cert not found: $server_opts{_ssl_cert}\n"
+        unless -f $server_opts{_ssl_cert};
+    die "SSL key not found: $server_opts{_ssl_key}\n"
+        unless -f $server_opts{_ssl_key};
+
+    $server_opts{ssl} = {
+        cert_file => delete $server_opts{_ssl_cert},
+        key_file  => delete $server_opts{_ssl_key},
+    };
+}
+delete $server_opts{_ssl_cert};
+delete $server_opts{_ssl_key};
+
+# Handle workers (0 for single-process, >1 for multi-worker)
+if (defined $server_opts{workers}) {
+    $server_opts{workers} = $server_opts{workers} > 1 ? $server_opts{workers} : 0;
+}
+
+# Remove undefined options
+%server_opts = map { $_ => $server_opts{$_} } grep { defined $server_opts{$_} } keys %server_opts;
+
+# Pass server options to Runner
+PAGI::Runner->run(@ARGV, server_options => \%server_opts);
 
 __END__
 
@@ -138,15 +205,6 @@ default> for development. For remote access:
 
 Bind port (default: 5000)
 
-=item B<--socket> PATH
-
-Unix socket path. When specified, the server listens on a Unix domain socket
-instead of TCP host:port. Mutually exclusive with C<--host> and C<--port>.
-
-Useful for reverse proxy setups (nginx) or benchmark scenarios.
-
-    pagi-server --socket /tmp/pagi.sock ./app.pl
-
 =item B<-s>, B<--server> CLASS
 
 Server class to use (default: PAGI::Server). Reserved for future use
@@ -204,9 +262,18 @@ Show help.
 
 =head2 PAGI::Server Options
 
-These options are passed through to L<PAGI::Server>.
+These options are specific to L<PAGI::Server>.
 
 =over 4
+
+=item B<--socket> PATH
+
+Unix socket path. When specified, the server listens on a Unix domain socket
+instead of TCP host:port. Mutually exclusive with C<--host> and C<--port>.
+
+Useful for reverse proxy setups (nginx) or benchmark scenarios.
+
+    pagi-server --socket /tmp/pagi.sock ./app.pl
 
 =item B<-w>, B<--workers> NUM
 
@@ -344,6 +411,9 @@ Increase/decrease worker count (multi-worker mode only).
 
     # Using EV event loop
     pagi-server --loop EV ./app.pl
+
+    # Unix socket for nginx
+    pagi-server --socket /tmp/pagi.sock --workers 4 ./app.pl
 
 =head1 ENVIRONMENT
 

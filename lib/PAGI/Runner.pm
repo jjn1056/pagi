@@ -155,7 +155,7 @@ sub new {
         app               => undef,
         app_spec          => undef,
         app_args          => {},
-        server_options    => [],
+        server_options    => {},  # Hashref of server-specific options
         argv              => [],
     }, $class;
 }
@@ -194,24 +194,28 @@ Example with C<-e> and C<-M>:
 
     pagi-server -MPAGI::App::File -e 'PAGI::App::File->new(root => ".")->to_app'
 
-=head3 Server-Specific Options (passed through)
+=head3 Server-Specific Options
 
-All unrecognized options starting with C<-> are passed to the server.
-For PAGI::Server, these include:
+Server-specific options should be parsed by the server's CLI wrapper
+(e.g., C<bin/pagi-server>) and passed to Runner via the C<server_options>
+hashref parameter. This keeps Runner server-agnostic.
 
-    --socket            Unix socket path (instead of host:port)
-    -w, --workers       Number of worker processes
-    --reuseport         Enable SO_REUSEPORT mode
-    --ssl-cert, --ssl-key  TLS configuration
-    --max-requests, --max-connections, --max-body-size
-    --timeout, --log-level, etc.
-
-See L<PAGI::Server> for the full list of server-specific options.
+See L<PAGI::Server> for available options when using pagi-server.
 
 =cut
 
 sub parse_options {
     my ($self, @args) = @_;
+
+    # Check for server_options hashref passed from bin/pagi-server
+    # (server-specific options are parsed there, not here)
+    for my $i (0 .. $#args) {
+        if ($args[$i] eq 'server_options' && ref($args[$i + 1]) eq 'HASH') {
+            $self->{server_options} = $args[$i + 1];
+            splice @args, $i, 2;
+            last;
+        }
+    }
 
     # Pre-process cuddled options like -MModule or -e"code" → -M Module, -e "code"
     # This matches Plack::Runner behavior for perl-like flags
@@ -302,22 +306,8 @@ sub parse_options {
         $self->{app_spec} = $opts{app};
     }
 
-    # Separate remaining args: options for server vs app spec/args
-    # Need to keep option values with their options
-    my $i = 0;
-    while ($i < @args) {
-        my $arg = $args[$i];
-        if ($arg =~ /^-/) {
-            push @{$self->{server_options}}, $arg;
-            # If next arg is a value (doesn't start with - and isn't =), keep it with the option
-            if ($i + 1 < @args && $args[$i + 1] !~ /^-/ && $arg !~ /=/) {
-                push @{$self->{server_options}}, $args[++$i];
-            }
-        } else {
-            push @{$self->{argv}}, $arg;
-        }
-        $i++;
-    }
+    # Remaining args go to argv (app spec and app args)
+    push @{$self->{argv}}, @args;
 }
 
 =head2 mode
@@ -482,8 +472,8 @@ sub load_server {
         die "Cannot load server '$server_class': $@\n";
     }
 
-    # Parse server-specific options
-    my %server_opts = $self->_parse_server_options($server_class);
+    # Get server-specific options (passed from bin/pagi-server or similar)
+    my %server_opts = %{$self->{server_options} // {}};
 
     # Handle access log
     # Production mode disables logging by default for performance
@@ -517,77 +507,6 @@ sub load_server {
             ? (access_log => $access_log) : ()),
         %server_opts,
     );
-}
-
-sub _parse_server_options {
-    my ($self, $server_class) = @_;
-
-    my @args = @{$self->{server_options} // []};
-    my %opts;
-
-    if ($server_class eq 'PAGI::Server') {
-        GetOptionsFromArray(
-            \@args,
-            # Network (Unix socket)
-            'socket=s'              => \$opts{socket},
-
-            # Workers/scaling
-            'w|workers=i'           => \$opts{workers},
-            'reuseport'             => \$opts{reuseport},
-            'max-requests=i'        => \$opts{max_requests},
-            'max-connections=i'     => \$opts{max_connections},
-
-            # TLS
-            'ssl-cert=s'            => \$opts{_ssl_cert},
-            'ssl-key=s'             => \$opts{_ssl_key},
-
-            # Timeouts
-            'timeout=i'             => \$opts{timeout},
-            'shutdown-timeout=i'    => \$opts{shutdown_timeout},
-            'request-timeout=i'     => \$opts{request_timeout},
-            'ws-idle-timeout=i'     => \$opts{ws_idle_timeout},
-            'sse-idle-timeout=i'    => \$opts{sse_idle_timeout},
-
-            # Limits
-            'max-body-size=i'       => \$opts{max_body_size},
-            'max-header-size=i'     => \$opts{max_header_size},
-            'max-header-count=i'    => \$opts{max_header_count},
-            'max-receive-queue=i'   => \$opts{max_receive_queue},
-            'max-ws-frame-size=i'   => \$opts{max_ws_frame_size},
-            'b|listener-backlog=i'  => \$opts{listener_backlog},
-
-            # Misc
-            'log-level=s'           => \$opts{log_level},
-            'sync-file-threshold=i' => \$opts{sync_file_threshold},
-        );
-
-        # Build ssl hash if certs provided
-        # Note: TLS module availability is checked by the server, not here
-        if ($opts{_ssl_cert} || $opts{_ssl_key}) {
-            die "--ssl-cert and --ssl-key must be specified together\n"
-                unless $opts{_ssl_cert} && $opts{_ssl_key};
-
-            die "SSL cert not found: $opts{_ssl_cert}\n"
-                unless -f $opts{_ssl_cert};
-            die "SSL key not found: $opts{_ssl_key}\n"
-                unless -f $opts{_ssl_key};
-
-            $opts{ssl} = {
-                cert_file => delete $opts{_ssl_cert},
-                key_file  => delete $opts{_ssl_key},
-            };
-        }
-        delete $opts{_ssl_cert};
-        delete $opts{_ssl_key};
-
-        # Handle workers (0 for single-process, >1 for multi-worker)
-        if (defined $opts{workers}) {
-            $opts{workers} = $opts{workers} > 1 ? $opts{workers} : 0;
-        }
-    }
-
-    # Return only defined options
-    return map { $_ => $opts{$_} } grep { defined $opts{$_} } keys %opts;
 }
 
 =head2 run
@@ -768,7 +687,7 @@ sub _show_help {
     print <<'HELP';
 Usage: pagi-server [options] [app] [key=value ...]
 
-Common Options:
+Common Options (handled by Runner):
     -I, --lib PATH      Add PATH to @INC (repeatable, like perl -I)
     -a, --app FILE      Load app from file (legacy option)
     -o, --host HOST     Bind address (default: 127.0.0.1)
@@ -787,18 +706,6 @@ Common Options:
     -v, --version       Show version info
     --help              Show this help
 
-PAGI::Server Options (pass-through):
-    --socket PATH       Unix socket path (instead of host:port)
-    -w, --workers NUM   Number of worker processes (default: 1)
-    --ssl-cert FILE     SSL certificate file
-    --ssl-key FILE      SSL private key file
-    --reuseport         SO_REUSEPORT mode (reduces accept contention)
-    --max-requests NUM  Requests per worker before restart
-    --max-connections N Max concurrent connections (0=auto)
-    --max-body-size NUM Max request body size (default: 10MB)
-    --timeout NUM       Connection idle timeout in seconds
-    --log-level LEVEL   Log verbosity: debug, info, warn, error
-
 Environment Modes:
     development    Auto-enable Lint middleware (default if TTY)
     production     No auto-middleware (default if no TTY)
@@ -809,11 +716,8 @@ App can be:
     File path:      pagi-server ./app.pl
     Default:        pagi-server                (serves current directory)
 
-Examples:
-    pagi-server                                    # Serve current directory
-    pagi-server -E production ./app.pl            # Production mode
-    pagi-server -p 8080 --workers 4 ./myapp.pl    # Custom port + workers
-    pagi-server PAGI::App::Directory root=/tmp    # Serve /tmp
+Server-specific options are handled by the server CLI (e.g., pagi-server).
+See: perldoc pagi-server
 
 HELP
 }

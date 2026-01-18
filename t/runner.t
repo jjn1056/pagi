@@ -301,16 +301,17 @@ subtest 'integration: module-based app serves files' => sub {
 };
 
 # Test 19: SSL options validation (via server_options)
-subtest 'SSL options validation' => sub {
+subtest 'server_options hashref is passed through' => sub {
+    # Server options are now passed as a hashref from bin/pagi-server
     my $runner = PAGI::Runner->new;
-    $runner->{server_options} = ['--ssl-cert', '/nonexistent/cert.pem'];
-    $runner->prepare_app;  # Load default app
-
-    like(
-        dies { $runner->load_server },
-        qr/--ssl-cert and --ssl-key must be specified together/,
-        'dies without both SSL options'
+    $runner->parse_options(
+        'server_options', { workers => 4, reuseport => 1 },
+        'app.pl',
     );
+
+    is(ref($runner->{server_options}), 'HASH', 'server_options is a hashref');
+    is($runner->{server_options}{workers}, 4, 'workers option passed through');
+    is($runner->{server_options}{reuseport}, 1, 'reuseport option passed through');
 };
 
 # Test 20: help flag
@@ -437,23 +438,19 @@ subtest '-E flag parsing' => sub {
 };
 
 # Test 26: server options pass-through
-subtest 'server options pass-through' => sub {
+subtest 'runner keeps only its options' => sub {
+    # Server options are now parsed in bin/pagi-server, not Runner
+    # Runner should only see its own options
     my $runner = PAGI::Runner->new;
     $runner->parse_options(
         '-p', '8080',
-        '--workers', '4',
-        '--reuseport',
-        '--max-requests', '1000',
+        '-q',
         'app.pl',
     );
 
-    is($runner->{port}, 8080, 'runner option parsed');
-    # Server options should be in server_options (with their values)
-    my $server_opts = join(' ', @{$runner->{server_options}});
-    like($server_opts, qr/--workers/, '--workers in server_options');
-    like($server_opts, qr/4/, 'workers value in server_options');
-    like($server_opts, qr/--reuseport/, '--reuseport in server_options');
-    like($server_opts, qr/--max-requests/, '--max-requests in server_options');
+    is($runner->{port}, 8080, 'runner option -p parsed');
+    is($runner->{quiet}, 1, 'runner option -q parsed');
+    is(ref($runner->{server_options}), 'HASH', 'server_options is empty hashref');
 };
 
 # Test 27: --no-default-middleware flag
