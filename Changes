@@ -1,5 +1,28 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001015 - 2026-01-18
+  [New Features]
+  - Add query parameter parsing to PAGI::WebSocket: query_params(), query_param(),
+    raw_query_params(), raw_query_param() methods mirroring PAGI::Request API
+  - Add form_param($name, %opts) and raw_form_param($name) singular accessors
+    to PAGI::Request for fetching individual form values
+
+  [Deprecations]
+  - Rename PAGI::Request param methods for naming consistency (old names
+    deprecated with warnings):
+    - query() -> query_param()
+    - raw_query() -> raw_query_param()
+    - form() -> form_params()
+    - raw_form() -> raw_form_params()
+
+  [Improvements]
+  - Improve PAGI::Test::Response json() error diagnostics: now shows HTTP
+    status code, Content-Type header, and body preview when JSON parsing fails.
+    Uses croak for better stack traces pointing to test file location.
+  - Add $JSON_ERROR_BODY_LIMIT package variable to control body preview length
+    in json() error messages (default 1500 bytes)
+
+
 0.001014 - 2026-01-16
   [New Features]
   - Add Future::XS opt-in support for improved performance (~4% multi-worker)
