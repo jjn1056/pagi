@@ -2045,7 +2045,7 @@ L<PAGI::Request> parses HTTP requests and provides convenient accessors for head
 =head3 Query Parameters
 
   # Get single parameter
-  my $page = $req->query('page') // '1';
+  my $page = $req->query_param('page') // '1';
 
   # Get all parameters as Hash::MultiValue
   my $params = $req->query_params;
@@ -2060,8 +2060,11 @@ L<PAGI::Request> parses HTTP requests and provides convenient accessors for head
   my $data = await $req->json;
 
   # Parse URL-encoded form
-  my $form = await $req->form;
+  my $form = await $req->form_params;
   my $name = $form->get('name');
+
+  # Or get a single form value directly
+  my $email = await $req->form_param('email');
 
 Content-type predicates:
 

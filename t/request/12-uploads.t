@@ -86,7 +86,7 @@ subtest 'upload() shortcut for single file' => sub {
     is($missing, undef, 'missing upload returns undef');
 };
 
-subtest 'form() works with multipart' => sub {
+subtest 'form_params() works with multipart' => sub {
     my $boundary = '----Test';
     my $body = build_multipart($boundary,
         { name => 'name', data => 'John' },
@@ -102,7 +102,7 @@ subtest 'form() works with multipart' => sub {
     my $receive = mock_receive($body);
     my $req = PAGI::Request->new($scope, $receive);
 
-    my $form = (async sub { await $req->form })->()->get;
+    my $form = (async sub { await $req->form_params })->()->get;
 
     is($form->get('name'), 'John', 'form field from multipart');
     is($form->get('email'), 'john@example.com', 'another form field');

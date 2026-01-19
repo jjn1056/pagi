@@ -112,7 +112,7 @@ subtest 'path_param only returns path params, not query params' => sub {
 
     # With strict => 0, returns undef
     is($req->path_param('foo', strict => 0), undef, 'strict => 0 returns undef when no path params');
-    is($req->query('foo'), 'bar', 'query() returns query param');
+    is($req->query_param('foo'), 'bar', 'query() returns query param');
 
     # With route params in scope, path_param returns them
     $scope_with_query->{path_params} = { foo => 'route_value' };
@@ -125,7 +125,7 @@ subtest 'path_param only returns path params, not query params' => sub {
         'path_param dies for missing key (does not fall back to query)'
     );
     is($req->path_param('baz', strict => 0), undef, 'strict => 0 returns undef for missing');
-    is($req->query('baz'), 'qux', 'query() returns query param');
+    is($req->query_param('baz'), 'qux', 'query() returns query param');
 };
 
 done_testing;

@@ -41,7 +41,7 @@ subtest 'full request/response cycle with PAGI::Request' => sub {
             path         => $req->path,
             content_type => $req->content_type,
             is_json      => $req->is_json ? 1 : 0,
-            query        => $req->query('foo'),
+            query        => $req->query_param('foo'),
         };
 
         if ($req->is_post && $req->is_json) {

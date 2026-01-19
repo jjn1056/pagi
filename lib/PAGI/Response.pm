@@ -470,7 +470,7 @@ use L<PAGI::App::File> instead:
 
     async sub handle_contact ($req, $send) {
         my $res = PAGI::Response->new($scope, $send);
-        my $form = await $req->form;
+        my $form = await $req->form_params;
 
         my @errors;
         my $email = $form->get('email') // '';

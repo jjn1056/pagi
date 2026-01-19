@@ -19,7 +19,7 @@ sub mock_receive {
     };
 }
 
-subtest 'form parses urlencoded' => sub {
+subtest 'form_params parses urlencoded' => sub {
     my $body = 'name=John%20Doe&email=john%40example.com&tags=perl&tags=async';
     my $scope = {
         type    => 'http',
@@ -29,7 +29,7 @@ subtest 'form parses urlencoded' => sub {
     my $receive = mock_receive($body);
     my $req = PAGI::Request->new($scope, $receive);
 
-    my $form = (async sub { await $req->form })->()->get;
+    my $form = (async sub { await $req->form_params })->()->get;
 
     isa_ok $form, 'Hash::MultiValue';
     is($form->get('name'), 'John Doe', 'name decoded');
@@ -39,7 +39,7 @@ subtest 'form parses urlencoded' => sub {
     is(\@tags, ['perl', 'async'], 'multi-value works');
 };
 
-subtest 'form with UTF-8' => sub {
+subtest 'form_params with UTF-8' => sub {
     my $body = 'message=%E4%BD%A0%E5%A5%BD';  # 你好 URL-encoded
     my $scope = {
         type    => 'http',
@@ -49,12 +49,12 @@ subtest 'form with UTF-8' => sub {
     my $receive = mock_receive($body);
     my $req = PAGI::Request->new($scope, $receive);
 
-    my $form = (async sub { await $req->form })->()->get;
+    my $form = (async sub { await $req->form_params })->()->get;
 
     is($form->get('message'), '你好', 'UTF-8 decoded');
 };
 
-subtest 'form caches result' => sub {
+subtest 'form_params caches result' => sub {
     my $call_count = 0;
     my $scope = {
         type    => 'http',
@@ -67,13 +67,13 @@ subtest 'form caches result' => sub {
     };
     my $req = PAGI::Request->new($scope, $receive);
 
-    (async sub { await $req->form })->()->get;
-    (async sub { await $req->form })->()->get;
+    (async sub { await $req->form_params })->()->get;
+    (async sub { await $req->form_params })->()->get;
 
     is($call_count, 1, 'receive only called once');
 };
 
-subtest 'empty form' => sub {
+subtest 'empty form_params' => sub {
     my $scope = {
         type    => 'http',
         method  => 'POST',
@@ -82,7 +82,7 @@ subtest 'empty form' => sub {
     my $receive = mock_receive('');
     my $req = PAGI::Request->new($scope, $receive);
 
-    my $form = (async sub { await $req->form })->()->get;
+    my $form = (async sub { await $req->form_params })->()->get;
 
     isa_ok $form, 'Hash::MultiValue';
     is([$form->keys], [], 'empty form has no keys');
