@@ -2,6 +2,7 @@ package PAGI::WebSocket;
 use strict;
 use warnings;
 use Carp qw(croak);
+use Encode qw(decode FB_CROAK FB_DEFAULT LEAVE_SRC);
 use Hash::MultiValue;
 use Future::AsyncAwait;
 use Future;
@@ -80,6 +81,77 @@ sub path_param {
     my ($self, $name) = @_;
     my $params = $self->{scope}{path_params} // {};
     return $params->{$name};
+}
+
+# Internal: URL decode a string (handles + as space)
+sub _url_decode {
+    my ($str) = @_;
+    return '' unless defined $str;
+    $str =~ s/\+/ /g;
+    $str =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+    return $str;
+}
+
+# Internal: Decode UTF-8 with replacement or croak in strict mode
+sub _decode_utf8 {
+    my ($str, $strict) = @_;
+    return '' unless defined $str;
+    my $flag = $strict ? FB_CROAK : FB_DEFAULT;
+    $flag |= LEAVE_SRC;
+    return decode('UTF-8', $str, $flag);
+}
+
+# Query params as Hash::MultiValue (cached in scope)
+# Options: strict => 1 (croak on invalid UTF-8), raw => 1 (skip UTF-8 decoding)
+sub query_params {
+    my ($self, %opts) = @_;
+    my $strict = delete $opts{strict} // 0;
+    my $raw    = delete $opts{raw}    // 0;
+    croak("Unknown options to query_params: " . join(', ', keys %opts)) if %opts;
+
+    my $cache_key = $raw ? 'pagi.websocket.query.raw' : ($strict ? 'pagi.websocket.query.strict' : 'pagi.websocket.query');
+    return $self->{scope}{$cache_key} if $self->{scope}{$cache_key};
+
+    my $qs = $self->query_string;
+    my @pairs;
+
+    for my $part (split /[&;]/, $qs) {
+        next unless length $part;
+        my ($key, $val) = split /=/, $part, 2;
+        $key //= '';
+        $val //= '';
+
+        # URL decode (handles + as space)
+        my $key_decoded = _url_decode($key);
+        my $val_decoded = _url_decode($val);
+
+        # UTF-8 decode unless raw mode
+        my $key_final = $raw ? $key_decoded : _decode_utf8($key_decoded, $strict);
+        my $val_final = $raw ? $val_decoded : _decode_utf8($val_decoded, $strict);
+
+        push @pairs, $key_final, $val_final;
+    }
+
+    $self->{scope}{$cache_key} = Hash::MultiValue->new(@pairs);
+    return $self->{scope}{$cache_key};
+}
+
+# Raw query params (no UTF-8 decoding)
+sub raw_query_params {
+    my $self = shift;
+    return $self->query_params(raw => 1);
+}
+
+# Shortcut for single query param
+sub query {
+    my ($self, $name, %opts) = @_;
+    return $self->query_params(%opts)->get($name);
+}
+
+# Raw single query param
+sub raw_query {
+    my ($self, $name) = @_;
+    return $self->query($name, raw => 1);
 }
 
 # Single header lookup (case-insensitive, returns last value)
@@ -731,6 +803,49 @@ path by a router and stored in C<< $scope->{path_params} >>.
     my $params = $ws->path_params;  # { room => 'general', id => '42' }
 
 Returns hashref of all path parameters from scope.
+
+=head2 query_params
+
+    my $params = $ws->query_params;  # Hash::MultiValue
+    my $params = $ws->query_params(strict => 1);  # Die on invalid UTF-8
+    my $params = $ws->query_params(raw => 1);     # Skip UTF-8 decoding
+
+Get query parameters as L<Hash::MultiValue>.
+
+B<Options:>
+
+=over 4
+
+=item * C<strict> - If true, die on invalid UTF-8 sequences. Default: false
+(invalid bytes replaced with U+FFFD).
+
+=item * C<raw> - If true, skip UTF-8 decoding entirely and return raw bytes.
+Default: false.
+
+=back
+
+=head2 query
+
+    my $value = $ws->query('user');
+    my $value = $ws->query('page', strict => 1);
+    my $value = $ws->query('id', raw => 1);
+
+Shortcut for C<< $ws->query_params(%opts)->get($name) >>. Accepts the same
+C<strict> and C<raw> options as C<query_params>.
+
+=head2 raw_query_params
+
+    my $params = $ws->raw_query_params;
+
+Returns query params without UTF-8 decoding. Equivalent to
+C<< $ws->query_params(raw => 1) >>.
+
+=head2 raw_query
+
+    my $value = $ws->raw_query('user');
+
+Returns a single query param without UTF-8 decoding. Equivalent to
+C<< $ws->query($name, raw => 1) >>.
 
 =head1 LIFECYCLE METHODS
 
