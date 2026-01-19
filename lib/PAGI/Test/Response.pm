@@ -2,7 +2,10 @@ package PAGI::Test::Response;
 
 use strict;
 use warnings;
+use Carp 'croak';
 
+# Maximum bytes of response body to include in JSON decode error messages
+our $JSON_ERROR_BODY_LIMIT = 1500;
 
 sub new {
     my ($class, %args) = @_;
@@ -77,7 +80,28 @@ sub exception { shift->{exception} }
 sub json {
     my ($self) = @_;
     require JSON::MaybeXS;
-    return JSON::MaybeXS::decode_json($self->{body});
+
+    my $body = $self->{body};
+    my $data = eval { JSON::MaybeXS::decode_json($body) };
+
+    if (my $err = $@) {
+        my $status = $self->status;
+        my $ct = $self->content_type // '(none)';
+
+        # Truncate body preview if too long
+        my $preview = defined $body ? $body : '(undef)';
+        if (length($preview) > $JSON_ERROR_BODY_LIMIT) {
+            $preview = substr($preview, 0, $JSON_ERROR_BODY_LIMIT) . "\n... [truncated, " . length($body) . " bytes total]";
+        }
+
+        $err =~ s/\s+at \S+ line \d+\.?\s*$//;  # Strip file/line from JSON error
+
+        croak "Response body is not valid JSON (status=$status, content-type=$ct)\n"
+            . "Body: $preview\n"
+            . "JSON error: $err";
+    }
+
+    return $data;
 }
 
 # Convenience header shortcuts
@@ -205,7 +229,12 @@ from Content-Type header if present, otherwise assumes UTF-8.
     my $data = $res->json;
 
 Parses the response body as JSON and returns the data structure.
-Dies if the body is not valid JSON.
+Dies if the body is not valid JSON, with a diagnostic message that includes
+the HTTP status code, Content-Type header, and body content preview. This
+helps diagnose cases where the server returned an error page instead of JSON.
+
+The body preview is truncated to C<$JSON_ERROR_BODY_LIMIT> bytes (default 1500).
+See L</CONFIGURATION> to adjust this.
 
 =head1 CONVENIENCE METHODS
 
@@ -226,6 +255,18 @@ Shortcut for C<< $res->header('content-length') >>.
     my $url = $res->location;
 
 Shortcut for C<< $res->header('location') >>. Useful for redirects.
+
+=head1 CONFIGURATION
+
+=head2 $JSON_ERROR_BODY_LIMIT
+
+    $PAGI::Test::Response::JSON_ERROR_BODY_LIMIT = 3000;  # increase limit
+
+Controls the maximum number of bytes of response body to include in error
+messages when C<json()> fails to parse the response. Default is 1500 bytes.
+
+Set this higher if your error pages are verbose and you need more context
+to diagnose failures. Set it lower if the output is too noisy.
 
 =head1 SEE ALSO
 
