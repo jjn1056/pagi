@@ -4,6 +4,11 @@ use warnings;
 use lib 'lib';
 use Future::AsyncAwait;
 
+# Configure Future::IO for SSE->every() support
+# This must be done before using any Future::IO features
+use Future::IO;
+Future::IO->load_impl('IOAsync');
+
 use MyApp::Main;
 use PAGI::Lifespan;
 

@@ -471,6 +471,13 @@ async sub every {
         or croak "every() requires Future::IO to be installed. "
                . "Install it with: cpanm Future::IO";
 
+    # Future::IO must be configured with a backend
+    no warnings 'once';
+    croak "Future::IO backend not configured. Add to your app.pl:\n"
+        . "  use Future::IO;\n"
+        . "  Future::IO->load_impl('IOAsync');\n"
+        unless $Future::IO::IMPL;
+
     await $self->start unless $self->is_started;
 
     # Start background disconnect monitor
@@ -821,7 +828,30 @@ Periodically executes a callback with a delay between iterations.
 The loop continues until the connection closes or the callback throws.
 
 B<Requires Future::IO> - this method will C<croak> if Future::IO is not
-installed. Install with: C<cpanm Future::IO>
+installed and configured. You must configure Future::IO in your app before
+using C<every()>.
+
+B<For apps running under PAGI::Server> (using C<pagi-server>):
+
+    # app.pl
+    use Future::IO;
+    Future::IO->load_impl('IOAsync');
+
+    # ... rest of your app
+
+B<For apps running under other event loops>:
+
+    # If using IO::Async directly
+    use Future::IO;
+    Future::IO->load_impl('IOAsync');
+
+    # If using UV
+    use Future::IO;
+    Future::IO->load_impl('UV');
+
+    # Or let Future::IO choose the best available
+    use Future::IO;
+    Future::IO->load_best_impl;
 
 Parameters:
 
