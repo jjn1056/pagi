@@ -7,6 +7,7 @@ use Future::AsyncAwait;
 use Future;
 use JSON::MaybeXS ();
 use Scalar::Util qw(blessed);
+use Encode qw(decode FB_CROAK FB_DEFAULT LEAVE_SRC);
 
 
 sub new {
@@ -48,6 +49,78 @@ sub scope        { shift->{scope} }
 sub path         { shift->{scope}{path} // '/' }
 sub raw_path     { my $s = shift; $s->{scope}{raw_path} // $s->{scope}{path} // '/' }
 sub query_string { shift->{scope}{query_string} // '' }
+
+# URL decode helper (handles + as space per application/x-www-form-urlencoded)
+sub _url_decode {
+    my ($str) = @_;
+    return '' unless defined $str;
+    $str =~ s/\+/ /g;
+    $str =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+    return $str;
+}
+
+# UTF-8 decode helper with strict/lenient mode
+sub _decode_utf8 {
+    my ($str, $strict) = @_;
+    return '' unless defined $str;
+    my $flag = $strict ? FB_CROAK : FB_DEFAULT;
+    $flag |= LEAVE_SRC;
+    return decode('UTF-8', $str, $flag);
+}
+
+# Query params as Hash::MultiValue (cached in scope)
+# Options: strict => 1 (croak on invalid UTF-8), raw => 1 (skip UTF-8 decoding)
+sub query_params {
+    my ($self, %opts) = @_;
+    my $strict = delete $opts{strict} // 0;
+    my $raw    = delete $opts{raw}    // 0;
+    croak("Unknown options to query_params: " . join(', ', keys %opts)) if %opts;
+
+    my $cache_key = $raw ? 'pagi.sse.query.raw' : ($strict ? 'pagi.sse.query.strict' : 'pagi.sse.query');
+    return $self->{scope}{$cache_key} if $self->{scope}{$cache_key};
+
+    my $qs = $self->query_string;
+    my @pairs;
+
+    for my $part (split /[&;]/, $qs) {
+        next unless length $part;
+        my ($key, $val) = split /=/, $part, 2;
+        $key //= '';
+        $val //= '';
+
+        # URL decode (handles + as space)
+        my $key_decoded = _url_decode($key);
+        my $val_decoded = _url_decode($val);
+
+        # UTF-8 decode unless raw mode
+        my $key_final = $raw ? $key_decoded : _decode_utf8($key_decoded, $strict);
+        my $val_final = $raw ? $val_decoded : _decode_utf8($val_decoded, $strict);
+
+        push @pairs, $key_final, $val_final;
+    }
+
+    $self->{scope}{$cache_key} = Hash::MultiValue->new(@pairs);
+    return $self->{scope}{$cache_key};
+}
+
+# Raw query params (no UTF-8 decoding)
+sub raw_query_params {
+    my $self = shift;
+    return $self->query_params(raw => 1);
+}
+
+# Single query param accessor
+sub query_param {
+    my ($self, $name, %opts) = @_;
+    return $self->query_params(%opts)->get($name);
+}
+
+# Raw single query param
+sub raw_query_param {
+    my ($self, $name) = @_;
+    return $self->query_param($name, raw => 1);
+}
+
 sub scheme       { shift->{scope}{scheme} // 'http' }
 sub http_version { shift->{scope}{http_version} // '1.1' }
 sub client       { shift->{scope}{client} }
@@ -681,6 +754,49 @@ path by a router and stored in C<< $scope->{path_params} >>.
 
 Returns hashref of all path parameters from scope.
 
+=head2 query_params
+
+    my $params = $sse->query_params;
+    my $params = $sse->query_params(strict => 1);
+    my $params = $sse->query_params(raw => 1);
+
+Returns query string parameters as a L<Hash::MultiValue>. Handles URL decoding
+and UTF-8 decoding automatically.
+
+Options:
+
+=over 4
+
+=item strict => 1
+
+Croak on invalid UTF-8 sequences instead of replacing with substitution character.
+
+=item raw => 1
+
+Skip UTF-8 decoding, return raw bytes after URL decoding.
+
+=back
+
+=head2 raw_query_params
+
+    my $params = $sse->raw_query_params;
+
+Shortcut for C<< query_params(raw => 1) >>.
+
+=head2 query_param
+
+    my $value = $sse->query_param('name');
+    my $value = $sse->query_param('name', strict => 1);
+
+Returns a single query parameter value by name. Accepts same options as
+C<query_params>.
+
+=head2 raw_query_param
+
+    my $value = $sse->raw_query_param('name');
+
+Shortcut for C<< query_param($name, raw => 1) >>.
+
 =head2 state
 
     my $state = $sse->state;
@@ -841,7 +957,7 @@ B<For apps running under PAGI::Server> (using C<pagi-server>):
 
 B<For apps running under other event loops>:
 
-    # If using IO::Async directly
+    # If using IO::Async directly (true if you are using PAGI::Server).
     use Future::IO;
     Future::IO->load_impl('IOAsync');
 

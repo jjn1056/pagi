@@ -614,6 +614,11 @@ sub run {
     # (similar to Plack's PLACK_ENV)
     $ENV{PAGI_ENV} = $self->mode;
 
+    # Configure Future::IO for IO::Async if available
+    # This enables Future::IO-based libraries (Async::Redis, etc.) and
+    # PAGI::SSE->every() to work seamlessly under pagi-server
+    $self->_configure_future_io;
+
     # Handle --version
     if ($self->{show_version}) {
         $self->_show_version;
@@ -665,6 +670,27 @@ END {
 }
 
 # Internal methods
+
+sub _configure_future_io {
+    my ($self) = @_;
+
+    # Try to configure Future::IO for IO::Async
+    # This enables seamless use of Future::IO-based libraries under pagi-server
+    my $configured = eval {
+        require Future::IO::Impl::IOAsync;
+        1;
+    };
+
+    if ($configured) {
+        # Report in non-production mode
+        if ($self->mode ne 'production' && !$self->{quiet}) {
+            warn "Future::IO configured for IO::Async\n";
+        }
+    }
+    # If Future::IO::Impl::IOAsync not installed, that's fine - user just
+    # won't have Future::IO integration. Apps that need it will get a
+    # helpful error message from PAGI::SSE->every() or similar.
+}
 
 sub _is_module_name {
     my ($self, $spec) = @_;

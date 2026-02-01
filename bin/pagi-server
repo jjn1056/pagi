@@ -350,9 +350,30 @@ Preferred IO::Async loop backend.
 
 =back
 
+=head1 FUTURE::IO INTEGRATION
+
+C<pagi-server> automatically configures L<Future::IO> to use the IO::Async
+backend if L<Future::IO::Impl::IOAsync> is installed. This enables seamless
+use of Future::IO-based libraries in your PAGI applications:
+
+    # These just work under pagi-server:
+    use Async::Redis;
+    use Some::FutureIO::Database;
+
+    # PAGI::SSE->every() also works:
+    $sse->every(1, sub { $sse->send(data => time) });
+
+In non-production mode, pagi-server will report when Future::IO is configured:
+
+    Future::IO configured for IO::Async
+
+If you're using L<PAGI::Server> programmatically (not via pagi-server), you
+must configure Future::IO yourself. See L<PAGI::Server/"LOOP INTEROPERABILITY">
+for details.
+
 =head1 SEE ALSO
 
-L<PAGI::Runner>, L<PAGI::Server>, L<PAGI::Middleware::Lint>
+L<PAGI::Runner>, L<PAGI::Server>, L<PAGI::Middleware::Lint>, L<Future::IO>
 
 =head1 AUTHOR
 

@@ -1,5 +1,26 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001016 - 2026-01-31
+  [New Features]
+  - Add query parameter parsing to PAGI::SSE: query_params(), query_param(),
+    raw_query_params(), raw_query_param() methods mirroring PAGI::Request
+    and PAGI::WebSocket APIs
+  - pagi-server now auto-configures Future::IO for IO::Async if installed,
+    enabling seamless use of Future::IO-based libraries (Async::Redis, etc.)
+    and PAGI::SSE->every(). Reports configuration in non-production mode.
+
+  [Breaking Changes]
+  - PAGI::Server (the module) no longer auto-configures Future::IO.
+    pagi-server (the CLI) handles this automatically. Programmatic users
+    of PAGI::Server must configure Future::IO themselves if using
+    Future::IO-based libraries. See PAGI::Server "LOOP INTEROPERABILITY".
+
+  [Improvements]
+  - PAGI::SSE->every() now provides a clear error message if Future::IO
+    backend is not configured, with example code showing how to fix it
+  - New PAGI::Server documentation section "LOOP INTEROPERABILITY" explains
+    Future::IO configuration for programmatic usage
+
 0.001015 - 2026-01-18
   [New Features]
   - Add query parameter parsing to PAGI::WebSocket: query_params(), query_param(),
