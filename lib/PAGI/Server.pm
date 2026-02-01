@@ -95,11 +95,9 @@ See L</LOOP INTEROPERABILITY> for details on Future::IO configuration.
 
 PAGI::Server is a reference implementation of a PAGI-compliant HTTP server.
 It supports HTTP/1.1, WebSocket, and Server-Sent Events (SSE) as defined
-in the PAGI specification.
-
-This is NOT a production server - it prioritizes spec compliance and code
-clarity over performance optimization. It serves as the canonical reference
-for how PAGI servers should behave.
+in the PAGI specification. It prioritizes spec compliance and code clarity
+over performance optimization. It serves as the canonical reference for how
+PAGI servers should behave.
 
 =head1 PROTOCOL SUPPORT
 
@@ -2565,9 +2563,9 @@ See L<PAGI::Middleware::SecurityHeaders> for full documentation.
 =head1 LOOP INTEROPERABILITY
 
 PAGI::Server uses L<IO::Async> as its event loop. When using C<pagi-server>
-(the CLI), L<Future::IO> is automatically configured to use the IO::Async
-backend. This enables seamless integration with Future::IO-based libraries
-like L<Async::Redis>.
+(the CLI), if L<Future::IO> is installed, it is automatically configured to use
+the IO::Async backend. This enables seamless integration with Future::IO-based
+libraries like L<Async::Redis>.
 
 =head2 Programmatic Usage
 
