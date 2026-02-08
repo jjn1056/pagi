@@ -676,4 +676,87 @@ subtest 'Client certificates are captured when provided' => sub {
     $loop->remove($http);
 };
 
+# Test 11: SSL context is pre-created and shared (avoids per-connection CA bundle parsing)
+subtest 'SSL context is pre-created for connection reuse' => sub {
+    my $request_count = 0;
+
+    my $concurrent_app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                }
+                elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+
+        die "Unsupported scope type: $scope->{type}" unless $scope->{type} eq 'http';
+
+        $request_count++;
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            body => 'OK',
+            more => 0,
+        });
+    };
+
+    my $server = PAGI::Server->new(
+        app   => $concurrent_app,
+        host  => '127.0.0.1',
+        port  => 0,
+        quiet => 1,
+        ssl   => {
+            cert_file => $server_cert,
+            key_file  => $server_key,
+        },
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    # Verify pre-created SSL context exists
+    ok(defined $server->{_ssl_ctx}, 'SSL context is pre-created after listen');
+    isa_ok($server->{_ssl_ctx}, ['IO::Socket::SSL::SSL_Context'],
+        'SSL context is an IO::Socket::SSL::SSL_Context instance');
+
+    my $port = $server->port;
+
+    # Make 3 concurrent TLS requests
+    my @http_clients;
+    my @futures;
+    for my $i (1..3) {
+        my $http = Net::Async::HTTP->new(
+            SSL_verify_mode => 0,
+        );
+        $loop->add($http);
+        push @http_clients, $http;
+        push @futures, $http->GET("https://127.0.0.1:$port/");
+    }
+
+    my @responses = Future->needs_all(@futures)->get;
+
+    is(scalar @responses, 3, 'All 3 concurrent requests completed');
+    for my $i (0..2) {
+        is($responses[$i]->code, 200, "Concurrent request " . ($i+1) . " returned 200");
+    }
+    is($request_count, 3, 'Server handled all 3 requests');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+    $loop->remove($_) for @http_clients;
+};
+
 done_testing;

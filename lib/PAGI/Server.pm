@@ -1518,6 +1518,23 @@ async sub _listen_singleworker {
             $weak_self->_log(debug => "SSL handshake failed: $_[0]");
         };
 
+        # Pre-create shared SSL context to avoid per-connection CA bundle parsing
+        # (IO::Socket::SSL creates a new SSL_Context per connection by default,
+        # each calling SSL_CTX_load_verify_locations which is expensive)
+        my $ssl_ctx = IO::Socket::SSL::SSL_Context->new({
+            SSL_server      => $listen_opts{SSL_server},
+            SSL_cert_file   => $listen_opts{SSL_cert_file},
+            SSL_key_file    => $listen_opts{SSL_key_file},
+            SSL_version     => $listen_opts{SSL_version},
+            SSL_cipher_list => $listen_opts{SSL_cipher_list},
+            SSL_verify_mode => $listen_opts{SSL_verify_mode},
+            (exists $listen_opts{SSL_ca_file}
+                ? (SSL_ca_file => $listen_opts{SSL_ca_file})
+                : ()),
+        });
+        $self->{_ssl_ctx} = $ssl_ctx;
+        $listen_opts{SSL_reuse_ctx} = $ssl_ctx;
+
         # Mark that TLS is enabled
         $self->{tls_enabled} = 1;
 
