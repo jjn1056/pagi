@@ -1359,6 +1359,42 @@ Then restart your application.
 END_TLS_ERROR
 }
 
+# Build SSL configuration parameters for use by both single-worker and multi-worker modes.
+# Returns a hashref of SSL params (including SSL_reuse_ctx) or undef if no SSL configured.
+sub _build_ssl_config {
+    my ($self) = @_;
+    my $ssl = $self->{ssl} or return;
+
+    $self->_check_tls_available;
+
+    my %ssl_params;
+    $ssl_params{SSL_server}      = 1;
+    $ssl_params{SSL_cert_file}   = $ssl->{cert_file} if $ssl->{cert_file};
+    $ssl_params{SSL_key_file}    = $ssl->{key_file}  if $ssl->{key_file};
+    $ssl_params{SSL_version}     = $ssl->{min_version} // 'TLSv1_2';
+    $ssl_params{SSL_cipher_list} = $ssl->{cipher_list}
+        // 'ECDHE+AESGCM:DHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA';
+
+    if ($ssl->{verify_client}) {
+        # SSL_VERIFY_PEER (0x01) | SSL_VERIFY_FAIL_IF_NO_PEER_CERT (0x02)
+        $ssl_params{SSL_verify_mode} = 0x03;
+        $ssl_params{SSL_ca_file} = $ssl->{ca_file} if $ssl->{ca_file};
+    } else {
+        $ssl_params{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
+    }
+
+    # Pre-create shared SSL context to avoid per-connection CA bundle parsing
+    my $ssl_ctx = IO::Socket::SSL::SSL_Context->new(\%ssl_params);
+    $self->{_ssl_ctx} = $ssl_ctx;
+    $ssl_params{SSL_reuse_ctx} = $ssl_ctx;
+
+    # Mark TLS enabled and auto-add tls extension
+    $self->{tls_enabled} = 1;
+    $self->{extensions}{tls} = {} unless exists $self->{extensions}{tls};
+
+    return \%ssl_params;
+}
+
 =head2 run
 
     $server->run;
@@ -1489,57 +1525,14 @@ async sub _listen_singleworker {
     );
 
     # Add SSL options if configured
-    if (my $ssl = $self->{ssl}) {
-        $self->_check_tls_available;
+    if (my $ssl_params = $self->_build_ssl_config) {
         $listen_opts{extensions} = ['SSL'];
-        $listen_opts{SSL_server} = 1;
-        $listen_opts{SSL_cert_file} = $ssl->{cert_file} if $ssl->{cert_file};
-        $listen_opts{SSL_key_file} = $ssl->{key_file} if $ssl->{key_file};
+        %listen_opts = (%listen_opts, %$ssl_params);
 
-        # TLS hardening: minimum version TLS 1.2 (configurable)
-        $listen_opts{SSL_version} = $ssl->{min_version} // 'TLSv1_2';
-
-        # TLS hardening: secure cipher suites (configurable)
-        $listen_opts{SSL_cipher_list} = $ssl->{cipher_list} //
-            'ECDHE+AESGCM:DHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA';
-
-        # Client certificate verification
-        if ($ssl->{verify_client}) {
-            # SSL_VERIFY_PEER (0x01) | SSL_VERIFY_FAIL_IF_NO_PEER_CERT (0x02)
-            $listen_opts{SSL_verify_mode} = 0x03;
-            $listen_opts{SSL_ca_file} = $ssl->{ca_file} if $ssl->{ca_file};
-        } else {
-            $listen_opts{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
-        }
-
-        # Handle SSL handshake failures gracefully
         $listen_opts{on_ssl_error} = sub {
             return unless $weak_self;
             $weak_self->_log(debug => "SSL handshake failed: $_[0]");
         };
-
-        # Pre-create shared SSL context to avoid per-connection CA bundle parsing
-        # (IO::Socket::SSL creates a new SSL_Context per connection by default,
-        # each calling SSL_CTX_load_verify_locations which is expensive)
-        my $ssl_ctx = IO::Socket::SSL::SSL_Context->new({
-            SSL_server      => $listen_opts{SSL_server},
-            SSL_cert_file   => $listen_opts{SSL_cert_file},
-            SSL_key_file    => $listen_opts{SSL_key_file},
-            SSL_version     => $listen_opts{SSL_version},
-            SSL_cipher_list => $listen_opts{SSL_cipher_list},
-            SSL_verify_mode => $listen_opts{SSL_verify_mode},
-            (exists $listen_opts{SSL_ca_file}
-                ? (SSL_ca_file => $listen_opts{SSL_ca_file})
-                : ()),
-        });
-        $self->{_ssl_ctx} = $ssl_ctx;
-        $listen_opts{SSL_reuse_ctx} = $ssl_ctx;
-
-        # Mark that TLS is enabled
-        $self->{tls_enabled} = 1;
-
-        # Auto-add tls extension when SSL is configured
-        $self->{extensions}{tls} = {} unless exists $self->{extensions}{tls};
     }
 
     # Start listening
@@ -1662,6 +1655,12 @@ sub _listen_multiworker {
     }
 
     $self->{running} = 1;
+
+    # Validate TLS modules and set tls_enabled before forking workers
+    if ($self->{ssl}) {
+        $self->_check_tls_available;
+        $self->{tls_enabled} = 1;
+    }
 
     my $scheme = $self->{ssl} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
@@ -1897,6 +1896,9 @@ sub _run_as_worker {
 
     $loop->add($worker_server);
 
+    # Build SSL config for this worker (each worker gets its own SSL context post-fork)
+    my $ssl_params = $worker_server->_build_ssl_config;
+
     # Set up graceful shutdown on SIGTERM using IO::Async's signal watching
     # (raw $SIG handlers don't work reliably when the loop is running)
     # Note: Windows doesn't support Unix signals, so this is skipped there
@@ -1954,10 +1956,25 @@ sub _run_as_worker {
 
     my $listener = IO::Async::Listener->new(
         handle => $listen_socket,
-        on_stream => sub  {
-        my ($listener, $stream) = @_;
+        on_stream => sub {
+            my ($listener, $stream) = @_;
             return unless $weak_server;
-            $weak_server->_on_connection($stream);
+
+            if ($ssl_params) {
+                $loop->SSL_upgrade(
+                    handle        => $stream,
+                    SSL_server    => 1,
+                    SSL_reuse_ctx => $worker_server->{_ssl_ctx},
+                )->on_done(sub {
+                    $weak_server->_on_connection($stream) if $weak_server;
+                })->on_fail(sub {
+                    my ($failure) = @_;
+                    $weak_server->_log(debug => "SSL handshake failed: $failure")
+                        if $weak_server;
+                });
+            } else {
+                $weak_server->_on_connection($stream);
+            }
         },
     );
 
