@@ -1512,6 +1512,12 @@ async sub _listen_singleworker {
             $listen_opts{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
         }
 
+        # Handle SSL handshake failures gracefully
+        $listen_opts{on_ssl_error} = sub {
+            return unless $weak_self;
+            $weak_self->_log(debug => "SSL handshake failed: $_[0]");
+        };
+
         # Mark that TLS is enabled
         $self->{tls_enabled} = 1;
 
