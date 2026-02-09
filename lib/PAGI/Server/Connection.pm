@@ -374,10 +374,276 @@ sub _h2_write_pending {
     }
 }
 
-# Stub callbacks — full implementation in Step 5
-sub _h2_on_request { }
-sub _h2_on_body    { }
-sub _h2_on_close   { }
+# =============================================================================
+# HTTP/2 Stream Callbacks
+# =============================================================================
+
+sub _h2_on_request {
+    my ($self, $stream_id, $pseudo, $headers, $has_body) = @_;
+
+    # Initialize per-stream state
+    $self->{h2_streams}{$stream_id} = {
+        pseudo    => $pseudo,
+        headers   => $headers,
+        has_body  => $has_body,
+        body      => '',
+        body_complete => !$has_body,
+        body_pending  => undef,   # Future for body availability
+        receive_queue => [],
+        response_started => 0,
+    };
+
+    # Defer dispatch to next event loop tick to prevent re-entrant nghttp2 calls
+    weaken(my $weak_self = $self);
+    $self->{server}->loop->later(sub {
+        return unless $weak_self;
+        return if $weak_self->{closed};
+        $weak_self->_h2_dispatch_stream($stream_id);
+    });
+}
+
+sub _h2_on_body {
+    my ($self, $stream_id, $data, $eof) = @_;
+
+    my $stream = $self->{h2_streams}{$stream_id};
+    return unless $stream;
+
+    if (length($data) > 0) {
+        $stream->{body} .= $data;
+    }
+
+    if ($eof) {
+        $stream->{body_complete} = 1;
+    }
+
+    # Wake up any pending receive
+    if ($stream->{body_pending} && !$stream->{body_pending}->is_ready) {
+        my $f = $stream->{body_pending};
+        $stream->{body_pending} = undef;
+        $f->done;
+    }
+}
+
+sub _h2_on_close {
+    my ($self, $stream_id, $error_code) = @_;
+
+    my $stream = $self->{h2_streams}{$stream_id};
+    return unless $stream;
+
+    # Mark body complete to unblock any pending receive
+    $stream->{body_complete} = 1;
+
+    # Enqueue disconnect event
+    push @{$stream->{receive_queue}}, { type => 'http.disconnect' };
+
+    if ($stream->{body_pending} && !$stream->{body_pending}->is_ready) {
+        my $f = $stream->{body_pending};
+        $stream->{body_pending} = undef;
+        $f->done;
+    }
+
+    # Clean up after a delay (let any pending futures resolve)
+    weaken(my $weak_self = $self);
+    $self->{server}->loop->later(sub {
+        return unless $weak_self;
+        delete $weak_self->{h2_streams}{$stream_id};
+    });
+}
+
+# =============================================================================
+# HTTP/2 Stream Dispatch (scope/receive/send creation)
+# =============================================================================
+
+sub _h2_dispatch_stream {
+    my ($self, $stream_id) = @_;
+
+    my $stream_state = $self->{h2_streams}{$stream_id};
+    return unless $stream_state;
+
+    my $scope   = $self->_h2_create_scope($stream_id, $stream_state);
+    my $receive = $self->_h2_create_receive($stream_id, $stream_state);
+    my $send    = $self->_h2_create_send($stream_id, $stream_state);
+
+    weaken(my $weak_self = $self);
+
+    my $future = (async sub {
+        eval {
+            await $self->{app}->($scope, $receive, $send);
+        };
+        if (my $error = $@) {
+            warn "PAGI application error (HTTP/2 stream $stream_id): $error\n";
+            if (!$stream_state->{response_started}) {
+                eval {
+                    $self->{h2_session}->submit_response($stream_id,
+                        status  => 500,
+                        headers => [['content-type', 'text/plain']],
+                        body    => "Internal Server Error\n",
+                    );
+                    $self->_h2_write_pending;
+                };
+            }
+        }
+
+        # Notify server that request completed (for max_requests tracking)
+        $self->{server}->_on_request_complete if $self->{server};
+    })->();
+
+    $self->{server}->adopt_future($future);
+}
+
+sub _h2_create_scope {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    my $pseudo  = $stream_state->{pseudo};
+    my $headers = $stream_state->{headers};
+
+    # Parse path and query string from :path pseudo-header
+    my $full_path = $pseudo->{':path'} // '/';
+    my ($path, $query_string) = split(/\?/, $full_path, 2);
+    $query_string //= '';
+
+    # Decode percent-encoded path for scope (keep raw_path as-is)
+    my $decoded_path = $path;
+    $decoded_path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+
+    my $connection_state = PAGI::Server::ConnectionState->new(
+        connection => $self,
+    );
+
+    return {
+        type         => 'http',
+        pagi         => {
+            version      => '0.2',
+            spec_version => '0.2',
+            features     => {},
+        },
+        http_version => '2',
+        method       => $pseudo->{':method'} // 'GET',
+        scheme       => $pseudo->{':scheme'} // $self->_get_scheme,
+        path         => $decoded_path,
+        raw_path     => $path,
+        query_string => $query_string,
+        root_path    => '',
+        headers      => $headers,
+        client       => [$self->{client_host}, $self->{client_port}],
+        server       => [$self->{server_host}, $self->{server_port}],
+        state        => %{$self->{state}} ? { %{$self->{state}} } : {},
+        extensions   => $self->_get_extensions_for_scope,
+        'pagi.connection' => $connection_state,
+    };
+}
+
+sub _h2_create_receive {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    weaken(my $weak_self = $self);
+
+    return sub {
+        return Future->done({ type => 'http.disconnect' }) unless $weak_self;
+        return Future->done({ type => 'http.disconnect' }) if $weak_self->{closed};
+
+        my $ss = $weak_self->{h2_streams}{$stream_id};
+        return Future->done({ type => 'http.disconnect' }) unless $ss;
+
+        my $future = (async sub {
+            return { type => 'http.disconnect' } unless $weak_self;
+
+            my $ss = $weak_self->{h2_streams}{$stream_id};
+            return { type => 'http.disconnect' } unless $ss;
+
+            # Check queue first
+            if (@{$ss->{receive_queue}}) {
+                return shift @{$ss->{receive_queue}};
+            }
+
+            # If body is already complete, return final body event
+            if ($ss->{body_complete}) {
+                my $body = $ss->{body};
+                $ss->{body} = '';
+                return {
+                    type => 'http.request',
+                    body => $body,
+                    more => 0,
+                };
+            }
+
+            # Wait for body data
+            if (!$ss->{body_pending}) {
+                $ss->{body_pending} = Future->new;
+            }
+            await $ss->{body_pending};
+
+            # Re-fetch stream state (may have changed)
+            $ss = $weak_self->{h2_streams}{$stream_id};
+            return { type => 'http.disconnect' } unless $ss;
+
+            # Check queue after waking
+            if (@{$ss->{receive_queue}}) {
+                return shift @{$ss->{receive_queue}};
+            }
+
+            my $body = $ss->{body};
+            $ss->{body} = '';
+            return {
+                type => 'http.request',
+                body => $body,
+                more => $ss->{body_complete} ? 0 : 1,
+            };
+        })->();
+
+        return $future;
+    };
+}
+
+sub _h2_create_send {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    weaken(my $weak_self = $self);
+
+    my $status;
+    my @response_headers;
+    my $body_chunks = '';
+
+    return async sub {
+        my ($event) = @_;
+        return unless $weak_self;
+        return if $weak_self->{closed};
+
+        my $type = $event->{type} // '';
+
+        if ($type eq 'http.response.start') {
+            return if $stream_state->{response_started};
+            $stream_state->{response_started} = 1;
+
+            $status = $event->{status} // 200;
+            @response_headers = @{$event->{headers} // []};
+        }
+        elsif ($type eq 'http.response.body') {
+            return unless $stream_state->{response_started};
+
+            my $body = $event->{body} // '';
+            my $more = $event->{more} // 0;
+
+            if ($more) {
+                # Streaming: accumulate body for now, submit when done
+                $body_chunks .= $body;
+            } else {
+                # Final body chunk — submit complete response
+                $body_chunks .= $body;
+
+                $weak_self->{h2_session}->submit_response($stream_id,
+                    status  => $status,
+                    headers => \@response_headers,
+                    body    => $body_chunks,
+                );
+                $weak_self->_h2_write_pending;
+            }
+        }
+        else {
+            # Ignore unrecognized types for now (spec compliance can come later)
+        }
+    };
+}
 
 # Request stall timeout - closes connection if no I/O activity during request processing
 sub _start_stall_timer {
