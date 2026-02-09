@@ -437,4 +437,80 @@ subtest 'custom max_header_list_size is respected' => sub {
     is($value, 32768, 'MAX_HEADER_LIST_SIZE is custom 32KB');
 };
 
+# ============================================================
+# Oversized headers are rejected with RST_STREAM
+# ============================================================
+subtest 'oversized headers rejected with RST_STREAM' => sub {
+    # Use a very small limit to make the test easy
+    my $proto = PAGI::Server::Protocol::HTTP2->new(
+        max_header_list_size => 128,
+    );
+
+    my @requests;
+    my @closed;
+    my $session = $proto->create_session(
+        on_request => sub { push @requests, [@_] },
+        on_body    => sub {},
+        on_close   => sub { push @closed, [@_] },
+    );
+
+    my $client = create_test_client();
+    complete_handshake($session, $client);
+
+    # Send a request with headers that exceed 128 bytes
+    # RFC 7541: each entry size = name_len + value_len + 32
+    # :method=GET (3+3+32=38), :path=/ (5+1+32=38), :scheme=https (7+5+32=44),
+    # :authority=localhost (10+9+32=51) = 171 bytes already > 128
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/',
+        scheme    => 'https',
+        authority => 'localhost',
+    );
+    my $request_data = $client->mem_send;
+    $session->feed($request_data);
+
+    # Extract response — should contain RST_STREAM
+    my $response = $session->extract;
+    ok(defined $response && length($response) > 0, 'Server produced response');
+
+    # Feed response to client
+    $client->mem_recv($response) if defined $response;
+
+    # The request should NOT have been delivered to on_request
+    is(scalar @requests, 0, 'Oversized request was not delivered to app');
+};
+
+# ============================================================
+# Normal-sized headers pass through fine
+# ============================================================
+subtest 'normal-sized headers pass through with enforcement active' => sub {
+    my $proto = PAGI::Server::Protocol::HTTP2->new(
+        max_header_list_size => 65536,  # 64KB — plenty of room
+    );
+
+    my @requests;
+    my $session = $proto->create_session(
+        on_request => sub { push @requests, [@_] },
+        on_body    => sub {},
+        on_close   => sub {},
+    );
+
+    my $client = create_test_client();
+    complete_handshake($session, $client);
+
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/normal',
+        scheme    => 'https',
+        authority => 'localhost',
+    );
+    my $request_data = $client->mem_send;
+    $session->feed($request_data);
+    $session->extract;
+
+    is(scalar @requests, 1, 'Normal request was delivered');
+    is($requests[0][1]{':path'}, '/normal', 'Path is correct');
+};
+
 done_testing;

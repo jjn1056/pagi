@@ -171,8 +171,9 @@ sub _init_nghttp2_session {
                 # HEADERS frame starts a new request
                 if (!defined $type || $type == Net::HTTP2::nghttp2::NGHTTP2_HEADERS()) {
                     $weak_self->{streams}{$stream_id} = {
-                        headers => [],
-                        pseudo  => {},
+                        headers          => [],
+                        pseudo           => {},
+                        header_list_size => 0,
                     };
                 }
                 return 0;
@@ -184,6 +185,13 @@ sub _init_nghttp2_session {
 
                 my $stream = $weak_self->{streams}{$stream_id};
                 return 0 unless $stream;
+
+                # RFC 7541: header entry size = name_len + value_len + 32
+                $stream->{header_list_size} += length($name) + length($value) + 32;
+                if ($stream->{header_list_size} > $weak_self->{settings}{max_header_list_size}) {
+                    delete $weak_self->{streams}{$stream_id};
+                    return Net::HTTP2::nghttp2::NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE();
+                }
 
                 # Pseudo-headers start with ':'
                 if ($name =~ /^:/) {
