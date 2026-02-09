@@ -59,6 +59,17 @@ BEGIN {
 
 sub has_tls { return $TLS_AVAILABLE }
 
+# Check HTTP/2 module availability (cached at load time)
+our $HTTP2_AVAILABLE;
+BEGIN {
+    $HTTP2_AVAILABLE = eval {
+        require PAGI::Server::Protocol::HTTP2;
+        PAGI::Server::Protocol::HTTP2->available;
+    } ? 1 : 0;
+}
+
+sub has_http2 { return $HTTP2_AVAILABLE }
+
 # Windows doesn't support Unix signals - signal handling is conditional
 use constant WIN32 => $^O eq 'MSWin32';
 
@@ -1204,6 +1215,9 @@ sub _init {
     $self->{validate_events}     = delete $params->{validate_events}
         // (($ENV{PAGI_ENV} // '') eq 'development' ? 1 : 0);
 
+    # HTTP/2 support (opt-in, experimental)
+    $self->{http2} = delete $params->{http2} // $ENV{_PAGI_SERVER_HTTP2} // 0;
+
     $self->{running}     = 0;
     $self->{bound_port}  = undef;
     $self->{listener}    = undef;
@@ -1216,6 +1230,34 @@ sub _init {
     $self->{worker_pids} = {};  # Track worker PIDs in multi-worker mode
     $self->{is_worker}   = 0;   # True if this is a worker process
 
+    # Initialize HTTP/2 protocol handler if enabled and available
+    if ($self->{http2}) {
+        if ($HTTP2_AVAILABLE) {
+            $self->{http2_protocol} = PAGI::Server::Protocol::HTTP2->new(
+                max_concurrent_streams  => 100,
+                initial_window_size     => 65535,
+                max_frame_size          => 16384,
+                enable_push             => 0,
+                enable_connect_protocol => 1,
+            );
+            $self->{http2_enabled} = 1;
+
+            # h2c mode: HTTP/2 over cleartext (no TLS)
+            if (!$self->{ssl}) {
+                $self->{h2c_enabled} = 1;
+            }
+        } else {
+            die <<"END_HTTP2_ERROR";
+HTTP/2 support requested but Net::HTTP2::nghttp2 is not installed.
+
+To install:
+    cpanm Net::HTTP2::nghttp2
+
+Or disable HTTP/2:
+    http2 => 0
+END_HTTP2_ERROR
+        }
+    }
 
     $self->SUPER::_init($params);
 }
@@ -1297,6 +1339,9 @@ sub configure {
     if (exists $params{sse_idle_timeout}) {
         $self->{sse_idle_timeout} = delete $params{sse_idle_timeout};
     }
+    if (exists $params{http2}) {
+        $self->{http2} = delete $params{http2};
+    }
 
     $self->SUPER::configure(%params);
 }
@@ -1324,6 +1369,16 @@ sub _tls_status_string {
         return 'on';
     }
     return $TLS_AVAILABLE ? 'available' : 'not installed';
+}
+
+# Returns a human-readable HTTP/2 status string for the startup banner
+sub _http2_status_string {
+    my ($self) = @_;
+
+    if ($self->{http2_enabled}) {
+        return $self->{h2c_enabled} ? 'on (h2c)' : 'on';
+    }
+    return $HTTP2_AVAILABLE ? 'available' : 'not installed';
 }
 
 # Returns a human-readable Future::XS status string for the startup banner
@@ -1381,6 +1436,13 @@ sub _build_ssl_config {
         $ssl_params{SSL_ca_file} = $ssl->{ca_file} if $ssl->{ca_file};
     } else {
         $ssl_params{SSL_verify_mode} = 0x00;  # SSL_VERIFY_NONE
+    }
+
+    # ALPN negotiation for HTTP/2 support
+    if ($self->{http2} && $HTTP2_AVAILABLE) {
+        $ssl_params{SSL_alpn_protocols} = ['h2', 'http/1.1'];
+        $self->{http2_enabled} = 1;
+        $self->{h2c_enabled} = 0;  # TLS mode, not cleartext
     }
 
     # Pre-create shared SSL context to avoid per-connection CA bundle parsing
@@ -1594,6 +1656,7 @@ async sub _listen_singleworker {
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
+    my $http2_status = $self->_http2_status_string;
     my $future_xs_status = $self->_future_xs_status_string;
 
     # Warn if access_log is a terminal (slow for benchmarks)
@@ -1604,7 +1667,7 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, tls: $tls_status, future_xs: $future_xs_status)");
+    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -1668,6 +1731,7 @@ sub _listen_multiworker {
     my $mode = $reuseport ? 'reuseport' : 'shared-socket';
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
+    my $http2_status = $self->_http2_status_string;
     my $future_xs_status = $self->_future_xs_status_string;
 
     # Warn if access_log is a terminal (slow for benchmarks)
@@ -1678,7 +1742,7 @@ sub _listen_multiworker {
         );
     }
 
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, tls: $tls_status, future_xs: $future_xs_status)");
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
