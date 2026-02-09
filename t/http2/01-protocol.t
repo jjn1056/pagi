@@ -350,4 +350,91 @@ subtest 'terminate sends GOAWAY' => sub {
         'terminate produces GOAWAY frame');
 };
 
+# ============================================================
+# max_header_list_size is advertised in SETTINGS
+# ============================================================
+subtest 'max_header_list_size is advertised in SETTINGS' => sub {
+    my $proto = PAGI::Server::Protocol::HTTP2->new;
+
+    my $session = $proto->create_session(
+        on_request => sub {},
+        on_body    => sub {},
+        on_close   => sub {},
+    );
+
+    my $data = $session->extract;
+    ok(defined $data && length($data) > 0, 'Session produces SETTINGS');
+
+    # Parse the SETTINGS frame to find MAX_HEADER_LIST_SIZE (id=0x06)
+    # Frame format: 3-byte length + 1-byte type + 1-byte flags + 4-byte stream_id + payload
+    # SETTINGS payload: 2-byte id + 4-byte value per setting
+    my $found = 0;
+    my $value;
+    while (length($data) >= 9) {
+        my $len = unpack('N', "\0" . substr($data, 0, 3));
+        my $type = unpack('C', substr($data, 3, 1));
+        my $flags = unpack('C', substr($data, 4, 1));
+        my $payload = substr($data, 9, $len);
+
+        # SETTINGS frame = type 0x04, not ACK (flags & 0x01 == 0)
+        if ($type == 0x04 && !($flags & 0x01)) {
+            while (length($payload) >= 6) {
+                my ($id, $val) = unpack('nN', $payload);
+                if ($id == 0x06) {  # MAX_HEADER_LIST_SIZE
+                    $found = 1;
+                    $value = $val;
+                }
+                $payload = substr($payload, 6);
+            }
+        }
+
+        $data = substr($data, 9 + $len);
+    }
+
+    ok($found, 'MAX_HEADER_LIST_SIZE setting is present');
+    is($value, 65536, 'MAX_HEADER_LIST_SIZE defaults to 64KB');
+};
+
+# ============================================================
+# Custom max_header_list_size is respected
+# ============================================================
+subtest 'custom max_header_list_size is respected' => sub {
+    my $proto = PAGI::Server::Protocol::HTTP2->new(
+        max_header_list_size => 32768,
+    );
+
+    my $session = $proto->create_session(
+        on_request => sub {},
+        on_body    => sub {},
+        on_close   => sub {},
+    );
+
+    my $data = $session->extract;
+
+    my $found = 0;
+    my $value;
+    while (length($data) >= 9) {
+        my $len = unpack('N', "\0" . substr($data, 0, 3));
+        my $type = unpack('C', substr($data, 3, 1));
+        my $flags = unpack('C', substr($data, 4, 1));
+        my $payload = substr($data, 9, $len);
+
+        if ($type == 0x04 && !($flags & 0x01)) {
+            while (length($payload) >= 6) {
+                my ($id, $val) = unpack('nN', $payload);
+                if ($id == 0x06) {
+                    $found = 1;
+                    $value = $val;
+                }
+                $payload = substr($payload, 6);
+            }
+        }
+
+        $data = substr($data, 9 + $len);
+    }
+
+    ok($found, 'MAX_HEADER_LIST_SIZE setting is present');
+    is($value, 32768, 'MAX_HEADER_LIST_SIZE is custom 32KB');
+};
+
 done_testing;

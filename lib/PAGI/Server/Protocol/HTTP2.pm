@@ -71,6 +71,7 @@ sub detect_preface {
         max_frame_size          => 16384,  # Default
         enable_push             => 0,      # Default (disabled)
         enable_connect_protocol => 1,      # Default (enabled, RFC 8441)
+        max_header_list_size    => 65536,  # Default (64KB)
     );
 
 Creates a new HTTP/2 protocol handler with the specified settings.
@@ -86,6 +87,7 @@ sub new {
         max_frame_size          => $args{max_frame_size} // 16384,
         enable_push             => $args{enable_push} // 0,
         enable_connect_protocol => $args{enable_connect_protocol} // 1,
+        max_header_list_size    => $args{max_header_list_size} // 65536,
     }, $class;
 
     return $self;
@@ -120,6 +122,7 @@ sub create_session {
             max_frame_size          => $self->{max_frame_size},
             enable_push             => $self->{enable_push},
             enable_connect_protocol => $self->{enable_connect_protocol},
+            max_header_list_size    => $self->{max_header_list_size},
         },
     );
 }
