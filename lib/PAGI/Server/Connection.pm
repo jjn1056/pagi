@@ -397,11 +397,28 @@ sub _h2_write_pending {
 sub _h2_on_request {
     my ($self, $stream_id, $pseudo, $headers, $has_body) = @_;
 
-    # Detect Extended CONNECT for WebSocket (RFC 8441)
+    # Detect CONNECT method
     my $is_websocket = 0;
-    if (($pseudo->{':method'} // '') eq 'CONNECT'
-        && ($pseudo->{':protocol'} // '') eq 'websocket') {
-        $is_websocket = 1;
+    if (($pseudo->{':method'} // '') eq 'CONNECT') {
+        if (($pseudo->{':protocol'} // '') eq 'websocket') {
+            # Extended CONNECT for WebSocket (RFC 8441)
+            $is_websocket = 1;
+        } else {
+            # Plain CONNECT not supported — defer response to avoid
+            # re-entrant nghttp2 calls (we're inside feed/mem_recv)
+            weaken(my $ws = $self);
+            $self->{server}->loop->later(sub {
+                return unless $ws;
+                return if $ws->{closed};
+                $ws->{h2_session}->submit_response($stream_id,
+                    status  => 501,
+                    headers => [['content-type', 'text/plain']],
+                    body    => "CONNECT method not supported\n",
+                );
+                $ws->_h2_write_pending;
+            });
+            return;
+        }
     }
 
     # Initialize per-stream state
@@ -2245,6 +2262,20 @@ sub _close {
 
     # Cancel pending drain waiters early (before other cleanup)
     $self->_cancel_drain_waiters('connection closing');
+
+    # Clean up HTTP/2 per-stream state
+    if ($self->{h2_streams}) {
+        for my $stream (values %{$self->{h2_streams}}) {
+            if ($stream->{body_pending} && !$stream->{body_pending}->is_ready) {
+                $stream->{body_pending}->done({ type => 'http.disconnect' });
+            }
+        }
+        delete $self->{h2_streams};
+    }
+    if ($self->{h2_session}) {
+        eval { $self->{h2_session}->terminate(0) };
+        delete $self->{h2_session};
+    }
 
     # Clean up WebSocket frame parser to free memory immediately
     delete $self->{websocket_frame};
