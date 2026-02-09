@@ -518,4 +518,71 @@ subtest 'connection close during streaming does not crash' => sub {
     $loop->remove($server);
 };
 
+# ============================================================
+# EOF race: empty final body with eof_pending
+# ============================================================
+# Regression: if data_callback is called when @data_queue is
+# empty but $eof_pending is true, it should return ('', 1)
+# to signal EOF, not undef (defer).
+subtest 'EOF signaling when data_callback invoked after queue drained' => sub {
+    # App sends streaming chunks, then final empty body (more => 0).
+    # The key scenario: the sentinel empty string in @data_queue
+    # gets consumed, then data_callback is called again.
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $receive->();
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => 'data',
+            more => 1,
+        });
+        # Final chunk: empty body with more => 0
+        await $send->({
+            type => 'http.response.body',
+            body => '',
+            more => 0,
+        });
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my $response_body = '';
+    my $stream_closed = 0;
+    my $client = create_client(
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $response_body .= $data;
+            return 0;
+        },
+        on_stream_close => sub {
+            $stream_closed = 1;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/eof-race',
+        scheme    => 'http',
+        authority => 'localhost',
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    # Give enough rounds to ensure EOF is signaled
+    exchange_frames($client, $client_sock, 30);
+
+    is($response_body, 'data', 'All data received');
+    ok($stream_closed, 'Stream was closed (EOF properly signaled)');
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
 done_testing;

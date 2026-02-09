@@ -695,7 +695,12 @@ sub _h2_create_send {
             return ($chunk, $eof);
         }
 
-        # Queue empty — defer (NGHTTP2_ERR_DEFERRED in C layer)
+        # Queue empty but EOF pending — signal end of stream
+        if ($eof_pending) {
+            return ('', 1);
+        }
+
+        # Queue empty, more data expected — defer (NGHTTP2_ERR_DEFERRED in C layer)
         return undef;
     };
 
