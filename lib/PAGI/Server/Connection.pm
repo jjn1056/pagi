@@ -673,7 +673,31 @@ sub _h2_create_send {
 
     my $status;
     my @response_headers;
-    my $body_chunks = '';
+
+    # Streaming state for deferred data provider pattern
+    my @data_queue;
+    my $eof_pending = 0;
+    my $streaming_started = 0;
+
+    # Data callback for nghttp2's streaming response.
+    # Returns ($data, $eof) when data is available, or undef to defer.
+    my $data_callback = sub {
+        my ($cb_stream_id, $max_len) = @_;
+
+        if (@data_queue) {
+            my $chunk = shift @data_queue;
+            # Respect max_len — XS truncates without preserving remainder
+            if (length($chunk) > $max_len) {
+                unshift @data_queue, substr($chunk, $max_len);
+                $chunk = substr($chunk, 0, $max_len);
+            }
+            my $eof = (!@data_queue && $eof_pending) ? 1 : 0;
+            return ($chunk, $eof);
+        }
+
+        # Queue empty — defer (NGHTTP2_ERR_DEFERRED in C layer)
+        return undef;
+    };
 
     return async sub {
         my ($event) = @_;
@@ -698,18 +722,41 @@ sub _h2_create_send {
             my $more = $event->{more} // 0;
 
             if ($more) {
-                # Streaming: accumulate body for now, submit when done
-                $body_chunks .= $body;
+                if (!$streaming_started) {
+                    # First streaming chunk — submit with data callback
+                    $streaming_started = 1;
+                    push @data_queue, $body if length($body);
+                    $weak_self->{h2_session}->submit_response_streaming(
+                        $stream_id,
+                        status        => $status,
+                        headers       => \@response_headers,
+                        data_callback => $data_callback,
+                    );
+                    $weak_self->_h2_write_pending;
+                } else {
+                    # Subsequent chunk — push and resume
+                    push @data_queue, $body if length($body);
+                    $weak_self->{h2_session}->resume_stream($stream_id);
+                    $weak_self->_h2_write_pending;
+                }
             } else {
-                # Final body chunk — submit complete response
-                $body_chunks .= $body;
-
-                $weak_self->{h2_session}->submit_response($stream_id,
-                    status  => $status,
-                    headers => \@response_headers,
-                    body    => $body_chunks,
-                );
-                $weak_self->_h2_write_pending;
+                if ($streaming_started) {
+                    # Final chunk on an already-streaming response
+                    $eof_pending = 1;
+                    push @data_queue, $body if length($body);
+                    # Push empty string if queue is empty so callback can signal EOF
+                    push @data_queue, '' unless @data_queue;
+                    $weak_self->{h2_session}->resume_stream($stream_id);
+                    $weak_self->_h2_write_pending;
+                } else {
+                    # Non-streaming: single response (unchanged one-shot path)
+                    $weak_self->{h2_session}->submit_response($stream_id,
+                        status  => $status,
+                        headers => \@response_headers,
+                        body    => $body,
+                    );
+                    $weak_self->_h2_write_pending;
+                }
             }
         }
         else {
