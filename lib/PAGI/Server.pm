@@ -1941,6 +1941,7 @@ sub _run_as_worker {
         host            => $self->{host},
         port            => $self->{port},
         ssl             => $self->{ssl},
+        http2           => $self->{http2},
         extensions      => $self->{extensions},
         on_error        => $self->{on_error},
         access_log      => $self->{access_log},
