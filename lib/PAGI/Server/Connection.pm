@@ -741,6 +741,7 @@ sub _h2_create_send {
                         return if $weak_self->{closed};
                     }
                     push @data_queue, $body if length($body);
+                    return unless $weak_self->{h2_streams}{$stream_id};
                     $weak_self->{h2_session}->resume_stream($stream_id);
                     $weak_self->_h2_write_pending;
                 }
@@ -756,6 +757,7 @@ sub _h2_create_send {
                     push @data_queue, $body if length($body);
                     # Push empty string if queue is empty so callback can signal EOF
                     push @data_queue, '' unless @data_queue;
+                    return unless $weak_self->{h2_streams}{$stream_id};
                     $weak_self->{h2_session}->resume_stream($stream_id);
                     $weak_self->_h2_write_pending;
                 } else {
