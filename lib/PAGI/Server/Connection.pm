@@ -166,6 +166,12 @@ sub new {
         ws_keepalive_timeout  => 0,    # Current pong timeout (0 = no timeout check)
         sse_keepalive_timer => undef,  # Periodic timer for sending SSE keepalive comments
         sse_keepalive_comment => '',   # Comment text to send
+        # HTTP/2 state
+        alpn_protocol     => $args{alpn_protocol},    # ALPN-negotiated protocol (e.g. 'h2', 'http/1.1')
+        h2_protocol       => $args{h2_protocol},      # PAGI::Server::Protocol::HTTP2 instance
+        is_h2             => 0,                        # Set during start() if HTTP/2 detected
+        h2_session        => undef,                    # PAGI::Server::Protocol::HTTP2::Session
+        h2_streams        => {},                       # Per-stream state for HTTP/2
         # Cached connection info (populated in start(), used by _create_scope)
         client_host       => '127.0.0.1',
         client_port       => 0,
@@ -207,6 +213,11 @@ sub start {
             $self->{server_port} = $handle->sockport // 5000;
         };
         # Ignore errors - keep defaults if extraction fails
+    }
+
+    # Detect HTTP/2 via ALPN negotiation
+    if ($self->{alpn_protocol} && $self->{alpn_protocol} eq 'h2' && $self->{h2_protocol}) {
+        $self->_init_h2_session;
     }
 
     # Set up idle timeout timer
@@ -301,6 +312,53 @@ sub _stop_idle_timer {
     }
     $self->{idle_timer} = undef;
 }
+
+# =============================================================================
+# HTTP/2 Session Initialization
+# =============================================================================
+
+sub _init_h2_session {
+    my ($self) = @_;
+
+    $self->{is_h2} = 1;
+
+    weaken(my $weak_self = $self);
+
+    $self->{h2_session} = $self->{h2_protocol}->create_session(
+        on_request => sub {
+            my ($stream_id, $pseudo, $headers, $has_body) = @_;
+            return unless $weak_self;
+            $weak_self->_h2_on_request($stream_id, $pseudo, $headers, $has_body);
+        },
+        on_body => sub {
+            my ($stream_id, $data, $eof) = @_;
+            return unless $weak_self;
+            $weak_self->_h2_on_body($stream_id, $data, $eof);
+        },
+        on_close => sub {
+            my ($stream_id, $error_code) = @_;
+            return unless $weak_self;
+            $weak_self->_h2_on_close($stream_id, $error_code);
+        },
+    );
+
+    # Send initial SETTINGS to client
+    $self->_h2_write_pending;
+}
+
+sub _h2_write_pending {
+    my ($self) = @_;
+    return unless $self->{h2_session};
+    my $data = $self->{h2_session}->extract;
+    if (defined $data && length($data) > 0) {
+        $self->{stream}->write($data);
+    }
+}
+
+# Stub callbacks — full implementation in Step 5
+sub _h2_on_request { }
+sub _h2_on_body    { }
+sub _h2_on_close   { }
 
 # Request stall timeout - closes connection if no I/O activity during request processing
 sub _start_stall_timer {

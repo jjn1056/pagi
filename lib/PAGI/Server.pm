@@ -2080,6 +2080,15 @@ sub _on_connection {
         return;
     }
 
+    # Detect ALPN-negotiated protocol from TLS handle
+    my $alpn_protocol;
+    if ($self->{tls_enabled} && $self->{http2_enabled}) {
+        my $handle = $stream->write_handle // $stream->read_handle;
+        if ($handle && $handle->can('alpn_selected')) {
+            $alpn_protocol = eval { $handle->alpn_selected };
+        }
+    }
+
     my $conn = PAGI::Server::Connection->new(
         stream            => $stream,
         app               => $self->{app},
@@ -2100,6 +2109,10 @@ sub _on_connection {
         validate_events   => $self->{validate_events},
         write_high_watermark => $self->{write_high_watermark},
         write_low_watermark  => $self->{write_low_watermark},
+        ($self->{http2_enabled} ? (
+            h2_protocol   => $self->{http2_protocol},
+            alpn_protocol => $alpn_protocol,
+        ) : ()),
     );
 
     # Track the connection (O(1) hash insert)
