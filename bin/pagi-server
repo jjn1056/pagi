@@ -3,12 +3,20 @@
 # Handle compile-time options before loading any modules
 # Future::XS must be loaded before Future, so check early
 BEGIN {
+    my @to_splice;
     for my $i (0 .. $#ARGV) {
         if ($ARGV[$i] eq '--future-xs') {
             $ENV{PAGI_FUTURE_XS} = 1;
-            splice @ARGV, $i, 1;  # Remove from ARGV
-            last;
+            push @to_splice, $i;
         }
+        elsif ($ARGV[$i] eq '--http2') {
+            $ENV{_PAGI_SERVER_HTTP2} = 1;
+            push @to_splice, $i;
+        }
+    }
+    # Remove processed flags in reverse order to preserve indices
+    for my $i (reverse @to_splice) {
+        splice @ARGV, $i, 1;
     }
 }
 
