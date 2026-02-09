@@ -261,6 +261,12 @@ sub start {
             # This is critical - Protocol::WebSocket::Frame can throw exceptions for
             # oversized payloads, and other parsing code may throw as well
             eval {
+                # HTTP/2: feed data to session for frame processing
+                if ($weak_self->{is_h2}) {
+                    $weak_self->_h2_process_data;
+                    return;
+                }
+
                 # If in WebSocket mode, process WebSocket frames
                 if ($weak_self->{websocket_mode}) {
                     $weak_self->_process_websocket_frames;
@@ -343,6 +349,19 @@ sub _init_h2_session {
     );
 
     # Send initial SETTINGS to client
+    $self->_h2_write_pending;
+}
+
+sub _h2_process_data {
+    my ($self) = @_;
+    return unless $self->{h2_session};
+
+    if (length($self->{buffer}) > 0) {
+        my $data = $self->{buffer};
+        $self->{buffer} = '';
+        $self->{h2_session}->feed($data);
+    }
+
     $self->_h2_write_pending;
 }
 
