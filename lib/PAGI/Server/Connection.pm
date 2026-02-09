@@ -734,7 +734,12 @@ sub _h2_create_send {
                     );
                     $weak_self->_h2_write_pending;
                 } else {
-                    # Subsequent chunk — push and resume
+                    # Subsequent chunk — backpressure check then push and resume
+                    if ($weak_self->_get_write_buffer_size >= $weak_self->{write_high_watermark}) {
+                        await $weak_self->_wait_for_drain;
+                        return unless $weak_self;
+                        return if $weak_self->{closed};
+                    }
                     push @data_queue, $body if length($body);
                     $weak_self->{h2_session}->resume_stream($stream_id);
                     $weak_self->_h2_write_pending;
@@ -742,6 +747,11 @@ sub _h2_create_send {
             } else {
                 if ($streaming_started) {
                     # Final chunk on an already-streaming response
+                    if ($weak_self->_get_write_buffer_size >= $weak_self->{write_high_watermark}) {
+                        await $weak_self->_wait_for_drain;
+                        return unless $weak_self;
+                        return if $weak_self->{closed};
+                    }
                     $eof_pending = 1;
                     push @data_queue, $body if length($body);
                     # Push empty string if queue is empty so callback can signal EOF

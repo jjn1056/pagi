@@ -319,4 +319,66 @@ subtest 'streaming with empty final chunk' => sub {
     $loop->remove($server);
 };
 
+# ============================================================
+# Backpressure: many large chunks don't cause unbounded growth
+# ============================================================
+subtest 'streaming with many chunks completes without accumulation' => sub {
+    my $chunk_count = 50;
+    my $chunk_size  = 8192;
+    my $chunk_data  = 'X' x $chunk_size;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $receive->();
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'application/octet-stream']],
+        });
+        for my $i (1..$chunk_count) {
+            await $send->({
+                type => 'http.response.body',
+                body => $chunk_data,
+                more => ($i < $chunk_count) ? 1 : 0,
+            });
+        }
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my $received_bytes = 0;
+    my $stream_closed = 0;
+    my $client = create_client(
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $received_bytes += length($data);
+            return 0;
+        },
+        on_stream_close => sub {
+            $stream_closed = 1;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/large-streaming',
+        scheme    => 'http',
+        authority => 'localhost',
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    # Many rounds needed: 50 x 8KB = 400KB, flow control window is 65535
+    exchange_frames($client, $client_sock, 100);
+
+    is($received_bytes, $chunk_count * $chunk_size,
+        'All streaming data received');
+    ok($stream_closed, 'Stream was closed');
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
 done_testing;
