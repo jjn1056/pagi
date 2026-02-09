@@ -513,4 +513,122 @@ subtest 'normal-sized headers pass through with enforcement active' => sub {
     is($requests[0][1]{':path'}, '/normal', 'Path is correct');
 };
 
+# ============================================================
+# :authority pseudo-header → host header conversion
+# ============================================================
+subtest ':authority pseudo-header is converted to host header' => sub {
+    my $proto = PAGI::Server::Protocol::HTTP2->new;
+
+    my @requests;
+    my $session = $proto->create_session(
+        on_request => sub { push @requests, [@_] },
+        on_body    => sub {},
+        on_close   => sub {},
+    );
+
+    my $client = create_test_client();
+    complete_handshake($session, $client);
+
+    # Send GET with :authority
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/test',
+        scheme    => 'https',
+        authority => 'example.com',
+    );
+    my $request_data = $client->mem_send;
+    $session->feed($request_data);
+    $session->extract;
+
+    ok(scalar @requests >= 1, 'on_request was called');
+    if (@requests) {
+        my ($stream_id, $pseudo, $headers, $has_body) = @{$requests[0]};
+        # Verify :authority is in pseudo hash
+        is($pseudo->{':authority'}, 'example.com', ':authority is in pseudo hash');
+        # Verify host header was synthesized from :authority
+        my @host_headers = grep { $_->[0] eq 'host' } @$headers;
+        ok(scalar @host_headers >= 1, 'host header exists in headers array');
+        is($host_headers[0][1], 'example.com', 'host header value matches :authority');
+    }
+};
+
+# ============================================================
+# :authority takes precedence over explicit host header
+# ============================================================
+subtest ':authority takes precedence over explicit host header' => sub {
+    my $proto = PAGI::Server::Protocol::HTTP2->new;
+
+    my @requests;
+    my $session = $proto->create_session(
+        on_request => sub { push @requests, [@_] },
+        on_body    => sub {},
+        on_close   => sub {},
+    );
+
+    my $client = create_test_client();
+    complete_handshake($session, $client);
+
+    # Send request with :authority AND an explicit host header
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/test',
+        scheme    => 'https',
+        authority => 'authority.example.com',
+        headers   => [['host', 'host.example.com']],
+    );
+    my $request_data = $client->mem_send;
+    $session->feed($request_data);
+    $session->extract;
+
+    ok(scalar @requests >= 1, 'on_request was called');
+    if (@requests) {
+        my ($stream_id, $pseudo, $headers, $has_body) = @{$requests[0]};
+        # :authority should take precedence per RFC 9113 Section 8.3.1
+        my @host_headers = grep { $_->[0] eq 'host' } @$headers;
+        is(scalar @host_headers, 1, 'Exactly one host header');
+        is($host_headers[0][1], 'authority.example.com',
+           ':authority value takes precedence over explicit host');
+    }
+};
+
+# ============================================================
+# Multiple cookie headers are normalized to single header
+# ============================================================
+subtest 'multiple cookie headers normalized to single header' => sub {
+    my $proto = PAGI::Server::Protocol::HTTP2->new;
+
+    my @requests;
+    my $session = $proto->create_session(
+        on_request => sub { push @requests, [@_] },
+        on_body    => sub {},
+        on_close   => sub {},
+    );
+
+    my $client = create_test_client();
+    complete_handshake($session, $client);
+
+    # Send request with multiple cookie headers
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/cookies',
+        scheme    => 'https',
+        authority => 'localhost',
+        headers   => [
+            ['cookie', 'a=1'],
+            ['cookie', 'b=2'],
+        ],
+    );
+    my $request_data = $client->mem_send;
+    $session->feed($request_data);
+    $session->extract;
+
+    ok(scalar @requests >= 1, 'on_request was called');
+    if (@requests) {
+        my ($stream_id, $pseudo, $headers, $has_body) = @{$requests[0]};
+        my @cookie_headers = grep { $_->[0] eq 'cookie' } @$headers;
+        is(scalar @cookie_headers, 1, 'Exactly one cookie header after normalization');
+        is($cookie_headers[0][1], 'a=1; b=2', 'Cookie values joined with "; "');
+    }
+};
+
 done_testing;

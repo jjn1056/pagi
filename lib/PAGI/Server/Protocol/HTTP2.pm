@@ -214,11 +214,45 @@ sub _init_nghttp2_session {
                 if ($type == Net::HTTP2::nghttp2::NGHTTP2_HEADERS()) {
                     my $stream = $weak_self->{streams}{$stream_id};
                     if ($stream && $weak_self->{on_request}) {
+                        my $headers = $stream->{headers};
+                        my $pseudo  = $stream->{pseudo};
+
+                        # Convert :authority pseudo-header to host header
+                        # (RFC 9113 Section 8.3.1: :authority takes precedence)
+                        if (defined $pseudo->{':authority'}) {
+                            my $authority = $pseudo->{':authority'};
+                            my $found_host = 0;
+                            for my $h (@$headers) {
+                                if ($h->[0] eq 'host') {
+                                    $h->[1] = $authority;
+                                    $found_host = 1;
+                                    last;
+                                }
+                            }
+                            push @$headers, ['host', $authority] unless $found_host;
+                        }
+
+                        # Normalize multiple cookie headers into one
+                        # (matches HTTP/1.1 behavior in HTTP1.pm)
+                        my @cookie_values;
+                        my @non_cookie;
+                        for my $h (@$headers) {
+                            if ($h->[0] eq 'cookie') {
+                                push @cookie_values, $h->[1];
+                            } else {
+                                push @non_cookie, $h;
+                            }
+                        }
+                        if (@cookie_values > 1) {
+                            push @non_cookie, ['cookie', join('; ', @cookie_values)];
+                            @$headers = @non_cookie;
+                        }
+
                         my $end_stream = $flags & Net::HTTP2::nghttp2::NGHTTP2_FLAG_END_STREAM();
                         $weak_self->{on_request}->(
                             $stream_id,
-                            $stream->{pseudo},
-                            $stream->{headers},
+                            $pseudo,
+                            $headers,
                             !$end_stream,  # has_body = not END_STREAM
                         );
                     }
