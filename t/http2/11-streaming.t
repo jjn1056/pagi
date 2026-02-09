@@ -381,4 +381,141 @@ subtest 'streaming with many chunks completes without accumulation' => sub {
     $loop->remove($server);
 };
 
+# ============================================================
+# Single-shot (non-streaming): more => 0 as first body event
+# ============================================================
+subtest 'non-streaming response (more => 0 only) still works' => sub {
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $receive->();
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => 'single-shot',
+            more => 0,
+        });
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my %response_headers;
+    my $response_body = '';
+    my $stream_closed = 0;
+    my $client = create_client(
+        on_header => sub {
+            my ($sid, $name, $value) = @_;
+            $response_headers{$name} = $value;
+            return 0;
+        },
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $response_body .= $data;
+            return 0;
+        },
+        on_stream_close => sub {
+            $stream_closed = 1;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/single-shot',
+        scheme    => 'http',
+        authority => 'localhost',
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    exchange_frames($client, $client_sock, 20);
+
+    is($response_headers{':status'}, '200', 'Got 200 status');
+    is($response_body, 'single-shot', 'Body received correctly');
+    ok($stream_closed, 'Stream was closed');
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
+# ============================================================
+# Connection close during streaming: no crashes
+# ============================================================
+subtest 'connection close during streaming does not crash' => sub {
+    my $send_started = 0;
+    my $send_error = 0;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $receive->();
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => 'first',
+            more => 1,
+        });
+        $send_started = 1;
+
+        # The connection will be closed here by the test.
+        # Subsequent sends should not crash — they should just return.
+        eval {
+            await $send->({
+                type => 'http.response.body',
+                body => 'second',
+                more => 1,
+            });
+        };
+        # It's OK if it silently returns (connection closed check)
+        eval {
+            await $send->({
+                type => 'http.response.body',
+                body => 'final',
+                more => 0,
+            });
+        };
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my $client = create_client();
+
+    h2c_handshake($client, $client_sock);
+
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/close-during-stream',
+        scheme    => 'http',
+        authority => 'localhost',
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    # Process until the app has sent the first chunk
+    for (1..20) {
+        $loop->loop_once(0.1);
+        last if $send_started;
+    }
+
+    # Close the client side to simulate disconnect
+    close($client_sock);
+
+    # Let the event loop process the disconnection
+    for (1..10) {
+        $loop->loop_once(0.1);
+    }
+
+    # If we got here without crashing, the test passes
+    pass('No crash on connection close during streaming');
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
 done_testing;
