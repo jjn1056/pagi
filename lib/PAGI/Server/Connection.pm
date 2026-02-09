@@ -453,6 +453,18 @@ sub _h2_on_body {
 
     if (length($data) > 0) {
         $stream->{body} .= $data;
+
+        # Enforce max_body_size (0 = unlimited)
+        if ($self->{max_body_size} && length($stream->{body}) > $self->{max_body_size}) {
+            $self->{h2_session}->submit_response($stream_id,
+                status  => 413,
+                headers => [['content-type', 'text/plain']],
+                body    => 'Payload Too Large',
+            );
+            $self->_h2_write_pending;
+            delete $self->{h2_streams}{$stream_id};
+            return;
+        }
     }
 
     if ($eof) {
@@ -675,7 +687,9 @@ sub _h2_create_send {
             $stream_state->{response_started} = 1;
 
             $status = $event->{status} // 200;
-            @response_headers = @{$event->{headers} // []};
+            @response_headers = map {
+                [_validate_header_name($_->[0]), _validate_header_value($_->[1])]
+            } @{$event->{headers} // []};
         }
         elsif ($type eq 'http.response.body') {
             return unless $stream_state->{response_started};
@@ -699,7 +713,7 @@ sub _h2_create_send {
             }
         }
         else {
-            # Ignore unrecognized types for now (spec compliance can come later)
+            _unrecognized_event_type($type, 'http');
         }
     };
 }
@@ -836,10 +850,13 @@ sub _h2_create_websocket_send {
             # HTTP/2 WebSocket: respond with 200 (not 101)
             my @headers;
             if (my $subprotocol = $event->{subprotocol}) {
+                $subprotocol = _validate_subprotocol($subprotocol);
                 push @headers, ['sec-websocket-protocol', $subprotocol];
             }
             if (my $extra = $event->{headers}) {
-                push @headers, @$extra;
+                push @headers, map {
+                    [_validate_header_name($_->[0]), _validate_header_value($_->[1])]
+                } @$extra;
             }
 
             $ss->{ws_accepted} = 1;
