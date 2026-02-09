@@ -2113,6 +2113,7 @@ sub _on_connection {
         ($self->{http2_enabled} ? (
             h2_protocol   => $self->{http2_protocol},
             alpn_protocol => $alpn_protocol,
+            h2c_enabled   => $self->{h2c_enabled} // 0,
         ) : ()),
     );
 

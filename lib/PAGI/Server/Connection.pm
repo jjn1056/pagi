@@ -169,6 +169,7 @@ sub new {
         # HTTP/2 state
         alpn_protocol     => $args{alpn_protocol},    # ALPN-negotiated protocol (e.g. 'h2', 'http/1.1')
         h2_protocol       => $args{h2_protocol},      # PAGI::Server::Protocol::HTTP2 instance
+        h2c_enabled       => $args{h2c_enabled} // 0, # Allow h2c preface detection on cleartext
         is_h2             => 0,                        # Set during start() if HTTP/2 detected
         h2_session        => undef,                    # PAGI::Server::Protocol::HTTP2::Session
         h2_streams        => {},                       # Per-stream state for HTTP/2
@@ -255,6 +256,21 @@ sub start {
                 # EOF means client closed - handle disconnect and cleanup
                 $weak_self->_handle_disconnect_and_close('client_closed');
                 return 0;
+            }
+
+            # h2c detection: check if cleartext connection starts with HTTP/2 preface
+            if ($weak_self->{h2c_enabled} && !$weak_self->{is_h2}) {
+                if (length($weak_self->{buffer}) >= 24) {  # HTTP/2 preface is 24 bytes
+                    if ($weak_self->{h2_protocol} && PAGI::Server::Protocol::HTTP2->detect_preface($weak_self->{buffer})) {
+                        $weak_self->_init_h2_session;
+                        $weak_self->{h2c_enabled} = 0;  # Detection done
+                    } else {
+                        $weak_self->{h2c_enabled} = 0;  # Not h2c, stop checking
+                    }
+                } else {
+                    # Not enough data yet to determine protocol, wait for more
+                    return 0;
+                }
             }
 
             # Wrap processing in eval to prevent exceptions from crashing the event loop
