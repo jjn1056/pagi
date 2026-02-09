@@ -1,0 +1,322 @@
+use strict;
+use warnings;
+use Test2::V0;
+use IO::Async::Loop;
+use IO::Async::Stream;
+use Future::AsyncAwait;
+use FindBin;
+use lib "$FindBin::Bin/../../lib";
+use Socket qw(AF_UNIX SOCK_STREAM);
+
+plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
+
+# ============================================================
+# Test: HTTP/2 Streaming Responses
+# ============================================================
+# Verifies that HTTP/2 streaming responses (more => 1) send
+# DATA frames incrementally rather than accumulating in memory.
+
+use PAGI::Server::Connection;
+use PAGI::Server;
+use PAGI::Server::Protocol::HTTP1;
+use PAGI::Server::Protocol::HTTP2;
+
+my $loop = IO::Async::Loop->new;
+my $protocol = PAGI::Server::Protocol::HTTP1->new;
+
+# ============================================================
+# Helpers
+# ============================================================
+
+sub create_test_server {
+    my (%args) = @_;
+    my $server = PAGI::Server->new(
+        app   => $args{app} // sub { },
+        host  => '127.0.0.1',
+        port  => 0,
+        quiet => 1,
+        http2 => 1,
+        %args,
+    );
+    $loop->add($server);
+    return $server;
+}
+
+sub create_h2c_connection {
+    my (%overrides) = @_;
+
+    socketpair(my $sock_a, my $sock_b, AF_UNIX, SOCK_STREAM, 0)
+        or die "socketpair: $!";
+    $sock_a->blocking(0);
+    $sock_b->blocking(0);
+
+    my $app = $overrides{app} // sub { };
+    my $server = $overrides{server} // create_test_server(app => $app);
+
+    my $stream = IO::Async::Stream->new(
+        read_handle  => $sock_a,
+        write_handle => $sock_a,
+        on_read => sub { 0 },
+    );
+
+    my $conn = PAGI::Server::Connection->new(
+        stream        => $stream,
+        app           => $app,
+        protocol      => $protocol,
+        server        => $server,
+        h2_protocol   => $server->{http2_protocol},
+        h2c_enabled   => $server->{h2c_enabled},
+    );
+
+    $server->add_child($stream);
+    $conn->start;
+
+    return ($conn, $stream, $sock_b, $server);
+}
+
+sub create_client {
+    my (%overrides) = @_;
+    require Net::HTTP2::nghttp2::Session;
+    return Net::HTTP2::nghttp2::Session->new_client(
+        callbacks => {
+            on_begin_headers   => $overrides{on_begin_headers}   // sub { 0 },
+            on_header          => $overrides{on_header}          // sub { 0 },
+            on_frame_recv      => $overrides{on_frame_recv}      // sub { 0 },
+            on_data_chunk_recv => $overrides{on_data_chunk_recv} // sub { 0 },
+            on_stream_close    => $overrides{on_stream_close}    // sub { 0 },
+        },
+    );
+}
+
+sub h2c_handshake {
+    my ($client, $client_sock) = @_;
+    $client->send_connection_preface;
+    my $data = $client->mem_send;
+    $client_sock->syswrite($data);
+    for (1..5) {
+        $loop->loop_once(0.1);
+        my $buf = '';
+        $client_sock->sysread($buf, 16384);
+        $client->mem_recv($buf) if length($buf);
+        my $out = $client->mem_send;
+        $client_sock->syswrite($out) if length($out);
+    }
+}
+
+sub exchange_frames {
+    my ($client, $client_sock, $rounds) = @_;
+    $rounds //= 10;
+    for (1..$rounds) {
+        $loop->loop_once(0.1);
+        my $buf = '';
+        $client_sock->sysread($buf, 16384);
+        $client->mem_recv($buf) if length($buf);
+        my $out = $client->mem_send;
+        $client_sock->syswrite($out) if length($out);
+    }
+}
+
+# ============================================================
+# Basic streaming: 3 chunks + final
+# ============================================================
+subtest 'basic streaming response delivers all data' => sub {
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $receive->();
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+        for my $i (1..3) {
+            await $send->({
+                type => 'http.response.body',
+                body => "chunk$i",
+                more => 1,
+            });
+        }
+        await $send->({
+            type => 'http.response.body',
+            body => 'final',
+            more => 0,
+        });
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my $response_body = '';
+    my $stream_closed = 0;
+    my $client = create_client(
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $response_body .= $data;
+            return 0;
+        },
+        on_stream_close => sub {
+            $stream_closed = 1;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/streaming',
+        scheme    => 'http',
+        authority => 'localhost',
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    exchange_frames($client, $client_sock, 20);
+
+    is($response_body, 'chunk1chunk2chunk3final', 'All streaming chunks received');
+    ok($stream_closed, 'Stream was closed');
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
+# ============================================================
+# Incremental delivery: data arrives before more => 0
+# ============================================================
+# This is the KEY test that proves the bug. With the old code,
+# data only arrives after more => 0 because everything is
+# accumulated in $body_chunks. With the fix, data arrives
+# incrementally.
+subtest 'streaming data arrives incrementally (not buffered until EOF)' => sub {
+    # Use futures to coordinate: app waits for client to confirm
+    # receipt of each chunk before sending the next one.
+    my @chunk_received_at;  # Track when each data callback fires
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $receive->();
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+
+        # Send chunk 1
+        await $send->({
+            type => 'http.response.body',
+            body => 'AAA',
+            more => 1,
+        });
+
+        # Send chunk 2
+        await $send->({
+            type => 'http.response.body',
+            body => 'BBB',
+            more => 1,
+        });
+
+        # Final
+        await $send->({
+            type => 'http.response.body',
+            body => 'CCC',
+            more => 0,
+        });
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my $response_body = '';
+    my @data_events;  # Track each on_data_chunk_recv call separately
+    my $client = create_client(
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            push @data_events, $data;
+            $response_body .= $data;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/incremental',
+        scheme    => 'http',
+        authority => 'localhost',
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    exchange_frames($client, $client_sock, 20);
+
+    is($response_body, 'AAABBBCCC', 'All data received');
+
+    # The key assertion: data should arrive in multiple on_data_chunk_recv
+    # callbacks, not a single one. With the bug (accumulation), all data
+    # arrives as one 'AAABBBCCC' chunk. With the fix, we get separate chunks.
+    ok(scalar @data_events > 1,
+        'Data arrived in multiple chunks (not accumulated)')
+        or diag "Got " . scalar(@data_events) . " data events: " .
+                join(', ', map { "'$_'" } @data_events);
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
+# ============================================================
+# Empty final chunk: streaming + empty more => 0
+# ============================================================
+subtest 'streaming with empty final chunk' => sub {
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $receive->();
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => 'only-chunk',
+            more => 1,
+        });
+        # Final chunk with empty body
+        await $send->({
+            type => 'http.response.body',
+            body => '',
+            more => 0,
+        });
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my $response_body = '';
+    my $stream_closed = 0;
+    my $client = create_client(
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $response_body .= $data;
+            return 0;
+        },
+        on_stream_close => sub {
+            $stream_closed = 1;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    $client->submit_request(
+        method    => 'GET',
+        path      => '/empty-final',
+        scheme    => 'http',
+        authority => 'localhost',
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    exchange_frames($client, $client_sock, 20);
+
+    is($response_body, 'only-chunk', 'Body is just the streaming chunk');
+    ok($stream_closed, 'Stream was closed');
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
+done_testing;
