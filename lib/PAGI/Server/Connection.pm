@@ -381,6 +381,13 @@ sub _h2_write_pending {
 sub _h2_on_request {
     my ($self, $stream_id, $pseudo, $headers, $has_body) = @_;
 
+    # Detect Extended CONNECT for WebSocket (RFC 8441)
+    my $is_websocket = 0;
+    if (($pseudo->{':method'} // '') eq 'CONNECT'
+        && ($pseudo->{':protocol'} // '') eq 'websocket') {
+        $is_websocket = 1;
+    }
+
     # Initialize per-stream state
     $self->{h2_streams}{$stream_id} = {
         pseudo    => $pseudo,
@@ -391,6 +398,10 @@ sub _h2_on_request {
         body_pending  => undef,   # Future for body availability
         receive_queue => [],
         response_started => 0,
+        is_websocket => $is_websocket,
+        ws_accepted  => 0,
+        ws_frame     => undef,   # Protocol::WebSocket::Frame for parsing
+        ws_connect_sent => 0,
     };
 
     # Defer dispatch to next event loop tick to prevent re-entrant nghttp2 calls
@@ -408,6 +419,22 @@ sub _h2_on_body {
     my $stream = $self->{h2_streams}{$stream_id};
     return unless $stream;
 
+    if ($stream->{is_websocket} && $stream->{ws_accepted}) {
+        # WebSocket: DATA frames contain raw WebSocket frames
+        $self->_h2_process_ws_frames($stream_id, $stream, $data) if length($data);
+
+        if ($eof) {
+            # END_STREAM = client closing the WebSocket stream
+            push @{$stream->{receive_queue}}, {
+                type   => 'websocket.disconnect',
+                code   => 1005,
+                reason => '',
+            };
+            $self->_h2_wake_pending($stream);
+        }
+        return;
+    }
+
     if (length($data) > 0) {
         $stream->{body} .= $data;
     }
@@ -416,7 +443,11 @@ sub _h2_on_body {
         $stream->{body_complete} = 1;
     }
 
-    # Wake up any pending receive
+    $self->_h2_wake_pending($stream);
+}
+
+sub _h2_wake_pending {
+    my ($self, $stream) = @_;
     if ($stream->{body_pending} && !$stream->{body_pending}->is_ready) {
         my $f = $stream->{body_pending};
         $stream->{body_pending} = undef;
@@ -434,13 +465,17 @@ sub _h2_on_close {
     $stream->{body_complete} = 1;
 
     # Enqueue disconnect event
-    push @{$stream->{receive_queue}}, { type => 'http.disconnect' };
-
-    if ($stream->{body_pending} && !$stream->{body_pending}->is_ready) {
-        my $f = $stream->{body_pending};
-        $stream->{body_pending} = undef;
-        $f->done;
+    if ($stream->{is_websocket}) {
+        push @{$stream->{receive_queue}}, {
+            type   => 'websocket.disconnect',
+            code   => 1006,
+            reason => '',
+        };
+    } else {
+        push @{$stream->{receive_queue}}, { type => 'http.disconnect' };
     }
+
+    $self->_h2_wake_pending($stream);
 
     # Clean up after a delay (let any pending futures resolve)
     weaken(my $weak_self = $self);
@@ -460,9 +495,17 @@ sub _h2_dispatch_stream {
     my $stream_state = $self->{h2_streams}{$stream_id};
     return unless $stream_state;
 
-    my $scope   = $self->_h2_create_scope($stream_id, $stream_state);
-    my $receive = $self->_h2_create_receive($stream_id, $stream_state);
-    my $send    = $self->_h2_create_send($stream_id, $stream_state);
+    my ($scope, $receive, $send);
+
+    if ($stream_state->{is_websocket}) {
+        $scope   = $self->_h2_create_websocket_scope($stream_id, $stream_state);
+        $receive = $self->_h2_create_websocket_receive($stream_id, $stream_state);
+        $send    = $self->_h2_create_websocket_send($stream_id, $stream_state);
+    } else {
+        $scope   = $self->_h2_create_scope($stream_id, $stream_state);
+        $receive = $self->_h2_create_receive($stream_id, $stream_state);
+        $send    = $self->_h2_create_send($stream_id, $stream_state);
+    }
 
     weaken(my $weak_self = $self);
 
@@ -643,6 +686,296 @@ sub _h2_create_send {
             # Ignore unrecognized types for now (spec compliance can come later)
         }
     };
+}
+
+# =============================================================================
+# HTTP/2 WebSocket over HTTP/2 (RFC 8441)
+# =============================================================================
+
+sub _h2_create_websocket_scope {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    my $pseudo  = $stream_state->{pseudo};
+    my $headers = $stream_state->{headers};
+
+    my $full_path = $pseudo->{':path'} // '/';
+    my ($path, $query_string) = split(/\?/, $full_path, 2);
+    $query_string //= '';
+
+    my $decoded_path = $path;
+    $decoded_path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+
+    # Extract subprotocols from headers
+    my @subprotocols;
+    for my $header (@$headers) {
+        my ($name, $value) = @$header;
+        if ($name eq 'sec-websocket-protocol') {
+            push @subprotocols, map { s/^\s+|\s+$//gr } split /,/, $value;
+        }
+    }
+
+    my $connection_state = PAGI::Server::ConnectionState->new(
+        connection => $self,
+    );
+
+    return {
+        type         => 'websocket',
+        pagi         => {
+            version      => '0.2',
+            spec_version => '0.2',
+            features     => {},
+        },
+        http_version => '2',
+        scheme       => $self->_get_ws_scheme,
+        path         => $decoded_path,
+        raw_path     => $path,
+        query_string => $query_string,
+        root_path    => '',
+        headers      => $headers,
+        client       => [$self->{client_host}, $self->{client_port}],
+        server       => [$self->{server_host}, $self->{server_port}],
+        subprotocols => \@subprotocols,
+        state        => %{$self->{state}} ? { %{$self->{state}} } : {},
+        extensions   => $self->_get_extensions_for_scope,
+        'pagi.connection' => $connection_state,
+    };
+}
+
+sub _h2_create_websocket_receive {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    weaken(my $weak_self = $self);
+
+    return sub {
+        return Future->done({ type => 'websocket.disconnect', code => 1006, reason => '' })
+            unless $weak_self;
+        return Future->done({ type => 'websocket.disconnect', code => 1006, reason => '' })
+            if $weak_self->{closed};
+
+        my $ss = $weak_self->{h2_streams}{$stream_id};
+        return Future->done({ type => 'websocket.disconnect', code => 1006, reason => '' })
+            unless $ss;
+
+        my $future = (async sub {
+            return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                unless $weak_self;
+
+            my $ss = $weak_self->{h2_streams}{$stream_id};
+            return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                unless $ss;
+
+            # Check queue first
+            if (@{$ss->{receive_queue}}) {
+                return shift @{$ss->{receive_queue}};
+            }
+
+            # First call returns websocket.connect
+            if (!$ss->{ws_connect_sent}) {
+                $ss->{ws_connect_sent} = 1;
+                return { type => 'websocket.connect' };
+            }
+
+            # Wait for events
+            while (1) {
+                if (@{$ss->{receive_queue}}) {
+                    return shift @{$ss->{receive_queue}};
+                }
+
+                return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                    if $weak_self->{closed};
+
+                if (!$ss->{body_pending}) {
+                    $ss->{body_pending} = Future->new;
+                }
+                await $ss->{body_pending};
+
+                $ss = $weak_self->{h2_streams}{$stream_id};
+                return { type => 'websocket.disconnect', code => 1006, reason => '' }
+                    unless $ss;
+            }
+        })->();
+
+        return $future;
+    };
+}
+
+sub _h2_create_websocket_send {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    weaken(my $weak_self = $self);
+
+    return async sub {
+        my ($event) = @_;
+        return unless $weak_self;
+        return if $weak_self->{closed};
+
+        my $ss = $weak_self->{h2_streams}{$stream_id};
+        return unless $ss;
+
+        my $type = $event->{type} // '';
+
+        if ($type eq 'websocket.accept') {
+            return if $ss->{ws_accepted};
+
+            # HTTP/2 WebSocket: respond with 200 (not 101)
+            my @headers;
+            if (my $subprotocol = $event->{subprotocol}) {
+                push @headers, ['sec-websocket-protocol', $subprotocol];
+            }
+            if (my $extra = $event->{headers}) {
+                push @headers, @$extra;
+            }
+
+            $ss->{ws_accepted} = 1;
+            $ss->{response_started} = 1;
+            $ss->{ws_frame} = Protocol::WebSocket::Frame->new(
+                max_payload_size => $weak_self->{max_ws_frame_size},
+            );
+
+            # Submit 200 response with streaming body that defers
+            $weak_self->{h2_session}->submit_response($stream_id,
+                status  => 200,
+                headers => \@headers,
+                body    => sub { return undef },  # defer until submit_data
+            );
+            $weak_self->_h2_write_pending;
+
+            # Process any data that arrived before accept
+            if (length($ss->{body}) > 0) {
+                my $buffered = $ss->{body};
+                $ss->{body} = '';
+                $weak_self->_h2_process_ws_frames($stream_id, $ss, $buffered);
+            }
+        }
+        elsif ($type eq 'websocket.send') {
+            return unless $ss->{ws_accepted};
+
+            my $frame;
+            if (defined $event->{text}) {
+                $frame = Protocol::WebSocket::Frame->new(
+                    buffer => $event->{text},
+                    type   => 'text',
+                );
+            }
+            elsif (defined $event->{bytes}) {
+                $frame = Protocol::WebSocket::Frame->new(
+                    buffer => $event->{bytes},
+                    type   => 'binary',
+                );
+            }
+            else {
+                return;
+            }
+
+            my $bytes = $frame->to_bytes;
+            $weak_self->{h2_session}->submit_data($stream_id, $bytes, 0);
+            $weak_self->_h2_write_pending;
+        }
+        elsif ($type eq 'websocket.close') {
+            if (!$ss->{ws_accepted}) {
+                # Reject: send 403
+                $weak_self->{h2_session}->submit_response($stream_id,
+                    status  => 403,
+                    headers => [['content-type', 'text/plain']],
+                    body    => 'Forbidden',
+                );
+                $weak_self->_h2_write_pending;
+                return;
+            }
+
+            my $code = $event->{code} // 1000;
+            my $reason = $event->{reason} // '';
+
+            my $frame = Protocol::WebSocket::Frame->new(
+                type   => 'close',
+                buffer => pack('n', $code) . $reason,
+            );
+
+            # Send close frame + END_STREAM
+            $weak_self->{h2_session}->submit_data($stream_id, $frame->to_bytes, 1);
+            $weak_self->_h2_write_pending;
+        }
+
+        return;
+    };
+}
+
+sub _h2_process_ws_frames {
+    my ($self, $stream_id, $stream, $data) = @_;
+
+    my $frame = $stream->{ws_frame};
+    return unless $frame;
+
+    $frame->append($data);
+
+    while (defined(my $bytes = $frame->next_bytes)) {
+        my $opcode = $frame->opcode;
+
+        if ($opcode == 1) {
+            # Text frame
+            my $text = eval { Encode::decode('UTF-8', $bytes, Encode::FB_CROAK) };
+            unless (defined $text) {
+                $self->_h2_ws_close($stream_id, 1007, 'Invalid UTF-8');
+                return;
+            }
+            push @{$stream->{receive_queue}}, {
+                type => 'websocket.receive',
+                text => $text,
+            };
+        }
+        elsif ($opcode == 2) {
+            # Binary frame
+            push @{$stream->{receive_queue}}, {
+                type  => 'websocket.receive',
+                bytes => $bytes,
+            };
+        }
+        elsif ($opcode == 8) {
+            # Close frame
+            my ($code, $reason) = (1005, '');
+            if (length($bytes) >= 2) {
+                $code = unpack('n', substr($bytes, 0, 2));
+                $reason = substr($bytes, 2) // '';
+            }
+
+            # Send close frame back + END_STREAM
+            my $close_frame = Protocol::WebSocket::Frame->new(
+                type   => 'close',
+                buffer => pack('n', $code) . $reason,
+            );
+            $self->{h2_session}->submit_data($stream_id, $close_frame->to_bytes, 1);
+            $self->_h2_write_pending;
+
+            push @{$stream->{receive_queue}}, {
+                type   => 'websocket.disconnect',
+                code   => $code,
+                reason => $reason,
+            };
+        }
+        elsif ($opcode == 9) {
+            # Ping — respond with pong
+            my $pong = Protocol::WebSocket::Frame->new(
+                type   => 'pong',
+                buffer => $bytes,
+            );
+            $self->{h2_session}->submit_data($stream_id, $pong->to_bytes, 0);
+            $self->_h2_write_pending;
+        }
+        # Opcode 10 (pong) — ignore
+    }
+
+    $self->_h2_wake_pending($stream);
+}
+
+sub _h2_ws_close {
+    my ($self, $stream_id, $code, $reason) = @_;
+
+    my $frame = Protocol::WebSocket::Frame->new(
+        type   => 'close',
+        buffer => pack('n', $code) . ($reason // ''),
+    );
+    $self->{h2_session}->submit_data($stream_id, $frame->to_bytes, 1);
+    $self->_h2_write_pending;
 }
 
 # Request stall timeout - closes connection if no I/O activity during request processing

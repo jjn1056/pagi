@@ -362,6 +362,20 @@ sub resume_stream {
     return $self->{nghttp2}->resume_stream($stream_id);
 }
 
+=head2 submit_data
+
+    $session->submit_data($stream_id, $data, $eof);
+
+Push data directly onto a stream. Used for WebSocket frame delivery
+over HTTP/2 where frames are sent as DATA payloads.
+
+=cut
+
+sub submit_data {
+    my ($self, $stream_id, $data, $eof) = @_;
+    return $self->{nghttp2}->submit_data($stream_id, $data, $eof);
+}
+
 =head2 terminate
 
     $session->terminate($error_code);
