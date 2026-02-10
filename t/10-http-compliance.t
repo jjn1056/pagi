@@ -1201,6 +1201,7 @@ subtest 'Access logging writes request/response info' => sub {
     like($log_output, qr/\s200\s/, 'Access log contains status code');
     like($log_output, qr/127\.0\.0\.1/, 'Access log contains client IP');
     like($log_output, qr/\d+\.\d+s/, 'Access log contains request duration');
+    like($log_output, qr{\[\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} \+0000\]}, 'Access log contains CLF timestamp');
 
     $loop->remove($http);
     $server->shutdown->get;

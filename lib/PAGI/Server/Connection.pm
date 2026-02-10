@@ -17,6 +17,10 @@ use PAGI::Server::ConnectionState;
 
 use constant FILE_CHUNK_SIZE => 65536;  # 64KB chunks for file streaming
 
+# Per-second cache for CLF timestamp in access log (same pattern as HTTP1::format_date)
+my $_cached_log_timestamp;
+my $_cached_log_time = 0;
+
 # =============================================================================
 # Unrecognized Event Type Handler (PAGI spec compliance)
 # =============================================================================
@@ -2252,11 +2256,16 @@ sub _write_access_log {
     my $client_ip = $self->{client_host} // '-';
 
     # Format: client_ip - - [timestamp] "METHOD /path" status duration
-    my @gmt = gmtime(time);
-    my @months = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
-    my $timestamp = sprintf("%02d/%s/%04d:%02d:%02d:%02d +0000",
-        $gmt[3], $months[$gmt[4]], $gmt[5] + 1900,
-        $gmt[2], $gmt[1], $gmt[0]);
+    my $now = time();
+    if ($now != $_cached_log_time) {
+        $_cached_log_time = $now;
+        my @gmt = gmtime($now);
+        my @months = qw(Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec);
+        $_cached_log_timestamp = sprintf("%02d/%s/%04d:%02d:%02d:%02d +0000",
+            $gmt[3], $months[$gmt[4]], $gmt[5] + 1900,
+            $gmt[2], $gmt[1], $gmt[0]);
+    }
+    my $timestamp = $_cached_log_timestamp;
 
     my $log = $self->{access_log};
     print $log "$client_ip - - [$timestamp] \"$method $path\" $status ${duration}s\n";
