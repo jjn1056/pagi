@@ -506,10 +506,12 @@ sub load_server {
     # else: development mode uses server default (STDERR)
 
     # Build server
+    # When using a Unix socket, omit host/port (they are mutually exclusive)
+    my $use_socket = $server_opts{socket};
     return $server_class->new(
         app        => $self->{app},
-        host       => $self->{host} // '127.0.0.1',
-        port       => $self->{port} // 5000,
+        ($use_socket ? () : (host => $self->{host} // '127.0.0.1')),
+        ($use_socket ? () : (port => $self->{port} // 5000)),
         quiet      => $self->{quiet} // 0,
         ($self->{loop} ? (loop_type => $self->{loop}) : ()),
         (defined $access_log || $disable_log
@@ -532,6 +534,9 @@ sub _parse_server_options {
             'reuseport'             => \$opts{reuseport},
             'max-requests=i'        => \$opts{max_requests},
             'max-connections=i'     => \$opts{max_connections},
+
+            # Network
+            'socket=s'              => \$opts{socket},
 
             # TLS
             'ssl-cert=s'            => \$opts{_ssl_cert},

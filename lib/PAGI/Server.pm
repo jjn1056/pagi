@@ -138,6 +138,8 @@ B<Not yet implemented:>
 
 For HTTP/2, see L</ENABLING HTTP/2 SUPPORT (EXPERIMENTAL)>.
 
+For Unix domain sockets, see L</UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)>.
+
 =head1 WINDOWS SUPPORT
 
 B<PAGI::Server does not support Windows.>
@@ -204,6 +206,22 @@ rules are in place. For production, consider a reverse proxy (nginx, etc.)
 =item port => $port
 
 Bind port. Default: 5000
+
+=item socket => $path
+
+Listen on a Unix domain socket instead of a TCP port. B<Mutually exclusive>
+with C<host> and C<port> — specifying both will die at startup.
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+Works with both single-worker and multi-worker modes. The socket file is
+automatically removed on shutdown and any stale socket file is removed on
+startup. The C<reuseport> option is ignored when using Unix sockets.
+
+See L</UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)> for details.
 
 =item ssl => \%config
 
@@ -903,6 +921,12 @@ shutdown is complete.
 
 Returns the bound port number. Useful when port => 0 is used.
 
+=head2 socket_path
+
+    my $path = $server->socket_path;
+
+Returns the Unix domain socket path, or C<undef> if not using Unix sockets.
+
 =head2 is_running
 
     my $bool = $server->is_running;
@@ -1239,6 +1263,64 @@ C<h2_>. See L</CONSTRUCTOR> for details on:
 =item * C<h2_enable_connect_protocol> - WebSocket over HTTP/2 (default: enabled)
 
 =item * C<h2_max_header_list_size> - Max header block size (default: 65536)
+
+=back
+
+=head1 UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)
+
+B<Unix domain socket support is experimental.> The API and behavior may change
+in future releases.
+
+PAGI::Server can listen on a Unix domain socket instead of a TCP port. This
+is useful for reverse proxy setups (e.g., nginx) and benchmark frameworks
+(e.g., TechEmpower) where inter-process communication avoids TCP overhead.
+
+=head2 Basic Usage
+
+B<Via CLI (pagi-server):>
+
+    pagi-server --socket /tmp/pagi.sock ./app.pl
+
+B<Via constructor:>
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+=head2 With nginx Reverse Proxy
+
+    upstream pagi {
+        server unix:/tmp/pagi.sock;
+    }
+
+    server {
+        listen 80;
+        location / {
+            proxy_pass http://pagi;
+        }
+    }
+
+=head2 Behavior
+
+=over 4
+
+=item * B<Mutually exclusive> with C<host>/C<port>. Specifying both will
+die at startup.
+
+=item * Works with both B<single-worker> and B<multi-worker> modes. In
+multi-worker mode, the parent creates the socket and workers inherit it
+via fork.
+
+=item * The C<reuseport> option is B<ignored> when using Unix sockets
+(workers share the parent's socket).
+
+=item * Stale socket files are automatically B<removed on startup>.
+
+=item * The socket file is automatically B<removed on shutdown> (both
+graceful and multi-worker shutdown).
+
+=item * Use the C<socket_path> accessor to retrieve the configured path.
 
 =back
 
