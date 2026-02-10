@@ -118,7 +118,9 @@ B<Currently supported:>
 
 =item * HTTP/1.1 (full support including chunked encoding, trailers, keepalive)
 
-=item * WebSocket (RFC 6455)
+=item * HTTP/2 (B<experimental> - via nghttp2, h2 over TLS and h2c cleartext)
+
+=item * WebSocket (RFC 6455, including over HTTP/2 via RFC 8441)
 
 =item * Server-Sent Events (SSE)
 
@@ -128,14 +130,11 @@ B<Not yet implemented:>
 
 =over 4
 
-=item * HTTP/2 - Planned for a future release
-
 =item * HTTP/3 (QUIC) - Under consideration
 
 =back
 
-For HTTP/2 support today, run PAGI::Server behind a reverse proxy like nginx
-or Caddy that handles HTTP/2 on the frontend and speaks HTTP/1.1 to PAGI.
+For HTTP/2, see L</ENABLING HTTP/2 SUPPORT (EXPERIMENTAL)>.
 
 =head1 WINDOWS SUPPORT
 
@@ -797,6 +796,8 @@ C<loop_type =E<gt> 'EPoll'> requires L<IO::Async::Loop::EPoll>.
 
 =item h2_max_concurrent_streams => $count
 
+B<(Experimental - HTTP/2 support may change in future releases.)>
+
 Maximum number of concurrent HTTP/2 streams per connection. Each stream
 represents an in-flight request/response exchange. Limits resource consumption
 and provides protection against rapid-reset attacks.
@@ -811,6 +812,8 @@ Decrease for memory-constrained environments or when each request is expensive.
 
 =item h2_initial_window_size => $bytes
 
+B<(Experimental)>
+
 Initial HTTP/2 flow control window size per stream, in bytes. Controls how
 much data a client can send before the server must acknowledge receipt. Also
 affects how much response data the server can buffer per stream before the
@@ -824,6 +827,8 @@ connections. The tradeoff is higher per-stream memory usage.
 
 =item h2_max_frame_size => $bytes
 
+B<(Experimental)>
+
 Maximum size of a single HTTP/2 frame payload, in bytes. Must be between
 16384 (16KB, the RFC minimum) and 16777215 (16MB, the RFC maximum).
 
@@ -833,6 +838,8 @@ Most servers use the RFC default. Larger frames reduce framing overhead but
 increase head-of-line blocking within a stream.
 
 =item h2_enable_push => $bool
+
+B<(Experimental)>
 
 Enable HTTP/2 server push (SETTINGS_ENABLE_PUSH). When enabled, the server
 can proactively push resources to the client before they are requested.
@@ -845,6 +852,8 @@ case requiring server push, leave this disabled.
 
 =item h2_enable_connect_protocol => $bool
 
+B<(Experimental)>
+
 Enable the Extended CONNECT protocol (RFC 8441, SETTINGS_ENABLE_CONNECT_PROTOCOL).
 Required for WebSocket-over-HTTP/2 tunneling.
 
@@ -855,6 +864,8 @@ pseudo-header to establish WebSocket connections over HTTP/2 streams. Disable
 this only if you do not need WebSocket support over HTTP/2.
 
 =item h2_max_header_list_size => $bytes
+
+B<(Experimental)>
 
 Maximum total size of the header block that the server will accept, in bytes.
 This is the sum of all header name lengths, value lengths, and 32-byte per-entry
@@ -1129,6 +1140,103 @@ See the C<ssl> option in L</CONSTRUCTOR> for details on:
 =item * TLS version requirements (C<min_version>)
 
 =item * Custom cipher suites (C<cipher_list>)
+
+=back
+
+=head1 ENABLING HTTP/2 SUPPORT (EXPERIMENTAL)
+
+B<HTTP/2 support is experimental.> The API and behavior may change in future
+releases. Please report issues and provide feedback.
+
+PAGI::Server provides native HTTP/2 support via the nghttp2 C library
+(L<Net::HTTP2::nghttp2>). When enabled, the server supports both TLS-based
+HTTP/2 (h2 via ALPN negotiation) and cleartext HTTP/2 (h2c).
+
+=head2 Requirements
+
+L<Net::HTTP2::nghttp2> must be installed, which requires the nghttp2 C library:
+
+    # Install the C library
+    brew install nghttp2          # macOS
+    apt-get install libnghttp2-dev  # Debian/Ubuntu
+
+    # Install the Perl bindings
+    cpanm Net::HTTP2::nghttp2
+
+=head2 Enabling HTTP/2
+
+B<Via CLI (pagi-server):>
+
+    # HTTP/2 over TLS (recommended for production)
+    pagi-server --http2 --ssl-cert cert.pem --ssl-key key.pem --app myapp.pl
+
+    # HTTP/2 cleartext (h2c, for development/testing)
+    pagi-server --http2 --app myapp.pl
+
+B<Via constructor:>
+
+    my $server = PAGI::Server->new(
+        app   => $app,
+        http2 => 1,
+        ssl   => { cert_file => 'cert.pem', key_file => 'key.pem' },
+    );
+
+=head2 How It Works
+
+With TLS, the server advertises C<h2> and C<http/1.1> via ALPN during the
+TLS handshake. Clients that support HTTP/2 will negotiate C<h2> automatically;
+others fall back to HTTP/1.1 transparently.
+
+Without TLS, the server detects HTTP/2 via the client connection preface
+(h2c mode). HTTP/1.1 clients are handled normally.
+
+=head2 HTTP/2 Features
+
+=over 4
+
+=item * Stream multiplexing (100 concurrent streams per connection by default)
+
+=item * HPACK header compression
+
+=item * Per-stream and connection-level flow control
+
+=item * GOAWAY graceful session shutdown
+
+=item * Stream state validation (RST_STREAM on protocol violations)
+
+=item * WebSocket over HTTP/2 via Extended CONNECT (RFC 8441)
+
+=back
+
+=head2 Conformance
+
+Tested against h2spec (the HTTP/2 conformance test suite): B<137/146 (93.8%)>.
+All 9 remaining failures are shared with the bare nghttp2 C library and cannot
+be fixed at the application level.
+
+Load tested with h2load: 60,000 requests across 50 concurrent connections with
+zero failures.
+
+See L<PAGI::Server::Compliance> for full compliance details.
+
+=head2 Configuration
+
+HTTP/2 protocol settings are tuned via constructor options prefixed with
+C<h2_>. See L</CONSTRUCTOR> for details on:
+
+=over 4
+
+=item * C<h2_max_concurrent_streams> - Max streams per connection (default: 100)
+
+=item * C<h2_initial_window_size> - Flow control window (default: 65535)
+
+=item * C<h2_max_frame_size> - Max frame payload (default: 16384)
+
+=item * C<h2_enable_push> - Server push (default: disabled)
+
+=item * C<h2_enable_connect_protocol> - WebSocket over HTTP/2 (default: enabled)
+
+=item * C<h2_max_header_list_size> - Max header block size (default: 65536)
 
 =back
 
@@ -2824,7 +2932,9 @@ error message explaining how to fix it.
 
 =head1 SEE ALSO
 
-L<PAGI::Server::Connection>, L<PAGI::Server::Protocol::HTTP1>, L<Future::IO>
+L<PAGI::Server::Connection>, L<PAGI::Server::Protocol::HTTP1>,
+L<PAGI::Server::Protocol::HTTP2>, L<PAGI::Server::Compliance>,
+L<Net::HTTP2::nghttp2>, L<Future::IO>
 
 =head1 AUTHOR
 
