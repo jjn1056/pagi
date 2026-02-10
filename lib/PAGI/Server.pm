@@ -37,6 +37,8 @@ use IO::Async::Listener;
 use IO::Async::Stream;
 use IO::Async::Loop;
 use IO::Socket::INET;
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
 use Future;
 use Future::AsyncAwait;
 
@@ -1905,7 +1907,18 @@ sub _listen_multiworker {
 
     my $listen_socket;
 
-    if ($reuseport) {
+    if ($self->{socket}) {
+        # Unix domain socket mode: parent creates socket, workers inherit it
+        # (reuseport is N/A for Unix sockets)
+        my $socket_path = $self->{socket};
+        unlink $socket_path if -S $socket_path;
+        $listen_socket = IO::Socket::UNIX->new(
+            Local    => $socket_path,
+            Listen   => $self->{listener_backlog},
+            Type     => SOCK_STREAM,
+        ) or die "Cannot create Unix listening socket at $socket_path: $!";
+    }
+    elsif ($reuseport) {
         # SO_REUSEPORT mode: each worker creates its own socket
         # Parent just needs to know the port for display purposes
         # We do a quick bind to validate port availability and get actual port if 0
@@ -1944,7 +1957,7 @@ sub _listen_multiworker {
     my $scheme = $self->{ssl} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
-    my $mode = $reuseport ? 'reuseport' : 'shared-socket';
+    my $mode = $self->{socket} ? 'unix-socket' : ($reuseport ? 'reuseport' : 'shared-socket');
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
     my $http2_status = $self->_http2_status_string;
@@ -1958,7 +1971,10 @@ sub _listen_multiworker {
         );
     }
 
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    my $listen_addr = $self->{socket}
+        ? "unix:$self->{socket}"
+        : "$scheme://$self->{host}:$self->{bound_port}/";
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $listen_addr with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -2007,6 +2023,11 @@ sub _initiate_multiworker_shutdown {
     if ($self->{listen_socket}) {
         close($self->{listen_socket});
         delete $self->{listen_socket};
+    }
+
+    # Clean up Unix domain socket file
+    if ($self->{socket} && -S $self->{socket}) {
+        unlink $self->{socket};
     }
 
     # Signal all workers to shutdown
@@ -2137,9 +2158,9 @@ sub _run_as_worker {
     #       or it will overwrite the IGNORE with a CODE ref!
     my $loop = IO::Async::Loop->new;
 
-    # In reuseport mode, each worker creates its own listening socket
+    # In reuseport mode (TCP only), each worker creates its own listening socket
     my $reuseport = $self->{reuseport};
-    if ($reuseport && !$listen_socket) {
+    if ($reuseport && !$self->{socket} && !$listen_socket) {
         $listen_socket = IO::Socket::INET->new(
             LocalAddr => $self->{host},
             LocalPort => $self->{bound_port},  # Use the port determined by parent
@@ -2152,10 +2173,9 @@ sub _run_as_worker {
     }
 
     # Create a fresh server instance for this worker (single-worker mode)
-    my $worker_server = PAGI::Server->new(
+    # Pass socket or host/port depending on mode
+    my %worker_opts = (
         app             => $self->{app},
-        host            => $self->{host},
-        port            => $self->{port},
         ssl             => $self->{ssl},
         http2           => $self->{http2},
         extensions      => $self->{extensions},
@@ -2170,10 +2190,18 @@ sub _run_as_worker {
         max_requests     => $self->{max_requests},
         workers          => 0,  # Single-worker mode in worker process
     );
+    if ($self->{socket}) {
+        $worker_opts{socket} = $self->{socket};
+    } else {
+        $worker_opts{host} = $self->{host};
+        $worker_opts{port} = $self->{port};
+    }
+    my $worker_server = PAGI::Server->new(%worker_opts);
     $worker_server->{is_worker} = 1;
     $worker_server->{worker_num} = $worker_num;  # Store for lifespan scope
     $worker_server->{_request_count} = 0;  # Track requests handled
-    $worker_server->{bound_port} = $listen_socket->sockport;
+    $worker_server->{bound_port} = $listen_socket->sockport
+        if $listen_socket && $listen_socket->can('sockport');
 
     $loop->add($worker_server);
 

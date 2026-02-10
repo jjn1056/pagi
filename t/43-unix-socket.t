@@ -8,6 +8,7 @@ use IO::Async::Stream;
 use Future::AsyncAwait;
 use IO::Socket::UNIX;
 use File::Temp ();
+use POSIX ':sys_wait_h';
 
 use FindBin;
 use lib "$FindBin::Bin/../lib";
@@ -218,6 +219,75 @@ subtest 'Stale socket file removed on startup' => sub {
 
     $server->shutdown->get;
     $loop->remove($server);
+};
+
+# Test 7: Multi-worker listens and responds on Unix socket
+subtest 'Multi-worker listens and responds on Unix socket' => sub {
+    my $socket_path = tmp_socket_path();
+
+    my $server_pid = fork();
+    die "Fork failed: $!" unless defined $server_pid;
+
+    if ($server_pid == 0) {
+        # Child: run multi-worker server
+        my $child_loop = IO::Async::Loop->new;
+        my $server = PAGI::Server->new(
+            app        => $app,
+            socket     => $socket_path,
+            workers    => 2,
+            quiet      => 1,
+            access_log => undef,
+        );
+        $child_loop->add($server);
+        $server->listen->get;
+        $child_loop->run;
+        exit(0);
+    }
+
+    # Parent: wait for server to start
+    my $started = 0;
+    for my $i (1..30) {
+        if (-S $socket_path) {
+            $started = 1;
+            last;
+        }
+        select(undef, undef, undef, 0.1);  # sleep 100ms
+    }
+    ok($started, 'Socket file appeared (server started)');
+
+    if ($started) {
+        # Connect and verify response
+        my $sock = IO::Socket::UNIX->new(Peer => $socket_path);
+        ok($sock, 'Connected to Unix socket');
+
+        if ($sock) {
+            $sock->print("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            my $response = '';
+            while (my $line = <$sock>) {
+                $response .= $line;
+            }
+            close $sock;
+
+            like($response, qr/HTTP\/1\.1 200/, 'Got 200 response from multi-worker');
+            like($response, qr/hello from unix socket/, 'Got expected body from multi-worker');
+        }
+    }
+
+    # Signal shutdown and wait
+    kill 'TERM', $server_pid;
+    my $terminated = 0;
+    for my $i (1..10) {
+        my $result = waitpid($server_pid, POSIX::WNOHANG());
+        if ($result > 0) {
+            $terminated = 1;
+            last;
+        }
+        sleep 1;
+    }
+    ok($terminated, 'Server terminated after SIGTERM');
+
+    # Socket should be cleaned up
+    ok(! -e $socket_path, 'Socket file cleaned up after multi-worker shutdown');
 };
 
 done_testing;
