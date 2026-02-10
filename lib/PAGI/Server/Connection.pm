@@ -373,9 +373,8 @@ sub _h2_process_data {
     return unless $self->{h2_session};
 
     if (length($self->{buffer}) > 0) {
-        my $data = $self->{buffer};
+        $self->{h2_session}->feed($self->{buffer});
         $self->{buffer} = '';
-        $self->{h2_session}->feed($data);
     }
 
     $self->_h2_write_pending;
@@ -421,7 +420,24 @@ sub _h2_on_request {
         }
     }
 
+    # Initialize per-stream state
+    $self->{h2_streams}{$stream_id} = {
+        pseudo    => $pseudo,
+        headers   => $headers,
+        has_body  => $has_body,
+        body      => '',
+        body_complete => !$has_body,
+        body_pending  => undef,   # Future for body availability
+        receive_queue => [],
+        response_started => 0,
+        is_websocket => $is_websocket,
+        ws_accepted  => 0,
+        ws_frame     => undef,   # Protocol::WebSocket::Frame for parsing
+        ws_connect_sent => 0,
+    };
+
     # Check Content-Length against max_body_size limit before dispatching
+    # (after stream init so _h2_on_body/_h2_on_close can find the stream)
     if ($self->{max_body_size} && $has_body) {
         for my $h (@$headers) {
             if ($h->[0] eq 'content-length') {
@@ -444,22 +460,6 @@ sub _h2_on_request {
             }
         }
     }
-
-    # Initialize per-stream state
-    $self->{h2_streams}{$stream_id} = {
-        pseudo    => $pseudo,
-        headers   => $headers,
-        has_body  => $has_body,
-        body      => '',
-        body_complete => !$has_body,
-        body_pending  => undef,   # Future for body availability
-        receive_queue => [],
-        response_started => 0,
-        is_websocket => $is_websocket,
-        ws_accepted  => 0,
-        ws_frame     => undef,   # Protocol::WebSocket::Frame for parsing
-        ws_connect_sent => 0,
-    };
 
     # Defer dispatch to next event loop tick to prevent re-entrant nghttp2 calls
     weaken(my $weak_self = $self);
@@ -640,7 +640,7 @@ sub _h2_create_scope {
         headers      => $headers,
         client       => [$self->{client_host}, $self->{client_port}],
         server       => [$self->{server_host}, $self->{server_port}],
-        state        => %{$self->{state}} ? { %{$self->{state}} } : {},
+        state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
         'pagi.connection' => $connection_state,
     };
@@ -754,8 +754,9 @@ sub _h2_create_send {
         my $type = $event->{type} // '';
 
         if ($type eq 'http.response.start') {
-            return if $stream_state->{response_started};
-            $stream_state->{response_started} = 1;
+            my $ss = $weak_self->{h2_streams}{$stream_id} or return;
+            return if $ss->{response_started};
+            $ss->{response_started} = 1;
 
             $status = $event->{status} // 200;
             @response_headers = map {
@@ -763,7 +764,8 @@ sub _h2_create_send {
             } @{$event->{headers} // []};
         }
         elsif ($type eq 'http.response.body') {
-            return unless $stream_state->{response_started};
+            my $ss = $weak_self->{h2_streams}{$stream_id} or return;
+            return unless $ss->{response_started};
 
             my $body = $event->{body} // '';
             my $more = $event->{more} // 0;
@@ -786,9 +788,9 @@ sub _h2_create_send {
                         await $weak_self->_wait_for_drain;
                         return unless $weak_self;
                         return if $weak_self->{closed};
+                        return unless $weak_self->{h2_streams}{$stream_id};
                     }
                     push @data_queue, $body if length($body);
-                    return unless $weak_self->{h2_streams}{$stream_id};
                     $weak_self->{h2_session}->resume_stream($stream_id);
                     $weak_self->_h2_write_pending;
                 }
@@ -799,10 +801,10 @@ sub _h2_create_send {
                         await $weak_self->_wait_for_drain;
                         return unless $weak_self;
                         return if $weak_self->{closed};
+                        return unless $weak_self->{h2_streams}{$stream_id};
                     }
                     $eof_pending = 1;
                     push @data_queue, $body if length($body);
-                    return unless $weak_self->{h2_streams}{$stream_id};
                     $weak_self->{h2_session}->resume_stream($stream_id);
                     $weak_self->_h2_write_pending;
                 } else {
@@ -869,7 +871,7 @@ sub _h2_create_websocket_scope {
         client       => [$self->{client_host}, $self->{client_port}],
         server       => [$self->{server_host}, $self->{server_port}],
         subprotocols => \@subprotocols,
-        state        => %{$self->{state}} ? { %{$self->{state}} } : {},
+        state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
         'pagi.connection' => $connection_state,
     };
@@ -1788,7 +1790,7 @@ sub _create_scope {
         client       => [$self->{client_host}, $self->{client_port}],
         server       => [$self->{server_host}, $self->{server_port}],
         # Optimized: avoid hash copy when state is empty (common case)
-        state        => %{$self->{state}} ? { %{$self->{state}} } : {},
+        state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
         # Connection state for non-destructive disconnect detection (PAGI spec 0.3)
         'pagi.connection' => $connection_state,
@@ -2640,7 +2642,7 @@ sub _create_sse_scope {
         client       => [$self->{client_host}, $self->{client_port}],
         server       => [$self->{server_host}, $self->{server_port}],
         # Optimized: avoid hash copy when state is empty (common case)
-        state        => %{$self->{state}} ? { %{$self->{state}} } : {},
+        state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
     };
 
@@ -2976,7 +2978,7 @@ sub _create_websocket_scope {
         server       => [$self->{server_host}, $self->{server_port}],
         subprotocols => \@subprotocols,
         # Optimized: avoid hash copy when state is empty (common case)
-        state        => %{$self->{state}} ? { %{$self->{state}} } : {},
+        state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
     };
 
