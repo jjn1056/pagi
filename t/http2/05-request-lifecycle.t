@@ -11,6 +11,10 @@ use Socket qw(AF_UNIX SOCK_STREAM);
 use Scalar::Util qw(weaken);
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
+BEGIN {
+    eval { require Net::HTTP2::nghttp2; 1 }
+        or plan(skip_all => 'Net::HTTP2::nghttp2 not installed (optional)');
+}
 
 # ============================================================
 # Test: HTTP/2 request → PAGI lifecycle

@@ -9,6 +9,10 @@ use lib "$FindBin::Bin/../../lib";
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
 plan skip_all => "Fork not available on this platform" if $^O eq 'MSWin32';
+BEGIN {
+    eval { require Net::HTTP2::nghttp2; 1 }
+        or plan(skip_all => 'Net::HTTP2::nghttp2 not installed (optional)');
+}
 
 # ============================================================
 # Test: Multi-Worker HTTP/2 Support

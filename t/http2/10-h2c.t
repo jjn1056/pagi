@@ -9,6 +9,10 @@ use lib "$FindBin::Bin/../../lib";
 use Socket qw(AF_UNIX SOCK_STREAM);
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
+BEGIN {
+    eval { require Net::HTTP2::nghttp2; 1 }
+        or plan(skip_all => 'Net::HTTP2::nghttp2 not installed (optional)');
+}
 
 # ============================================================
 # Test: Cleartext HTTP/2 (h2c) via Client Preface Detection
