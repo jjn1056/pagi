@@ -1336,10 +1336,21 @@ sub _init {
     my ($self, $params) = @_;
 
     $self->{app}              = delete $params->{app} or die "app is required";
+    my $has_host              = exists $params->{host};
+    my $has_port              = exists $params->{port};
     $self->{host}             = delete $params->{host} // '127.0.0.1';
     $self->{port}             = delete $params->{port} // 5000;
+    $self->{socket}           = delete $params->{socket};
     $self->{ssl}              = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
+
+    # Unix domain socket: mutually exclusive with explicit host/port
+    if ($self->{socket}) {
+        die "Cannot use 'socket' with 'host' — they are mutually exclusive\n" if $has_host;
+        die "Cannot use 'socket' with 'port' — they are mutually exclusive\n" if $has_port;
+        $self->{host} = undef;
+        $self->{port} = undef;
+    }
 
     # Validate SSL certificate files at startup (fail fast)
     # Skip validation if TLS is explicitly disabled
@@ -1766,13 +1777,25 @@ async sub _listen_singleworker {
     # Build listener options
     my %listen_opts = (
         queuesize => $self->{listener_backlog},
-        addr => {
+    );
+
+    if (my $socket_path = $self->{socket}) {
+        # Unix domain socket mode
+        unlink $socket_path if -S $socket_path;
+        $listen_opts{addr} = {
+            family   => 'unix',
+            socktype => 'stream',
+            path     => $socket_path,
+        };
+    } else {
+        # TCP/IP mode
+        $listen_opts{addr} = {
             family   => 'inet',
             socktype => 'stream',
             ip       => $self->{host},
             port     => $self->{port},
-        },
-    );
+        };
+    }
 
     # Add SSL options if configured
     if (my $ssl_params = $self->_build_ssl_config) {
@@ -1805,9 +1828,11 @@ async sub _listen_singleworker {
         $self->_log(debug => "Could not configure on_accept_error (likely SSL listener): $@");
     }
 
-    # Store the actual bound port from the listener's read handle
-    my $socket = $listener->read_handle;
-    $self->{bound_port} = $socket->sockport if $socket && $socket->can('sockport');
+    # Store the actual bound port from the listener's read handle (TCP only)
+    if (!$self->{socket}) {
+        my $socket = $listener->read_handle;
+        $self->{bound_port} = $socket->sockport if $socket && $socket->can('sockport');
+    }
     $self->{running} = 1;
 
     # Set up signal handlers for graceful shutdown (single-worker mode)
@@ -1855,7 +1880,10 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    my $listen_addr = $self->{socket}
+        ? "unix:$self->{socket}"
+        : "$scheme://$self->{host}:$self->{bound_port}/";
+    $self->_log(info => "PAGI Server listening on $listen_addr (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -2606,6 +2634,11 @@ async sub shutdown {
         $self->_log(warn => "PAGI Server shutdown warning: $message");
     }
 
+    # Clean up Unix domain socket file
+    if ($self->{socket} && -S $self->{socket}) {
+        unlink $self->{socket};
+    }
+
     return $self;
 }
 
@@ -2664,6 +2697,12 @@ sub port {
     my ($self) = @_;
 
     return $self->{bound_port} // $self->{port};
+}
+
+sub socket_path {
+    my ($self) = @_;
+
+    return $self->{socket};
 }
 
 sub is_running {
