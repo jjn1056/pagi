@@ -296,26 +296,19 @@ sub serialize_response_start {
     my $phrase = $STATUS_PHRASES{$status} // 'Unknown';
     my $response = "HTTP/$http_version $status $phrase\r\n";
 
-    # Check if app provided a Server header
+    # Serialize headers and detect app-provided Server header in a single pass
     my $has_server = 0;
     for my $header (@$headers) {
-        if (lc($header->[0]) eq 'server') {
-            $has_server = 1;
-            last;
-        }
-    }
-
-    # Add default Server header if not provided
-    unless ($has_server) {
-        $response .= "Server: PAGI::Server/$PAGI::Server::VERSION\r\n";
-    }
-
-    # Add headers (with CRLF injection validation)
-    for my $header (@$headers) {
         my ($name, $value) = @$header;
+        $has_server = 1 if lc($name) eq 'server';
         $name = _validate_header_name($name);
         $value = _validate_header_value($value);
         $response .= "$name: $value\r\n";
+    }
+
+    # Add default Server header if app didn't provide one
+    unless ($has_server) {
+        $response .= "Server: PAGI::Server/$PAGI::Server::VERSION\r\n";
     }
 
     # Add Transfer-Encoding if chunked (HTTP/1.1 only)
