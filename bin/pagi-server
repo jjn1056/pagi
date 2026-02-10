@@ -278,6 +278,17 @@ Must be installed separately: C<cpanm Future::XS>
 
 Can also be enabled via environment variable: C<PAGI_FUTURE_XS=1>
 
+=item B<--http2>
+
+Enable HTTP/2 support. Requires L<Net::HTTP2::nghttp2>.
+
+When combined with C<--ssl-cert>/C<--ssl-key>, uses ALPN negotiation
+(h2/http/1.1). Without TLS, enables h2c (cleartext HTTP/2) mode.
+
+See L<PAGI::Server> for HTTP/2 protocol tuning options
+(C<h2_max_concurrent_streams>, C<h2_initial_window_size>, etc.)
+which can be passed via the constructor API.
+
 =back
 
 =head1 APP SPECIFICATION

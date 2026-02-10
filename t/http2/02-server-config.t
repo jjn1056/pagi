@@ -190,4 +190,70 @@ subtest 'h2c_enabled NOT set for TLS http2' => sub {
     ok(!$server->{h2c_enabled}, 'h2c_enabled not set for TLS http2');
 };
 
+# ============================================================
+# HTTP/2 protocol settings use sensible defaults
+# ============================================================
+subtest 'HTTP/2 protocol settings defaults' => sub {
+    my $server = PAGI::Server->new(
+        app   => $app,
+        host  => '127.0.0.1',
+        port  => 0,
+        quiet => 1,
+        http2 => 1,
+    );
+
+    my $proto = $server->{http2_protocol};
+    ok($proto, 'http2_protocol created');
+    is($proto->{max_concurrent_streams}, 100, 'default max_concurrent_streams is 100');
+    is($proto->{initial_window_size}, 65535, 'default initial_window_size is 65535');
+    is($proto->{max_frame_size}, 16384, 'default max_frame_size is 16384');
+    is($proto->{enable_push}, 0, 'default enable_push is 0');
+    is($proto->{enable_connect_protocol}, 1, 'default enable_connect_protocol is 1');
+    is($proto->{max_header_list_size}, 65536, 'default max_header_list_size is 65536');
+};
+
+# ============================================================
+# HTTP/2 protocol settings can be customized
+# ============================================================
+subtest 'HTTP/2 protocol settings customization' => sub {
+    my $server = PAGI::Server->new(
+        app   => $app,
+        host  => '127.0.0.1',
+        port  => 0,
+        quiet => 1,
+        http2 => 1,
+        h2_max_concurrent_streams  => 200,
+        h2_initial_window_size     => 131072,
+        h2_max_frame_size          => 32768,
+        h2_enable_push             => 1,
+        h2_enable_connect_protocol => 0,
+        h2_max_header_list_size    => 131072,
+    );
+
+    my $proto = $server->{http2_protocol};
+    ok($proto, 'http2_protocol created with custom settings');
+    is($proto->{max_concurrent_streams}, 200, 'custom max_concurrent_streams');
+    is($proto->{initial_window_size}, 131072, 'custom initial_window_size');
+    is($proto->{max_frame_size}, 32768, 'custom max_frame_size');
+    is($proto->{enable_push}, 1, 'custom enable_push');
+    is($proto->{enable_connect_protocol}, 0, 'custom enable_connect_protocol');
+    is($proto->{max_header_list_size}, 131072, 'custom max_header_list_size');
+};
+
+# ============================================================
+# HTTP/2 settings ignored when http2 is disabled
+# ============================================================
+subtest 'HTTP/2 settings ignored when http2 disabled' => sub {
+    my $server = PAGI::Server->new(
+        app   => $app,
+        host  => '127.0.0.1',
+        port  => 0,
+        quiet => 1,
+        # http2 not set (defaults to 0)
+        h2_max_concurrent_streams => 200,
+    );
+
+    ok(!$server->{http2_protocol}, 'no http2_protocol when http2 disabled');
+};
+
 done_testing;

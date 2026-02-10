@@ -795,6 +795,77 @@ B<CLI:> C<--loop EPoll> (via pagi-server)
 B<Note:> The specified backend module must be installed. For example,
 C<loop_type =E<gt> 'EPoll'> requires L<IO::Async::Loop::EPoll>.
 
+=item h2_max_concurrent_streams => $count
+
+Maximum number of concurrent HTTP/2 streams per connection. Each stream
+represents an in-flight request/response exchange. Limits resource consumption
+and provides protection against rapid-reset attacks.
+
+B<Default:> 100
+
+This matches Apache httpd, H2O, and Hypercorn defaults. The RFC 7540 default
+is unlimited, but 100 is the industry consensus for a safe maximum.
+
+B<Tuning:> Increase for API gateways handling many small concurrent requests.
+Decrease for memory-constrained environments or when each request is expensive.
+
+=item h2_initial_window_size => $bytes
+
+Initial HTTP/2 flow control window size per stream, in bytes. Controls how
+much data a client can send before the server must acknowledge receipt. Also
+affects how much response data the server can buffer per stream before the
+client acknowledges.
+
+B<Default:> 65535 (64KB minus 1, the RFC 7540 default)
+
+B<Tuning:> Increase to 131072-262144 for high-throughput file upload/download
+workloads where the default window causes flow control stalls on high-latency
+connections. The tradeoff is higher per-stream memory usage.
+
+=item h2_max_frame_size => $bytes
+
+Maximum size of a single HTTP/2 frame payload, in bytes. Must be between
+16384 (16KB, the RFC minimum) and 16777215 (16MB, the RFC maximum).
+
+B<Default:> 16384 (16KB, the RFC 7540 default)
+
+Most servers use the RFC default. Larger frames reduce framing overhead but
+increase head-of-line blocking within a stream.
+
+=item h2_enable_push => $bool
+
+Enable HTTP/2 server push (SETTINGS_ENABLE_PUSH). When enabled, the server
+can proactively push resources to the client before they are requested.
+
+B<Default:> 0 (disabled)
+
+Server push is effectively deprecated. Chrome removed support in 2022,
+and nginx deprecated it in version 1.25.1. Unless you have a specific use
+case requiring server push, leave this disabled.
+
+=item h2_enable_connect_protocol => $bool
+
+Enable the Extended CONNECT protocol (RFC 8441, SETTINGS_ENABLE_CONNECT_PROTOCOL).
+Required for WebSocket-over-HTTP/2 tunneling.
+
+B<Default:> 1 (enabled)
+
+When enabled, clients can use the Extended CONNECT method with a C<:protocol>
+pseudo-header to establish WebSocket connections over HTTP/2 streams. Disable
+this only if you do not need WebSocket support over HTTP/2.
+
+=item h2_max_header_list_size => $bytes
+
+Maximum total size of the header block that the server will accept, in bytes.
+This is the sum of all header name lengths, value lengths, and 32-byte per-entry
+overhead as defined by RFC 7540 Section 6.5.2.
+
+B<Default:> 65536 (64KB)
+
+Matches Hypercorn and Node.js defaults. Provides a guard against header-based
+memory exhaustion attacks while being generous enough for normal use including
+large cookies and authorization tokens.
+
 =back
 
 =head1 METHODS
@@ -1218,6 +1289,14 @@ sub _init {
     # HTTP/2 support (opt-in, experimental)
     $self->{http2} = delete $params->{http2} // $ENV{_PAGI_SERVER_HTTP2} // 0;
 
+    # HTTP/2 protocol settings (only used when http2 is enabled)
+    my $h2_max_concurrent_streams  = delete $params->{h2_max_concurrent_streams}  // 100;
+    my $h2_initial_window_size     = delete $params->{h2_initial_window_size}     // 65535;
+    my $h2_max_frame_size          = delete $params->{h2_max_frame_size}          // 16384;
+    my $h2_enable_push             = delete $params->{h2_enable_push}             // 0;
+    my $h2_enable_connect_protocol = delete $params->{h2_enable_connect_protocol} // 1;
+    my $h2_max_header_list_size    = delete $params->{h2_max_header_list_size}    // 65536;
+
     $self->{running}     = 0;
     $self->{bound_port}  = undef;
     $self->{listener}    = undef;
@@ -1234,11 +1313,12 @@ sub _init {
     if ($self->{http2}) {
         if ($HTTP2_AVAILABLE) {
             $self->{http2_protocol} = PAGI::Server::Protocol::HTTP2->new(
-                max_concurrent_streams  => 100,
-                initial_window_size     => 65535,
-                max_frame_size          => 16384,
-                enable_push             => 0,
-                enable_connect_protocol => 1,
+                max_concurrent_streams  => $h2_max_concurrent_streams,
+                initial_window_size     => $h2_initial_window_size,
+                max_frame_size          => $h2_max_frame_size,
+                enable_push             => $h2_enable_push,
+                enable_connect_protocol => $h2_enable_connect_protocol,
+                max_header_list_size    => $h2_max_header_list_size,
             );
             $self->{http2_enabled} = 1;
 
