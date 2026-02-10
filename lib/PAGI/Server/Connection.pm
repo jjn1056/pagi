@@ -378,13 +378,20 @@ sub _h2_process_data {
     }
 
     $self->_h2_write_pending;
+
+    # Close connection when session is done (GOAWAY received or sent)
+    if ($self->{h2_session} && !$self->{h2_session}->want_read) {
+        $self->_h2_write_pending;  # Flush any remaining output
+        $self->_handle_disconnect_and_close;
+    }
 }
 
 sub _h2_write_pending {
     my ($self) = @_;
     return unless $self->{h2_session};
-    my $data = $self->{h2_session}->extract;
-    if (defined $data && length($data) > 0) {
+    while (1) {
+        my $data = $self->{h2_session}->extract;
+        last unless defined $data && length($data) > 0;
         $self->{stream}->write($data);
     }
 }

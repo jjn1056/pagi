@@ -213,6 +213,12 @@ sub _init_nghttp2_session {
                 # HEADERS frame = request headers complete
                 if ($type == Net::HTTP2::nghttp2::NGHTTP2_HEADERS()) {
                     my $stream = $weak_self->{streams}{$stream_id};
+
+                    # Reject HEADERS on a stream where client already sent END_STREAM
+                    if ($stream && $stream->{client_end_stream}) {
+                        return Net::HTTP2::nghttp2::NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE();
+                    }
+
                     if ($stream && $weak_self->{on_request}) {
                         my $headers = $stream->{headers};
                         my $pseudo  = $stream->{pseudo};
@@ -249,6 +255,12 @@ sub _init_nghttp2_session {
                         }
 
                         my $end_stream = $flags & Net::HTTP2::nghttp2::NGHTTP2_FLAG_END_STREAM();
+
+                        # Track that client has finished sending on this stream
+                        if ($end_stream) {
+                            $stream->{client_end_stream} = 1;
+                        }
+
                         $weak_self->{on_request}->(
                             $stream_id,
                             $pseudo,
@@ -261,8 +273,12 @@ sub _init_nghttp2_session {
                 # DATA frame with END_STREAM = body complete
                 if ($type == Net::HTTP2::nghttp2::NGHTTP2_DATA()) {
                     my $end_stream = $flags & Net::HTTP2::nghttp2::NGHTTP2_FLAG_END_STREAM();
-                    if ($end_stream && $weak_self->{on_body}) {
-                        $weak_self->{on_body}->($stream_id, '', 1);
+                    if ($end_stream) {
+                        my $stream = $weak_self->{streams}{$stream_id};
+                        $stream->{client_end_stream} = 1 if $stream;
+                        if ($weak_self->{on_body}) {
+                            $weak_self->{on_body}->($stream_id, '', 1);
+                        }
                     }
                 }
 
@@ -272,6 +288,12 @@ sub _init_nghttp2_session {
             on_data_chunk_recv => sub {
                 my ($stream_id, $data, $flags) = @_;
                 return 0 unless $weak_self;
+
+                # Reject DATA on a stream where client already sent END_STREAM
+                my $stream = $weak_self->{streams}{$stream_id};
+                if ($stream && $stream->{client_end_stream}) {
+                    return Net::HTTP2::nghttp2::NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE();
+                }
 
                 if ($weak_self->{on_body}) {
                     # END_STREAM comes in frame_recv, not here
