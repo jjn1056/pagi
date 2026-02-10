@@ -7,7 +7,7 @@
 #
 # This test verifies:
 # 1. The _unrecognized_event_type helper function exists and works correctly
-# 2. All three send handlers (HTTP, SSE, WebSocket) call this function
+# 2. All four send handlers (HTTP/1.1, HTTP/2, SSE, WebSocket) call this function
 # =============================================================================
 
 use strict;
@@ -60,9 +60,9 @@ subtest 'send handlers have unrecognized type handling' => sub {
         'WebSocket send handler has unrecognized event type check'
     );
 
-    # Count occurrences - should be exactly 3 calls
+    # Count occurrences - should be exactly 4 calls (HTTP/1.1, HTTP/2, SSE, WebSocket)
     my @calls = $source =~ /_unrecognized_event_type\(\$type,/g;
-    is(scalar @calls, 3, 'exactly 3 protocol handlers call _unrecognized_event_type');
+    is(scalar @calls, 4, 'exactly 4 protocol handlers call _unrecognized_event_type');
 };
 
 subtest 'helper function logic' => sub {
