@@ -110,6 +110,9 @@ Serializes HTTP trailers.
 my $_cached_date;
 my $_cached_date_time = 0;
 
+# Cached default Server header (lazy-init to ensure VERSION is loaded)
+my $_server_header;
+
 # HTTP status code reason phrases
 my %STATUS_PHRASES = (
     100 => 'Continue',
@@ -308,7 +311,8 @@ sub serialize_response_start {
 
     # Add default Server header if app didn't provide one
     unless ($has_server) {
-        $response .= "Server: PAGI::Server/$PAGI::Server::VERSION\r\n";
+        $_server_header //= "Server: PAGI::Server/$PAGI::Server::VERSION\r\n";
+        $response .= $_server_header;
     }
 
     # Add Transfer-Encoding if chunked (HTTP/1.1 only)
