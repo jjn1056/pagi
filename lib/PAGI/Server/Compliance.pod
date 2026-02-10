@@ -1,14 +1,16 @@
 =head1 NAME
 
-PAGI::Server::Compliance - HTTP/1.1, WebSocket, and Security Compliance Documentation
+PAGI::Server::Compliance - HTTP/1.1, HTTP/2, WebSocket, and Security Compliance Documentation
 
 =head1 DESCRIPTION
 
 This document details the compliance testing results for PAGI::Server against
-HTTP/1.1 (RFC 7230/7231), WebSocket (RFC 6455), and common security attack vectors.
+HTTP/1.1 (RFC 7230/7231), HTTP/2 (RFC 9113), WebSocket (RFC 6455), and common
+security attack vectors.
 
-PAGI::Server demonstrates full HTTP/1.1 compliance, strong security posture,
-stable resource management, and 71% WebSocket RFC 6455 compliance.
+PAGI::Server demonstrates full HTTP/1.1 compliance, 93.8% HTTP/2 conformance
+(matching the nghttp2 library ceiling), strong security posture, stable resource
+management, and 71% WebSocket RFC 6455 compliance.
 
 =head1 TEST ENVIRONMENT
 
@@ -20,7 +22,7 @@ stable resource management, and 71% WebSocket RFC 6455 compliance.
 
 =item * B<Event Loop>: EV with kqueue (macOS) or epoll (Linux)
 
-=item * B<Test Date>: December 2025
+=item * B<Test Date>: February 2026
 
 =back
 
@@ -30,6 +32,7 @@ stable resource management, and 71% WebSocket RFC 6455 compliance.
     | Category                  | Tests | Passed | Failed |
     +---------------------------+-------+--------+--------+
     | HTTP/1.1 Compliance       |    10 |     10 |      0 |
+    | HTTP/2 (h2spec)           |   146 |    137 |      9 |
     | Slow HTTP Attacks         |     4 |      4 |      0 |
     | Concurrent Attack+Traffic |     1 |      1 |      0 |
     | Request Smuggling         |     6 |      6 |      0 |
@@ -70,6 +73,122 @@ HTTP/1.0 requests without Host are allowed per specification.
 
 Transfer-Encoding takes precedence over Content-Length when both are present,
 providing protection against HTTP request smuggling attacks.
+
+=head1 HTTP/2 COMPLIANCE (EXPERIMENTAL)
+
+B<HTTP/2 support in PAGI::Server is experimental.> The API and behavior may
+change in future releases.
+
+PAGI::Server provides HTTP/2 support via the nghttp2 C library
+(L<Net::HTTP2::nghttp2>). HTTP/2 is enabled with the C<--http2> flag and
+supports both TLS (h2 via ALPN) and cleartext (h2c) modes.
+
+Tested against h2spec, the standard HTTP/2 conformance testing tool.
+
+=head2 h2spec Results
+
+    137/146 tests passed (93.8%)
+
+    +-----------------------------+-------+--------+--------+
+    | Category                    | Tests | Passed | Failed |
+    +-----------------------------+-------+--------+--------+
+    | Starting HTTP/2             |     1 |      1 |      0 |
+    | Streams and Multiplexing    |     5 |      5 |      0 |
+    | DATA frames                 |     3 |      3 |      0 |
+    | HEADERS frames              |     3 |      3 |      0 |
+    | PRIORITY frames             |     5 |      5 |      0 |
+    | RST_STREAM frames           |     1 |      1 |      0 |
+    | SETTINGS frames             |     1 |      1 |      0 |
+    | PING frames                 |     1 |      1 |      0 |
+    | GOAWAY frames               |     1 |      1 |      0 |
+    | WINDOW_UPDATE frames        |     2 |      2 |      0 |
+    | CONTINUATION frames         |     2 |      2 |      0 |
+    | HTTP Message Exchanges      |     4 |      4 |      0 |
+    | HPACK                       |    13 |     13 |      0 |
+    | Detailed RFC 9113 tests     |    98 |     89 |      9 |
+    | HPACK RFC 7541 tests        |     6 |      6 |      0 |
+    +-----------------------------+-------+--------+--------+
+
+=head2 Remaining Failures (nghttp2 Library Limitations)
+
+All 9 failures are shared with the bare nghttp2 test server and cannot be
+fixed at the PAGI level. These are intentional leniencies in the nghttp2 C
+library for interoperability:
+
+    +------------+----------------------------------------------------+
+    | Test       | Description                                        |
+    +------------+----------------------------------------------------+
+    | 5.1 #8     | DATA after RST_STREAM (closed stream)              |
+    | 5.1 #9     | HEADERS after RST_STREAM (closed stream)           |
+    | 5.1 #11    | DATA on fully closed stream                        |
+    | 5.1 #12    | HEADERS on fully closed stream                     |
+    | 5.1.1 #2   | Stream ID ordering enforcement                    |
+    | 5.3.1 #2   | PRIORITY self-dependency detection                 |
+    | 6.3 #1     | PRIORITY frame with stream ID 0                   |
+    | 6.9.1 #3   | Window overflow (RST_STREAM vs connection close)   |
+    | 6.9.2 #2   | Negative flow control window tracking              |
+    +------------+----------------------------------------------------+
+
+=head2 Load Testing (h2load)
+
+    Tool: h2load (nghttp2)
+    Protocol: h2 over TLS (ALPN negotiated)
+
+    +--------------+------+----------+-----------+---------+---------+
+    | Requests     | Conn | Streams  | Req/sec   | Errors  | Timeout |
+    +--------------+------+----------+-----------+---------+---------+
+    | 10,000       |   10 |      100 |     8,294 |       0 |       0 |
+    | 50,000       |   50 |      100 |     6,823 |       0 |       0 |
+    +--------------+------+----------+-----------+---------+---------+
+
+Zero failures across 60,000 total requests under concurrent load.
+
+=head2 nghttp Client Validation
+
+    Tool: nghttp (nghttp2 CLI client)
+
+=over 4
+
+=item * B<GET request>: Clean h2 exchange with ALPN, SETTINGS, HPACK compression
+
+=item * B<POST with body>: DATA frame + END_STREAM handled correctly
+
+=item * B<16 concurrent streams>: All responded 200 on a single connection in 3ms
+
+=back
+
+=head2 HTTP/2 Features
+
+=over 4
+
+=item * ALPN negotiation (h2, http/1.1)
+
+=item * Stream multiplexing (100 concurrent streams default)
+
+=item * HPACK header compression (93.7% space savings observed)
+
+=item * Flow control (per-stream and connection-level)
+
+=item * GOAWAY handling (graceful session shutdown)
+
+=item * Stream state validation (END_STREAM tracking, RST_STREAM on violations)
+
+=item * Extended CONNECT for WebSocket over HTTP/2 (RFC 8441)
+
+=item * Server SETTINGS: configurable max_concurrent_streams, initial_window_size,
+max_frame_size, max_header_list_size
+
+=back
+
+=head2 Enabling HTTP/2
+
+    # TLS mode (h2 via ALPN)
+    pagi-server --http2 --ssl-cert cert.pem --ssl-key key.pem --app myapp.pl
+
+    # Cleartext mode (h2c)
+    pagi-server --http2 --app myapp.pl
+
+Requires L<Net::HTTP2::nghttp2> (XS bindings for the nghttp2 C library).
 
 =head1 SECURITY TESTING
 
@@ -437,7 +556,11 @@ L<RFC 7230|https://tools.ietf.org/html/rfc7230> - HTTP/1.1 Message Syntax and Ro
 
 L<RFC 7231|https://tools.ietf.org/html/rfc7231> - HTTP/1.1 Semantics and Content
 
+L<RFC 9113|https://tools.ietf.org/html/rfc9113> - HTTP/2
+
 L<RFC 6455|https://tools.ietf.org/html/rfc6455> - The WebSocket Protocol
+
+L<h2spec|https://github.com/summerwind/h2spec> - HTTP/2 conformance test suite
 
 L<Autobahn Testsuite|https://github.com/crossbario/autobahn-testsuite> - WebSocket test suite
 
