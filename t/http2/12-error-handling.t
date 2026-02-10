@@ -401,6 +401,80 @@ subtest 'max_body_size returns 413 for oversized POST body' => sub {
 };
 
 # ============================================================
+# Content-Length early rejection over HTTP/2
+# ============================================================
+subtest 'content-length exceeding max_body_size rejected early with 413' => sub {
+    my $app_called = 0;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        $app_called = 1;
+        await $receive->();
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => 'ok',
+            more => 0,
+        });
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(
+        app           => $app,
+        max_body_size => 100,
+    );
+
+    my %response_headers;
+    my $response_body = '';
+    my $stream_closed = 0;
+    my $client = create_client(
+        on_header => sub {
+            my ($sid, $name, $value) = @_;
+            $response_headers{$name} = $value;
+            return 0;
+        },
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $response_body .= $data;
+            return 0;
+        },
+        on_stream_close => sub {
+            $stream_closed = 1;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    # Send POST with content-length > max_body_size using a streaming body
+    # The server should reject based on content-length header alone,
+    # before any body data arrives
+    $client->submit_request(
+        method    => 'POST',
+        path      => '/upload-cl',
+        scheme    => 'http',
+        authority => 'localhost',
+        headers   => [
+            ['content-type', 'application/octet-stream'],
+            ['content-length', '50000'],
+        ],
+        body      => sub { return undef },  # streaming: keep open
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    exchange_frames($client, $client_sock, 20);
+
+    is($response_headers{':status'}, '413', 'Server responded with 413 based on content-length');
+    ok(!$app_called, 'App was never called');
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
+# ============================================================
 # RST_STREAM from client during streaming response
 # ============================================================
 subtest 'RST_STREAM from client does not crash server' => sub {
@@ -792,6 +866,274 @@ subtest 'invalid UTF-8 in WebSocket text frame triggers close 1007' => sub {
             if (defined $close_bytes && length($close_bytes) >= 2) {
                 my $code = unpack('n', substr($close_bytes, 0, 2));
                 is($code, 1007, 'Server sent close frame with code 1007');
+            } else {
+                pass('Server sent close response');
+            }
+        } else {
+            fail('No response data received for close frame');
+        }
+    }
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
+# ============================================================
+# WebSocket close frame validation over HTTP/2
+# ============================================================
+subtest 'invalid WS close frame (1-byte payload) triggers 1002' => sub {
+    require Protocol::WebSocket::Frame;
+
+    my $ws_accepted = 0;
+    my $close_received = 0;
+    my $close_code;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'websocket') {
+            await $send->({ type => 'websocket.accept' });
+            $ws_accepted = 1;
+            my $event = await $receive->();
+            while ($event->{type} ne 'websocket.disconnect') {
+                $event = await $receive->();
+            }
+            $close_code = $event->{code};
+            $close_received = 1;
+        }
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my %stream_data;
+    my $client = create_client(
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $stream_data{$sid} //= '';
+            $stream_data{$sid} .= $data;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    my $ws_stream_id = $client->submit_request(
+        method    => 'CONNECT',
+        path      => '/ws/close-test',
+        scheme    => 'http',
+        authority => 'localhost',
+        headers   => [
+            [':protocol', 'websocket'],
+            ['sec-websocket-version', '13'],
+        ],
+        body      => sub { return undef },
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    for (1..15) {
+        $loop->loop_once(0.1);
+        my $buf = '';
+        $client_sock->sysread($buf, 16384);
+        $client->mem_recv($buf) if length($buf);
+        my $out = $client->mem_send;
+        $client_sock->syswrite($out) if length($out);
+        last if $ws_accepted;
+    }
+
+    ok($ws_accepted, 'WebSocket was accepted');
+
+    if ($ws_accepted && $ws_stream_id) {
+        # Build a close frame with 1-byte payload (invalid per RFC 6455 5.5.1)
+        # Close frame: opcode 8, 1 byte payload
+        my $close_frame = pack('CC', 0x88, 0x01) . 'X';  # FIN + opcode 8, length 1
+        $client->submit_data($ws_stream_id, $close_frame, 0);
+        $client_sock->syswrite($client->mem_send);
+
+        exchange_frames($client, $client_sock, 20);
+
+        my $response_data = $stream_data{$ws_stream_id} // '';
+        if (length($response_data) > 0) {
+            my $parse_frame = Protocol::WebSocket::Frame->new;
+            $parse_frame->append($response_data);
+            my $close_bytes = $parse_frame->next_bytes;
+            if (defined $close_bytes && length($close_bytes) >= 2) {
+                my $code = unpack('n', substr($close_bytes, 0, 2));
+                is($code, 1002, 'Server sent close frame with code 1002 for 1-byte close');
+            } else {
+                pass('Server sent close response');
+            }
+        } else {
+            fail('No response data received for close frame');
+        }
+    }
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
+subtest 'invalid WS close code triggers 1002' => sub {
+    require Protocol::WebSocket::Frame;
+
+    my $ws_accepted = 0;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'websocket') {
+            await $send->({ type => 'websocket.accept' });
+            $ws_accepted = 1;
+            my $event = await $receive->();
+            while ($event->{type} ne 'websocket.disconnect') {
+                $event = await $receive->();
+            }
+        }
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my %stream_data;
+    my $client = create_client(
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $stream_data{$sid} //= '';
+            $stream_data{$sid} .= $data;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    my $ws_stream_id = $client->submit_request(
+        method    => 'CONNECT',
+        path      => '/ws/close-code-test',
+        scheme    => 'http',
+        authority => 'localhost',
+        headers   => [
+            [':protocol', 'websocket'],
+            ['sec-websocket-version', '13'],
+        ],
+        body      => sub { return undef },
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    for (1..15) {
+        $loop->loop_once(0.1);
+        my $buf = '';
+        $client_sock->sysread($buf, 16384);
+        $client->mem_recv($buf) if length($buf);
+        my $out = $client->mem_send;
+        $client_sock->syswrite($out) if length($out);
+        last if $ws_accepted;
+    }
+
+    ok($ws_accepted, 'WebSocket was accepted');
+
+    if ($ws_accepted && $ws_stream_id) {
+        # Build a close frame with invalid code 1005 (reserved, must not be sent)
+        my $close_payload = pack('n', 1005);  # Invalid close code
+        my $close_frame = Protocol::WebSocket::Frame->new(
+            type   => 'close',
+            buffer => $close_payload,
+        );
+        $client->submit_data($ws_stream_id, $close_frame->to_bytes, 0);
+        $client_sock->syswrite($client->mem_send);
+
+        exchange_frames($client, $client_sock, 20);
+
+        my $response_data = $stream_data{$ws_stream_id} // '';
+        if (length($response_data) > 0) {
+            my $parse_frame = Protocol::WebSocket::Frame->new;
+            $parse_frame->append($response_data);
+            my $close_bytes = $parse_frame->next_bytes;
+            if (defined $close_bytes && length($close_bytes) >= 2) {
+                my $code = unpack('n', substr($close_bytes, 0, 2));
+                is($code, 1002, 'Server sent close frame with code 1002 for invalid close code');
+            } else {
+                pass('Server sent close response');
+            }
+        } else {
+            fail('No response data received for close frame');
+        }
+    }
+
+    $stream_io->close_now;
+    $loop->remove($server);
+};
+
+subtest 'invalid UTF-8 in WS close reason triggers 1007' => sub {
+    require Protocol::WebSocket::Frame;
+
+    my $ws_accepted = 0;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'websocket') {
+            await $send->({ type => 'websocket.accept' });
+            $ws_accepted = 1;
+            my $event = await $receive->();
+            while ($event->{type} ne 'websocket.disconnect') {
+                $event = await $receive->();
+            }
+        }
+    };
+
+    my ($conn, $stream_io, $client_sock, $server) = create_h2c_connection(app => $app);
+
+    my %stream_data;
+    my $client = create_client(
+        on_data_chunk_recv => sub {
+            my ($sid, $data) = @_;
+            $stream_data{$sid} //= '';
+            $stream_data{$sid} .= $data;
+            return 0;
+        },
+    );
+
+    h2c_handshake($client, $client_sock);
+
+    my $ws_stream_id = $client->submit_request(
+        method    => 'CONNECT',
+        path      => '/ws/close-utf8-test',
+        scheme    => 'http',
+        authority => 'localhost',
+        headers   => [
+            [':protocol', 'websocket'],
+            ['sec-websocket-version', '13'],
+        ],
+        body      => sub { return undef },
+    );
+    $client_sock->syswrite($client->mem_send);
+
+    for (1..15) {
+        $loop->loop_once(0.1);
+        my $buf = '';
+        $client_sock->sysread($buf, 16384);
+        $client->mem_recv($buf) if length($buf);
+        my $out = $client->mem_send;
+        $client_sock->syswrite($out) if length($out);
+        last if $ws_accepted;
+    }
+
+    ok($ws_accepted, 'WebSocket was accepted');
+
+    if ($ws_accepted && $ws_stream_id) {
+        # Build a close frame with valid code but invalid UTF-8 in reason
+        my $close_payload = pack('n', 1000) . "\xFF\xFE";  # Valid code, invalid UTF-8 reason
+        my $close_frame = Protocol::WebSocket::Frame->new(
+            type   => 'close',
+            buffer => $close_payload,
+        );
+        $client->submit_data($ws_stream_id, $close_frame->to_bytes, 0);
+        $client_sock->syswrite($client->mem_send);
+
+        exchange_frames($client, $client_sock, 20);
+
+        my $response_data = $stream_data{$ws_stream_id} // '';
+        if (length($response_data) > 0) {
+            my $parse_frame = Protocol::WebSocket::Frame->new;
+            $parse_frame->append($response_data);
+            my $close_bytes = $parse_frame->next_bytes;
+            if (defined $close_bytes && length($close_bytes) >= 2) {
+                my $code = unpack('n', substr($close_bytes, 0, 2));
+                is($code, 1007, 'Server sent close frame with code 1007 for invalid UTF-8 in reason');
             } else {
                 pass('Server sent close response');
             }

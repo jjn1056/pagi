@@ -421,6 +421,30 @@ sub _h2_on_request {
         }
     }
 
+    # Check Content-Length against max_body_size limit before dispatching
+    if ($self->{max_body_size} && $has_body) {
+        for my $h (@$headers) {
+            if ($h->[0] eq 'content-length') {
+                if ($h->[1] > $self->{max_body_size}) {
+                    # Defer response to avoid re-entrant nghttp2 calls
+                    weaken(my $ws = $self);
+                    $self->{server}->loop->later(sub {
+                        return unless $ws;
+                        return if $ws->{closed};
+                        $ws->{h2_session}->submit_response($stream_id,
+                            status  => 413,
+                            headers => [['content-type', 'text/plain']],
+                            body    => "Payload Too Large\n",
+                        );
+                        $ws->_h2_write_pending;
+                    });
+                    return;
+                }
+                last;
+            }
+        }
+    }
+
     # Initialize per-stream state
     $self->{h2_streams}{$stream_id} = {
         pseudo    => $pseudo,
@@ -478,7 +502,8 @@ sub _h2_on_body {
                 headers => [['content-type', 'text/plain']],
                 body    => 'Payload Too Large',
             );
-            $self->_h2_write_pending;
+            # No _h2_write_pending here — we're inside feed(); _h2_process_data
+            # flushes after feed() returns
             delete $self->{h2_streams}{$stream_id};
             return;
         }
@@ -556,24 +581,24 @@ sub _h2_dispatch_stream {
 
     my $future = (async sub {
         eval {
-            await $self->{app}->($scope, $receive, $send);
+            await $weak_self->{app}->($scope, $receive, $send);
         };
         if (my $error = $@) {
             warn "PAGI application error (HTTP/2 stream $stream_id): $error\n";
-            if (!$stream_state->{response_started}) {
+            if ($weak_self && !$stream_state->{response_started}) {
                 eval {
-                    $self->{h2_session}->submit_response($stream_id,
+                    $weak_self->{h2_session}->submit_response($stream_id,
                         status  => 500,
                         headers => [['content-type', 'text/plain']],
                         body    => "Internal Server Error\n",
                     );
-                    $self->_h2_write_pending;
+                    $weak_self->_h2_write_pending;
                 };
             }
         }
 
         # Notify server that request completed (for max_requests tracking)
-        $self->{server}->_on_request_complete if $self->{server};
+        $weak_self->{server}->_on_request_complete if $weak_self && $weak_self->{server};
     })->();
 
     $self->{server}->adopt_future($future);
@@ -777,8 +802,6 @@ sub _h2_create_send {
                     }
                     $eof_pending = 1;
                     push @data_queue, $body if length($body);
-                    # Push empty string if queue is empty so callback can signal EOF
-                    push @data_queue, '' unless @data_queue;
                     return unless $weak_self->{h2_streams}{$stream_id};
                     $weak_self->{h2_session}->resume_stream($stream_id);
                     $weak_self->_h2_write_pending;
@@ -1047,9 +1070,60 @@ sub _h2_process_ws_frames {
         elsif ($opcode == 8) {
             # Close frame
             my ($code, $reason) = (1005, '');
+
+            # RFC 6455 Section 5.5.1: Close frame payload is 0 or >=2 bytes
+            if (length($bytes) == 1) {
+                $self->_h2_ws_close($stream_id, 1002, 'Invalid close frame');
+                push @{$stream->{receive_queue}}, {
+                    type   => 'websocket.disconnect',
+                    code   => 1002,
+                    reason => 'Invalid close frame',
+                };
+                $self->_h2_wake_pending($stream);
+                return;
+            }
+
             if (length($bytes) >= 2) {
                 $code = unpack('n', substr($bytes, 0, 2));
                 $reason = substr($bytes, 2) // '';
+
+                # RFC 6455 Section 7.4.1: Validate close code
+                my $valid_code = 0;
+                if ($code == 1000 || $code == 1001 || $code == 1002 || $code == 1003) {
+                    $valid_code = 1;
+                }
+                elsif ($code >= 1007 && $code <= 1011) {
+                    $valid_code = 1;
+                }
+                elsif ($code >= 3000 && $code <= 4999) {
+                    $valid_code = 1;
+                }
+                unless ($valid_code) {
+                    $self->_h2_ws_close($stream_id, 1002, 'Invalid close code');
+                    push @{$stream->{receive_queue}}, {
+                        type   => 'websocket.disconnect',
+                        code   => 1002,
+                        reason => 'Invalid close code',
+                    };
+                    $self->_h2_wake_pending($stream);
+                    return;
+                }
+
+                # RFC 6455: Close reason must be valid UTF-8
+                if (length($reason) > 0) {
+                    my $reason_copy = $reason;
+                    my $decoded = eval { Encode::decode('UTF-8', $reason_copy, Encode::FB_CROAK) };
+                    unless (defined $decoded) {
+                        $self->_h2_ws_close($stream_id, 1007, 'Invalid UTF-8 in close reason');
+                        push @{$stream->{receive_queue}}, {
+                            type   => 'websocket.disconnect',
+                            code   => 1007,
+                            reason => 'Invalid UTF-8 in close reason',
+                        };
+                        $self->_h2_wake_pending($stream);
+                        return;
+                    }
+                }
             }
 
             # Send close frame back + END_STREAM
@@ -1058,7 +1132,7 @@ sub _h2_process_ws_frames {
                 buffer => pack('n', $code) . $reason,
             );
             $self->{h2_session}->submit_data($stream_id, $close_frame->to_bytes, 1);
-            $self->_h2_write_pending;
+            # No _h2_write_pending — inside feed(); flushed by _h2_process_data
 
             push @{$stream->{receive_queue}}, {
                 type   => 'websocket.disconnect',
@@ -1073,7 +1147,7 @@ sub _h2_process_ws_frames {
                 buffer => $bytes,
             );
             $self->{h2_session}->submit_data($stream_id, $pong->to_bytes, 0);
-            $self->_h2_write_pending;
+            # No _h2_write_pending — inside feed(); flushed by _h2_process_data
         }
         # Opcode 10 (pong) — ignore
     }
@@ -1089,7 +1163,7 @@ sub _h2_ws_close {
         buffer => pack('n', $code) . ($reason // ''),
     );
     $self->{h2_session}->submit_data($stream_id, $frame->to_bytes, 1);
-    $self->_h2_write_pending;
+    # No _h2_write_pending — called from inside feed(); flushed by _h2_process_data
 }
 
 # Request stall timeout - closes connection if no I/O activity during request processing
@@ -3259,7 +3333,8 @@ sub _process_websocket_frames {
 
                 # RFC 6455: Close reason must be valid UTF-8
                 if (length($reason) > 0) {
-                    my $decoded = eval { Encode::decode('UTF-8', $reason, Encode::FB_CROAK) };
+                    my $reason_copy = $reason;
+                    my $decoded = eval { Encode::decode('UTF-8', $reason_copy, Encode::FB_CROAK) };
                     unless (defined $decoded) {
                         $self->_send_close_frame(1007, 'Invalid UTF-8 in close reason');
                         $self->_handle_disconnect_and_close('protocol_error');
