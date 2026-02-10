@@ -819,8 +819,6 @@ subtest '_build_ssl_config returns undef without SSL' => sub {
 subtest 'Multi-worker TLS connections work' => sub {
     use POSIX ':sys_wait_h';
 
-    my $port = 5600 + int(rand(100));
-
     my $tls_worker_app = async sub {
         my ($scope, $receive, $send) = @_;
         if ($scope->{type} eq 'lifespan') {
@@ -854,17 +852,20 @@ subtest 'Multi-worker TLS connections work' => sub {
         }
     };
 
-    # Fork a child to run the multi-worker TLS server
+    # Use a pipe so the child can signal readiness with the actual port
+    pipe(my $read_fh, my $write_fh) or die "pipe: $!";
+
     my $server_pid = fork();
     die "Fork failed: $!" unless defined $server_pid;
 
     if ($server_pid == 0) {
         # Child: run multi-worker server with TLS
+        close $read_fh;
         my $child_loop = IO::Async::Loop->new;
         my $server = PAGI::Server->new(
             app     => $tls_worker_app,
             host    => '127.0.0.1',
-            port    => $port,
+            port    => 0,  # OS assigns a free port
             workers => 2,
             quiet   => 1,
             ssl     => {
@@ -874,12 +875,52 @@ subtest 'Multi-worker TLS connections work' => sub {
         );
         $child_loop->add($server);
         $server->listen->get;
+        # Signal readiness with the assigned port
+        print $write_fh $server->port . "\n";
+        close $write_fh;
         $child_loop->run;
         exit(0);
     }
 
-    # Parent: wait for server to start
-    sleep(2);
+    # Parent: wait for child to signal readiness with port
+    close $write_fh;
+    my $port = <$read_fh>;
+    close $read_fh;
+
+    unless (defined $port && $port =~ /^\d+$/) {
+        fail('Server child failed to start');
+        kill 'KILL', $server_pid;
+        waitpid($server_pid, 0);
+        return;
+    }
+    chomp $port;
+
+    # Wait for workers to be ready to accept TLS connections.
+    # The listen socket is bound but forked workers may not have entered
+    # their accept loops yet, causing TLS handshake failures.
+    my $ready = 0;
+    for my $attempt (1..20) {
+        my $sock = eval {
+            IO::Socket::SSL->new(
+                PeerAddr        => '127.0.0.1',
+                PeerPort        => $port,
+                SSL_verify_mode => 0,
+                Timeout         => 1,
+            );
+        };
+        if ($sock) {
+            close $sock;
+            $ready = 1;
+            last;
+        }
+        select(undef, undef, undef, 0.25);
+    }
+    unless ($ready) {
+        fail('Multi-worker TLS server did not become ready');
+        kill 'TERM', $server_pid;
+        waitpid($server_pid, 0);
+        return;
+    }
 
     # Verify HTTPS requests work through multi-worker TLS
     my $http = Net::Async::HTTP->new(
