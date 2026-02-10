@@ -2248,12 +2248,8 @@ sub _write_access_log {
         $duration = sprintf("%.3f", tv_interval($self->{request_start}));
     }
 
-    # Get client IP
-    my $client_ip = '-';
-    my $handle = $self->{stream} ? $self->{stream}->read_handle : undef;
-    if ($handle && $handle->can('peerhost')) {
-        $client_ip = $handle->peerhost // '-';
-    }
+    # Use client_host cached at connection start (avoids per-request getpeername syscall)
+    my $client_ip = $self->{client_host} // '-';
 
     # Format: client_ip - - [timestamp] "METHOD /path" status duration
     my @gmt = gmtime(time);
