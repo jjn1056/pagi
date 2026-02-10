@@ -29,9 +29,6 @@ recommends 'Net::HTTP2::nghttp2', '0.007';
 # To enable HTTP/2 support, install with:
 #   cpanm Net::HTTP2::nghttp2
 
-# Zero-copy file transfer (optional but recommended for performance)
-recommends 'Sys::Sendfile', '0.11';
-
 # JSON handling
 requires 'JSON::MaybeXS', '1.004003';
 
