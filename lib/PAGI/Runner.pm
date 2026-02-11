@@ -506,10 +506,12 @@ sub load_server {
     # else: development mode uses server default (STDERR)
 
     # Build server
+    # When using a Unix socket, omit host/port (they are mutually exclusive)
+    my $use_socket = $server_opts{socket};
     return $server_class->new(
         app        => $self->{app},
-        host       => $self->{host} // '127.0.0.1',
-        port       => $self->{port} // 5000,
+        ($use_socket ? () : (host => $self->{host} // '127.0.0.1')),
+        ($use_socket ? () : (port => $self->{port} // 5000)),
         quiet      => $self->{quiet} // 0,
         ($self->{loop} ? (loop_type => $self->{loop}) : ()),
         (defined $access_log || $disable_log
@@ -532,6 +534,10 @@ sub _parse_server_options {
             'reuseport'             => \$opts{reuseport},
             'max-requests=i'        => \$opts{max_requests},
             'max-connections=i'     => \$opts{max_connections},
+
+            # Network
+            'socket=s'              => \$opts{socket},
+            'socket-mode=s'         => \$opts{socket_mode},
 
             # TLS
             'ssl-cert=s'            => \$opts{_ssl_cert},
@@ -581,6 +587,11 @@ sub _parse_server_options {
         # Handle workers (0 for single-process, >1 for multi-worker)
         if (defined $opts{workers}) {
             $opts{workers} = $opts{workers} > 1 ? $opts{workers} : 0;
+        }
+
+        # Parse socket_mode as octal (CLI passes string like "0660")
+        if (defined $opts{socket_mode}) {
+            $opts{socket_mode} = oct($opts{socket_mode});
         }
     }
 

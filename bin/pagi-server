@@ -215,6 +215,22 @@ Number of worker processes (default: 1, single-process mode)
 
 Enable SO_REUSEPORT mode for multi-worker servers.
 
+=item B<--socket> PATH
+
+Listen on a Unix domain socket instead of a TCP port. Mutually exclusive
+with C<--host>/C<--port>. Useful for nginx reverse proxy setups:
+
+    pagi-server --socket /tmp/pagi.sock ./app.pl
+
+See L<PAGI::Server/UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)> for details.
+
+=item B<--socket-mode> MODE
+
+Set file permissions on the Unix domain socket (octal, e.g., C<0660>).
+Useful when the reverse proxy runs as a different user:
+
+    pagi-server --socket /tmp/pagi.sock --socket-mode 0660 ./app.pl
+
 =item B<--ssl-cert> FILE, B<--ssl-key> FILE
 
 Enable HTTPS with the specified certificate and key files.

@@ -38,6 +38,8 @@ use IO::Async::Stream;
 use IO::Async::Loop;
 use IO::Async::Timer::Periodic;
 use IO::Socket::INET;
+use IO::Socket::UNIX;
+use Socket qw(SOCK_STREAM);
 use Future;
 use Future::AsyncAwait;
 
@@ -137,6 +139,8 @@ B<Not yet implemented:>
 
 For HTTP/2, see L</ENABLING HTTP/2 SUPPORT (EXPERIMENTAL)>.
 
+For Unix domain sockets, see L</UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)>.
+
 =head1 WINDOWS SUPPORT
 
 B<PAGI::Server does not support Windows.>
@@ -203,6 +207,38 @@ rules are in place. For production, consider a reverse proxy (nginx, etc.)
 =item port => $port
 
 Bind port. Default: 5000
+
+=item socket => $path
+
+Listen on a Unix domain socket instead of a TCP port. B<Mutually exclusive>
+with C<host> and C<port> — specifying both will die at startup.
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+Works with both single-worker and multi-worker modes. The socket file is
+automatically removed on shutdown and any stale socket file is removed on
+startup. The C<reuseport> option is ignored when using Unix sockets.
+
+See L</UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)> for details.
+
+=item socket_mode => $octal_mode
+
+Set file permissions on the Unix domain socket after creation. The value
+should be a numeric mode (e.g., C<0660>). If not specified, the socket
+inherits the default permissions from the process umask.
+
+    my $server = PAGI::Server->new(
+        app         => $app,
+        socket      => '/tmp/pagi.sock',
+        socket_mode => 0660,
+    );
+
+This is useful when the server runs as a different user than the reverse
+proxy (e.g., nginx) that connects to it. Silently ignored if C<socket> is
+not set.
 
 =item ssl => \%config
 
@@ -964,6 +1000,18 @@ shutdown is complete.
 
 Returns the bound port number. Useful when port => 0 is used.
 
+=head2 socket_path
+
+    my $path = $server->socket_path;
+
+Returns the Unix domain socket path, or C<undef> if not using Unix sockets.
+
+=head2 socket_mode
+
+    my $mode = $server->socket_mode;
+
+Returns the configured socket permission mode, or C<undef> if not set.
+
 =head2 is_running
 
     my $bool = $server->is_running;
@@ -1303,6 +1351,67 @@ C<h2_>. See L</CONSTRUCTOR> for details on:
 
 =back
 
+=head1 UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)
+
+B<Unix domain socket support is experimental.> The API and behavior may change
+in future releases.
+
+PAGI::Server can listen on a Unix domain socket instead of a TCP port. This
+is useful for reverse proxy setups (e.g., nginx) and benchmark frameworks
+(e.g., TechEmpower) where inter-process communication avoids TCP overhead.
+
+=head2 Basic Usage
+
+B<Via CLI (pagi-server):>
+
+    pagi-server --socket /tmp/pagi.sock ./app.pl
+
+B<Via constructor:>
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+=head2 With nginx Reverse Proxy
+
+    upstream pagi {
+        server unix:/tmp/pagi.sock;
+    }
+
+    server {
+        listen 80;
+        location / {
+            proxy_pass http://pagi;
+        }
+    }
+
+=head2 Behavior
+
+=over 4
+
+=item * B<Mutually exclusive> with C<host>/C<port>. Specifying both will
+die at startup.
+
+=item * Works with both B<single-worker> and B<multi-worker> modes. In
+multi-worker mode, the parent creates the socket and workers inherit it
+via fork.
+
+=item * The C<reuseport> option is B<ignored> when using Unix sockets
+(workers share the parent's socket).
+
+=item * Stale socket files are automatically B<removed on startup>.
+
+=item * The socket file is automatically B<removed on shutdown> (both
+graceful and multi-worker shutdown).
+
+=item * Use C<socket_mode> to set file permissions (e.g., C<0660>) after
+socket creation. Useful when nginx runs as a different user.
+
+=item * Use the C<socket_path> accessor to retrieve the configured path.
+
+=back
+
 =head1 SIGNAL HANDLING
 
 PAGI::Server responds to Unix signals for process management. Signal behavior
@@ -1401,10 +1510,22 @@ sub _init {
     my ($self, $params) = @_;
 
     $self->{app}              = delete $params->{app} or die "app is required";
+    my $has_host              = exists $params->{host};
+    my $has_port              = exists $params->{port};
     $self->{host}             = delete $params->{host} // '127.0.0.1';
     $self->{port}             = delete $params->{port} // 5000;
+    $self->{socket}           = delete $params->{socket};
+    $self->{socket_mode}      = delete $params->{socket_mode};
     $self->{ssl}              = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
+
+    # Unix domain socket: mutually exclusive with explicit host/port
+    if ($self->{socket}) {
+        die "Cannot use 'socket' with 'host' — they are mutually exclusive\n" if $has_host;
+        die "Cannot use 'socket' with 'port' — they are mutually exclusive\n" if $has_port;
+        $self->{host} = undef;
+        $self->{port} = undef;
+    }
 
     # Validate SSL certificate files at startup (fail fast)
     # Skip validation if TLS is explicitly disabled
@@ -1836,13 +1957,25 @@ async sub _listen_singleworker {
     # Build listener options
     my %listen_opts = (
         queuesize => $self->{listener_backlog},
-        addr => {
+    );
+
+    if (my $socket_path = $self->{socket}) {
+        # Unix domain socket mode
+        unlink $socket_path if -S $socket_path;
+        $listen_opts{addr} = {
+            family   => 'unix',
+            socktype => 'stream',
+            path     => $socket_path,
+        };
+    } else {
+        # TCP/IP mode
+        $listen_opts{addr} = {
             family   => 'inet',
             socktype => 'stream',
             ip       => $self->{host},
             port     => $self->{port},
-        },
-    );
+        };
+    }
 
     # Add SSL options if configured
     if (my $ssl_params = $self->_build_ssl_config) {
@@ -1860,6 +1993,12 @@ async sub _listen_singleworker {
 
     await $listen_future;
 
+    # Set socket permissions if configured
+    if (defined $self->{socket_mode} && $self->{socket}) {
+        chmod($self->{socket_mode}, $self->{socket})
+            or die "Cannot chmod $self->{socket}: $!\n";
+    }
+
     # Configure accept error handler after listen() to avoid SSL extension conflicts
     # Note: SSL extensions may wrap the listener, so try to configure but ignore if it fails
     eval {
@@ -1875,9 +2014,11 @@ async sub _listen_singleworker {
         $self->_log(debug => "Could not configure on_accept_error (likely SSL listener): $@");
     }
 
-    # Store the actual bound port from the listener's read handle
-    my $socket = $listener->read_handle;
-    $self->{bound_port} = $socket->sockport if $socket && $socket->can('sockport');
+    # Store the actual bound port from the listener's read handle (TCP only)
+    if (!$self->{socket}) {
+        my $socket = $listener->read_handle;
+        $self->{bound_port} = $socket->sockport if $socket && $socket->can('sockport');
+    }
     $self->{running} = 1;
 
     # Set up signal handlers for graceful shutdown (single-worker mode)
@@ -1925,7 +2066,10 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    my $listen_addr = $self->{socket}
+        ? "unix:$self->{socket}"
+        : "$scheme://$self->{host}:$self->{bound_port}/";
+    $self->_log(info => "PAGI Server listening on $listen_addr (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -1947,7 +2091,23 @@ sub _listen_multiworker {
 
     my $listen_socket;
 
-    if ($reuseport) {
+    if ($self->{socket}) {
+        # Unix domain socket mode: parent creates socket, workers inherit it
+        # (reuseport is N/A for Unix sockets)
+        my $socket_path = $self->{socket};
+        unlink $socket_path if -S $socket_path;
+        $listen_socket = IO::Socket::UNIX->new(
+            Local    => $socket_path,
+            Listen   => $self->{listener_backlog},
+            Type     => SOCK_STREAM,
+        ) or die "Cannot create Unix listening socket at $socket_path: $!";
+
+        if (defined $self->{socket_mode}) {
+            chmod($self->{socket_mode}, $socket_path)
+                or die "Cannot chmod $socket_path: $!\n";
+        }
+    }
+    elsif ($reuseport) {
         # SO_REUSEPORT mode: each worker creates its own socket
         # Parent just needs to know the port for display purposes
         # We do a quick bind to validate port availability and get actual port if 0
@@ -1986,7 +2146,7 @@ sub _listen_multiworker {
     my $scheme = $self->{ssl} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
-    my $mode = $reuseport ? 'reuseport' : 'shared-socket';
+    my $mode = $self->{socket} ? 'unix-socket' : ($reuseport ? 'reuseport' : 'shared-socket');
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
     my $http2_status = $self->_http2_status_string;
@@ -2000,7 +2160,10 @@ sub _listen_multiworker {
         );
     }
 
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    my $listen_addr = $self->{socket}
+        ? "unix:$self->{socket}"
+        : "$scheme://$self->{host}:$self->{bound_port}/";
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $listen_addr with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -2094,6 +2257,11 @@ sub _initiate_multiworker_shutdown {
     if ($self->{listen_socket}) {
         close($self->{listen_socket});
         delete $self->{listen_socket};
+    }
+
+    # Clean up Unix domain socket file
+    if ($self->{socket} && -S $self->{socket}) {
+        unlink $self->{socket};
     }
 
     # Signal all workers to shutdown
@@ -2284,9 +2452,9 @@ sub _run_as_worker {
     #       or it will overwrite the IGNORE with a CODE ref!
     my $loop = IO::Async::Loop->new;
 
-    # In reuseport mode, each worker creates its own listening socket
+    # In reuseport mode (TCP only), each worker creates its own listening socket
     my $reuseport = $self->{reuseport};
-    if ($reuseport && !$listen_socket) {
+    if ($reuseport && !$self->{socket} && !$listen_socket) {
         $listen_socket = IO::Socket::INET->new(
             LocalAddr => $self->{host},
             LocalPort => $self->{bound_port},  # Use the port determined by parent
@@ -2299,10 +2467,9 @@ sub _run_as_worker {
     }
 
     # Create a fresh server instance for this worker (single-worker mode)
-    my $worker_server = PAGI::Server->new(
+    # Pass socket or host/port depending on mode
+    my %worker_opts = (
         app             => $self->{app},
-        host            => $self->{host},
-        port            => $self->{port},
         ssl             => $self->{ssl},
         http2           => $self->{http2},
         extensions      => $self->{extensions},
@@ -2326,10 +2493,18 @@ sub _run_as_worker {
         write_low_watermark  => $self->{write_low_watermark},
         workers          => 0,  # Single-worker mode in worker process
     );
+    if ($self->{socket}) {
+        $worker_opts{socket} = $self->{socket};
+    } else {
+        $worker_opts{host} = $self->{host};
+        $worker_opts{port} = $self->{port};
+    }
+    my $worker_server = PAGI::Server->new(%worker_opts);
     $worker_server->{is_worker} = 1;
     $worker_server->{worker_num} = $worker_num;  # Store for lifespan scope
     $worker_server->{_request_count} = 0;  # Track requests handled
-    $worker_server->{bound_port} = $listen_socket->sockport;
+    $worker_server->{bound_port} = $listen_socket->sockport
+        if $listen_socket && $listen_socket->can('sockport');
 
     $loop->add($worker_server);
 
@@ -2805,6 +2980,11 @@ async sub shutdown {
         $self->_log(warn => "PAGI Server shutdown warning: $message");
     }
 
+    # Clean up Unix domain socket file
+    if ($self->{socket} && -S $self->{socket}) {
+        unlink $self->{socket};
+    }
+
     return $self;
 }
 
@@ -2990,6 +3170,18 @@ sub port {
     my ($self) = @_;
 
     return $self->{bound_port} // $self->{port};
+}
+
+sub socket_path {
+    my ($self) = @_;
+
+    return $self->{socket};
+}
+
+sub socket_mode {
+    my ($self) = @_;
+
+    return $self->{socket_mode};
 }
 
 sub is_running {
