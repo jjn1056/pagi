@@ -125,6 +125,7 @@ sub new {
         sse_idle_timeout => $args{sse_idle_timeout} // 0,  # SSE idle timeout (0 = disabled)
         max_body_size     => $args{max_body_size},  # 0 = unlimited
         access_log        => $args{access_log},     # Filehandle for access logging
+        _access_log_formatter => $args{_access_log_formatter},  # Pre-compiled format closure
         max_receive_queue => $args{max_receive_queue} // 1000,  # Max WebSocket receive queue size
         max_ws_frame_size => $args{max_ws_frame_size} // 65536,  # Max WebSocket frame size in bytes
         sync_file_threshold => $args{sync_file_threshold} // 65536,  # Threshold for sync file reads (default 64KB)
@@ -2243,23 +2244,14 @@ sub _write_access_log {
     return unless $self->{current_request};
 
     my $request = $self->{current_request};
-    my $method = $request->{method} // '-';
-    my $path = $request->{raw_path} // '/';
-    my $query = $request->{query_string};
-    $path .= "?$query" if defined $query && length $query;
-
-    my $status = $self->{response_status} // '-';
 
     # Calculate request duration
-    my $duration = '-';
+    my $duration = 0;
     if ($self->{request_start}) {
-        $duration = sprintf("%.3f", tv_interval($self->{request_start}));
+        $duration = tv_interval($self->{request_start});
     }
 
-    # Use client_host cached at connection start (avoids per-request getpeername syscall)
-    my $client_ip = $self->{client_host} // '-';
-
-    # Format: client_ip - - [timestamp] "METHOD /path" status duration
+    # Per-second cached CLF timestamp
     my $now = time();
     if ($now != $_cached_log_time) {
         $_cached_log_time = $now;
@@ -2269,13 +2261,31 @@ sub _write_access_log {
             $gmt[3], $months[$gmt[4]], $gmt[5] + 1900,
             $gmt[2], $gmt[1], $gmt[0]);
     }
-    my $timestamp = $_cached_log_timestamp;
 
-    my $size = $self->{_response_size} // 0;
-    my $size_display = $size || '-';
+    my $info = {
+        client_ip       => $self->{client_host} // '-',
+        timestamp       => $_cached_log_timestamp,
+        method          => $request->{method} // '-',
+        path            => $request->{raw_path} // '/',
+        query           => $request->{query_string},
+        http_version    => $request->{http_version} // '1.1',
+        status          => $self->{response_status} // '-',
+        size            => $self->{_response_size} // 0,
+        duration        => $duration,
+        request_headers => $request->{headers} // [],
+    };
 
-    my $log = $self->{access_log};
-    print $log "$client_ip - - [$timestamp] \"$method $path\" $status $size_display ${duration}s\n";
+    my $formatter = $self->{_access_log_formatter};
+    if ($formatter) {
+        print {$self->{access_log}} $formatter->($info), "\n";
+    }
+    else {
+        # Fallback (should not happen with properly initialized server)
+        my $path = $info->{path};
+        my $query = $info->{query};
+        $path .= "?$query" if defined $query && length $query;
+        print {$self->{access_log}} "$info->{client_ip} - - [$info->{timestamp}] \"$info->{method} $path\" $info->{status} $info->{duration}s\n";
+    }
 }
 
 sub _handle_disconnect {
