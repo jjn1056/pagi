@@ -2660,6 +2660,129 @@ async sub _drain_connections {
     return;
 }
 
+# --- Access log format compiler ---
+
+my %ACCESS_LOG_PRESETS = (
+    clf      => '%h - - [%t] "%r" %s %Ds',
+    combined => '%h - - [%t] "%r" %s %b "%{Referer}i" "%{User-Agent}i"',
+    common   => '%h - - [%t] "%r" %s %b',
+    tiny     => '%m %U%q %s %Dms',
+);
+
+sub _compile_access_log_format {
+    my ($class_or_self, $format) = @_;
+
+    # Resolve preset names
+    if (exists $ACCESS_LOG_PRESETS{$format}) {
+        $format = $ACCESS_LOG_PRESETS{$format};
+    }
+
+    # Parse format string into a list of fragments (closures or literal strings)
+    my @fragments;
+    my $pos = 0;
+    my $len = length($format);
+
+    while ($pos < $len) {
+        my $ch = substr($format, $pos, 1);
+
+        if ($ch eq '%') {
+            $pos++;
+            last if $pos >= $len;
+
+            my $next = substr($format, $pos, 1);
+
+            if ($next eq '%') {
+                # Literal percent
+                push @fragments, '%';
+                $pos++;
+            }
+            elsif ($next eq '{') {
+                # Header extraction: %{Name}i
+                my $end = index($format, '}', $pos);
+                die "Unterminated %{...} in access log format\n" if $end < 0;
+                my $header_name = substr($format, $pos + 1, $end - $pos - 1);
+                $pos = $end + 1;
+
+                # Must be followed by 'i' (request header)
+                die "Expected 'i' after %{$header_name} in access log format\n"
+                    if $pos >= $len || substr($format, $pos, 1) ne 'i';
+                $pos++;
+
+                my $lc_name = lc($header_name);
+                push @fragments, sub {
+                    my ($info) = @_;
+                    for my $h (@{$info->{request_headers}}) {
+                        return $h->[1] if lc($h->[0]) eq $lc_name;
+                    }
+                    return '-';
+                };
+            }
+            else {
+                # Simple atom
+                my $atom = $next;
+                $pos++;
+
+                my $frag = _access_log_atom($atom);
+                push @fragments, $frag;
+            }
+        }
+        else {
+            # Literal text: collect until next %
+            my $next_pct = index($format, '%', $pos);
+            if ($next_pct < 0) {
+                push @fragments, substr($format, $pos);
+                $pos = $len;
+            }
+            else {
+                push @fragments, substr($format, $pos, $next_pct - $pos);
+                $pos = $next_pct;
+            }
+        }
+    }
+
+    # Build a single closure from fragments
+    return sub {
+        my ($info) = @_;
+        return join('', map { ref $_ ? $_->($info) : $_ } @fragments);
+    };
+}
+
+sub _access_log_atom {
+    my ($atom) = @_;
+
+    my %atoms = (
+        h => sub { $_[0]->{client_ip} // '-' },
+        l => sub { '-' },
+        u => sub { '-' },
+        t => sub { $_[0]->{timestamp} // '-' },
+        r => sub {
+            my $i = $_[0];
+            sprintf('%s %s HTTP/%s', $i->{method} // '-', $i->{path} // '/', $i->{http_version} // '1.1');
+        },
+        m => sub { $_[0]->{method} // '-' },
+        U => sub { $_[0]->{path} // '/' },
+        q => sub {
+            my $qs = $_[0]->{query};
+            (defined $qs && length $qs) ? "?$qs" : '';
+        },
+        H => sub { 'HTTP/' . ($_[0]->{http_version} // '1.1') },
+        s => sub { $_[0]->{status} // '-' },
+        b => sub {
+            my $size = $_[0]->{size} // 0;
+            $size ? $size : '-';
+        },
+        B => sub { $_[0]->{size} // 0 },
+        D => sub { int(($_[0]->{duration} // 0) * 1_000_000) },
+        T => sub { int($_[0]->{duration} // 0) },
+    );
+
+    if (my $frag = $atoms{$atom}) {
+        return $frag;
+    }
+
+    die "Unknown access log format atom '%$atom'\n";
+}
+
 sub port {
     my ($self) = @_;
 

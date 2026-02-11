@@ -160,4 +160,115 @@ subtest 'Response size resets between keep-alive requests' => sub {
     $loop->remove($server);
 };
 
+# --- Step 2: Format string compiler ---
+
+# Helper to compile a format and invoke with test data
+sub compile_and_format {
+    my ($format, %overrides) = @_;
+
+    my $formatter = PAGI::Server->_compile_access_log_format($format);
+
+    my $info = {
+        client_ip       => '192.168.1.1',
+        timestamp       => '10/Feb/2026:12:34:56 +0000',
+        method          => 'GET',
+        path            => '/test/path',
+        query           => 'foo=bar',
+        http_version    => '1.1',
+        status          => 200,
+        size            => 1234,
+        duration        => 0.123456,
+        request_headers => [
+            ['host', 'example.com'],
+            ['user-agent', 'TestBot/1.0'],
+            ['referer', 'http://example.com/'],
+        ],
+        %overrides,
+    };
+
+    return $formatter->($info);
+}
+
+subtest 'Format compiler: individual atoms' => sub {
+    is(compile_and_format('%h'), '192.168.1.1', '%h returns client IP');
+    is(compile_and_format('%s'), '200', '%s returns status code');
+    is(compile_and_format('%r'), 'GET /test/path HTTP/1.1', '%r returns request line');
+    is(compile_and_format('%m'), 'GET', '%m returns method');
+    is(compile_and_format('%U'), '/test/path', '%U returns URL path');
+    is(compile_and_format('%q'), '?foo=bar', '%q returns ?query');
+    is(compile_and_format('%q', query => ''), '', '%q returns empty when no query');
+    is(compile_and_format('%q', query => undef), '', '%q returns empty when undef query');
+    is(compile_and_format('%H'), 'HTTP/1.1', '%H returns protocol');
+    is(compile_and_format('%l'), '-', '%l always returns -');
+    is(compile_and_format('%u'), '-', '%u always returns -');
+    is(compile_and_format('%t'), '10/Feb/2026:12:34:56 +0000', '%t returns CLF timestamp');
+
+    # Size atoms
+    is(compile_and_format('%b'), '1234', '%b returns size');
+    is(compile_and_format('%b', size => 0), '-', '%b returns - when size is 0');
+    is(compile_and_format('%B'), '1234', '%B returns size');
+    is(compile_and_format('%B', size => 0), '0', '%B returns 0 when size is 0');
+
+    # Duration atoms
+    my $result_D = compile_and_format('%D');
+    like($result_D, qr/^\d+$/, '%D returns integer microseconds');
+    is($result_D, '123456', '%D returns 123456 microseconds for 0.123456s');
+
+    my $result_T = compile_and_format('%T');
+    is($result_T, '0', '%T returns 0 for 0.123456s (integer seconds)');
+    is(compile_and_format('%T', duration => 2.7), '2', '%T returns 2 for 2.7s');
+};
+
+subtest 'Format compiler: header extraction' => sub {
+    is(compile_and_format('%{User-Agent}i'), 'TestBot/1.0', '%{User-Agent}i extracts header');
+    is(compile_and_format('%{Referer}i'), 'http://example.com/', '%{Referer}i extracts header');
+    is(compile_and_format('%{Host}i'), 'example.com', '%{Host}i extracts header');
+    is(compile_and_format('%{X-Missing}i'), '-', '%{X-Missing}i returns - for missing header');
+
+    # Case-insensitive header matching
+    is(compile_and_format('%{user-agent}i'), 'TestBot/1.0', 'header matching is case-insensitive');
+};
+
+subtest 'Format compiler: literal text and escapes' => sub {
+    is(compile_and_format('[%t] %h'), '[10/Feb/2026:12:34:56 +0000] 192.168.1.1',
+        'Literal text preserved around atoms');
+    is(compile_and_format('%%'), '%', '%% produces literal percent');
+    is(compile_and_format('start %h middle %s end'), 'start 192.168.1.1 middle 200 end',
+        'Multiple atoms with literal text');
+};
+
+subtest 'Format compiler: named presets' => sub {
+    # CLF preset should match current default output format
+    my $clf = compile_and_format('clf');
+    like($clf, qr/^192\.168\.1\.1 - - \[/, 'CLF preset starts with IP and dashes');
+    like($clf, qr/"GET \/test\/path HTTP\/1\.1"/, 'CLF preset contains quoted request line');
+    like($clf, qr/200 \d+s$/, 'CLF preset ends with status and duration');
+
+    # Combined preset
+    my $combined = compile_and_format('combined');
+    like($combined, qr/^192\.168\.1\.1 - -/, 'combined starts with IP');
+    like($combined, qr/"http:\/\/example\.com\/"/, 'combined contains Referer');
+    like($combined, qr/"TestBot\/1\.0"/, 'combined contains User-Agent');
+
+    # Common preset
+    my $common = compile_and_format('common');
+    like($common, qr/^192\.168\.1\.1 - - \[/, 'common starts with IP and dashes');
+    like($common, qr/\b1234\b/, 'common contains response size');
+
+    # Tiny preset
+    my $tiny = compile_and_format('tiny');
+    like($tiny, qr/^GET/, 'tiny starts with method');
+    like($tiny, qr/\/test\/path\?foo=bar/, 'tiny contains path with query');
+    like($tiny, qr/200/, 'tiny contains status');
+    like($tiny, qr/\d+ms$/, 'tiny ends with duration in ms');
+};
+
+subtest 'Format compiler: unknown atom dies' => sub {
+    like(
+        dies { PAGI::Server->_compile_access_log_format('%Z') },
+        qr/Unknown access log format atom '%Z'/,
+        'Unknown atom %Z produces helpful error'
+    );
+};
+
 done_testing;
