@@ -2844,8 +2844,9 @@ sub _create_sse_send {
             }
 
             # data: field (required) - handle multi-line data
+            # Split on CRLF, LF, or bare CR per SSE spec (WHATWG)
             my $data = $event->{data} // '';
-            for my $line (split /\n/, $data, -1) {
+            for my $line (split /\r?\n|\r/, $data, -1) {
                 $sse_data .= "data: $line\n";
             }
 
@@ -2871,10 +2872,14 @@ sub _create_sse_send {
             # Used for keepalives that shouldn't trigger onmessage
             return unless $weak_self->{sse_started};
 
-            my $comment = $event->{comment} // '';
-            # Ensure comment starts with : and ends with newlines
-            $comment = ":$comment" unless $comment =~ /^:/;
-            $comment .= "\n\n";
+            my $comment_text = $event->{comment} // '';
+            # Split on CRLF, LF, or bare CR and prefix each line with :
+            my $comment = '';
+            for my $line (split /\r?\n|\r/, $comment_text, -1) {
+                $line = ":$line" unless $line =~ /^:/;
+                $comment .= "$line\n";
+            }
+            $comment .= "\n";
 
             my $len = sprintf("%x", length($comment));
             $weak_self->{stream}->write("$len\r\n$comment\r\n");
