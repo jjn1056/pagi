@@ -1987,6 +1987,44 @@ sub _listen_multiworker {
         $loop->watch_signal(TTOU => sub { $self->_decrease_workers });
     }
 
+    # Start heartbeat monitor if enabled
+    if ($self->{heartbeat_timeout} && $self->{heartbeat_timeout} > 0) {
+        my $hb_timeout = $self->{heartbeat_timeout};
+        my $check_interval = $hb_timeout / 2;
+        weaken(my $weak_self = $self);
+
+        my $hb_check_timer = IO::Async::Timer::Periodic->new(
+            interval => $check_interval,
+            on_tick  => sub {
+                return unless $weak_self;
+                return if $weak_self->{shutting_down};
+
+                my $now = time();
+                for my $pid (keys %{$weak_self->{worker_pids}}) {
+                    my $info = $weak_self->{worker_pids}{$pid};
+                    next unless $info->{heartbeat_rd};
+
+                    # Drain all available heartbeat bytes
+                    while (sysread($info->{heartbeat_rd}, my $buf, 64)) {
+                        $info->{last_heartbeat} = $now;
+                    }
+
+                    # Kill if heartbeat expired
+                    if ($now - $info->{last_heartbeat} > $hb_timeout) {
+                        $weak_self->_log(warn =>
+                            "Worker $pid (worker $info->{worker_num}) heartbeat " .
+                            "timeout after ${hb_timeout}s, sending SIGKILL");
+                        kill 'KILL', $pid;
+                    }
+                }
+            },
+        );
+
+        $self->add_child($hb_check_timer);
+        $hb_check_timer->start;
+        $self->{_heartbeat_check_timer} = $hb_check_timer;
+    }
+
     # Store the socket for cleanup during shutdown (only in traditional mode)
     $self->{listen_socket} = $listen_socket if $listen_socket;
 
