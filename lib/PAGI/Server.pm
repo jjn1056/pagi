@@ -204,6 +204,9 @@ rules are in place. For production, consider a reverse proxy (nginx, etc.)
 
 Bind port. Default: 5000
 
+B<Note:> Cannot specify C<host> or C<port> when C<$ENV{SERVER_STARTER_PORT}>
+is set. See L</SERVER::STARTER INTEGRATION>.
+
 =item ssl => \%config
 
 Optional TLS/HTTPS configuration. B<Requires additional modules> - see
@@ -1395,14 +1398,91 @@ B<Graceful shutdown for maintenance:>
     # Stop accepting new connections, drain existing ones
     kill -TERM $(cat /var/run/pagi.pid)
 
+=head1 SERVER::STARTER INTEGRATION
+
+PAGI::Server automatically detects C<$ENV{SERVER_STARTER_PORT}> and reuses
+the inherited file descriptor instead of creating a new listening socket.
+This enables zero-downtime binary upgrades via L<Server::Starter|https://metacpan.org/pod/Server::Starter>.
+
+=head2 How It Works
+
+=over 4
+
+=item 1. C<start_server> creates the listening socket and sets C<SERVER_STARTER_PORT>
+
+=item 2. PAGI::Server detects the env var and uses the inherited FD
+
+=item 3. On upgrade, C<start_server> forks a new server and signals the old one
+
+=item 4. The old server drains connections and exits; the new server takes over
+
+=back
+
+=head2 Usage
+
+    # Install Server::Starter
+    cpanm Server::Starter
+
+    # Start with zero-downtime support
+    start_server --port 5000 -- pagi-server ./app.pl
+
+    # Zero-downtime restart (sends HUP to start_server)
+    kill -HUP $(cat /var/run/start_server.pid)
+
+=head2 Constraints
+
+=over 4
+
+=item * Cannot specify explicit C<host> or C<port> when C<SERVER_STARTER_PORT> is set
+
+=item * Socket ownership belongs to C<start_server> — PAGI::Server will not close it on shutdown
+
+=item * Works in both single-worker and multi-worker modes
+
+=back
+
+=head2 Environment Variables
+
+=over 4
+
+=item C<SERVER_STARTER_PORT>
+
+Set by C<start_server>. Format: C<host:port=fd>, C<port=fd>, C</path=fd>,
+or C<[ipv6]:port=fd>. Multiple entries separated by C<;> (first is used).
+
+=item C<SERVER_STARTER_GENERATION>
+
+Set by C<start_server> to track the generation number during restarts.
+
+=back
+
 =cut
 
 sub _init {
     my ($self, $params) = @_;
 
     $self->{app}              = delete $params->{app} or die "app is required";
+
+    # Detect Server::Starter before processing host/port
+    my $explicit_host = exists $params->{host};
+    my $explicit_port = exists $params->{port};
     $self->{host}             = delete $params->{host} // '127.0.0.1';
     $self->{port}             = delete $params->{port} // 5000;
+
+    if (my $ss = $self->_parse_server_starter_port($ENV{SERVER_STARTER_PORT})) {
+        if ($explicit_host || $explicit_port) {
+            die "Cannot specify explicit host/port when SERVER_STARTER_PORT is set\n";
+        }
+        $self->{_server_starter} = $ss;
+        if ($ss->{unix}) {
+            # Unix socket - host/port not applicable
+        }
+        else {
+            $self->{host} = $ss->{host} // '0.0.0.0';
+            $self->{port} = $ss->{port};
+        }
+    }
+
     $self->{ssl}              = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
 
@@ -1822,43 +1902,97 @@ async sub _listen_singleworker {
         die "Lifespan startup failed: $message\n";
     }
 
-    my $listener = IO::Async::Listener->new(
-        on_stream => sub  {
-        my ($listener, $stream) = @_;
-            return unless $weak_self;
-            $weak_self->_on_connection($stream);
-        },
-    );
+    my $ssl_params = $self->_build_ssl_config;
+    my $listener;
 
-    $self->add_child($listener);
-    $self->{listener} = $listener;
+    if (my $ss = $self->{_server_starter}) {
+        # Server::Starter: use inherited file descriptor
+        my $fd = $ss->{fd};
+        open(my $sock_fh, '+<&=', $fd)
+            or die "Cannot dup Server::Starter fd $fd: $!\n";
 
-    # Build listener options
-    my %listen_opts = (
-        queuesize => $self->{listener_backlog},
-        addr => {
-            family   => 'inet',
-            socktype => 'stream',
-            ip       => $self->{host},
-            port     => $self->{port},
-        },
-    );
+        if ($ss->{unix}) {
+            bless $sock_fh, 'IO::Socket::UNIX';
+        }
+        else {
+            bless $sock_fh, 'IO::Socket::INET';
+        }
 
-    # Add SSL options if configured
-    if (my $ssl_params = $self->_build_ssl_config) {
-        $listen_opts{extensions} = ['SSL'];
-        %listen_opts = (%listen_opts, %$ssl_params);
+        if ($ssl_params) {
+            # SSL with Server::Starter: per-connection SSL upgrade (like multi-worker)
+            $self->_check_tls_available;
+            $self->{tls_enabled} = 1;
+            $listener = IO::Async::Listener->new(
+                handle => $sock_fh,
+                on_stream => sub {
+                    my ($listener, $stream) = @_;
+                    return unless $weak_self;
 
-        $listen_opts{on_ssl_error} = sub {
-            return unless $weak_self;
-            $weak_self->_log(debug => "SSL handshake failed: $_[0]");
-        };
+                    $weak_self->loop->SSL_upgrade(
+                        handle        => $stream,
+                        SSL_server    => 1,
+                        SSL_reuse_ctx => $weak_self->{_ssl_ctx},
+                    )->on_done(sub {
+                        $weak_self->_on_connection($stream) if $weak_self;
+                    })->on_fail(sub {
+                        my ($failure) = @_;
+                        $weak_self->_log(debug => "SSL handshake failed: $failure")
+                            if $weak_self;
+                    });
+                },
+            );
+        }
+        else {
+            $listener = IO::Async::Listener->new(
+                handle => $sock_fh,
+                on_stream => sub {
+                    my ($listener, $stream) = @_;
+                    return unless $weak_self;
+                    $weak_self->_on_connection($stream);
+                },
+            );
+        }
+    }
+    else {
+        # Normal mode: create listener and bind to address
+        $listener = IO::Async::Listener->new(
+            on_stream => sub {
+                my ($listener, $stream) = @_;
+                return unless $weak_self;
+                $weak_self->_on_connection($stream);
+            },
+        );
+
+        $self->add_child($listener);
+
+        my %listen_opts = (
+            queuesize => $self->{listener_backlog},
+            addr => {
+                family   => 'inet',
+                socktype => 'stream',
+                ip       => $self->{host},
+                port     => $self->{port},
+            },
+        );
+
+        if ($ssl_params) {
+            $listen_opts{extensions} = ['SSL'];
+            %listen_opts = (%listen_opts, %$ssl_params);
+
+            $listen_opts{on_ssl_error} = sub {
+                return unless $weak_self;
+                $weak_self->_log(debug => "SSL handshake failed: $_[0]");
+            };
+        }
+
+        my $listen_future = $listener->listen(%listen_opts);
+        await $listen_future;
     }
 
-    # Start listening
-    my $listen_future = $listener->listen(%listen_opts);
-
-    await $listen_future;
+    if (!$listener->parent) {
+        $self->add_child($listener);
+    }
+    $self->{listener} = $listener;
 
     # Configure accept error handler after listen() to avoid SSL extension conflicts
     # Note: SSL extensions may wrap the listener, so try to configure but ignore if it fails
@@ -1925,7 +2059,8 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    my $mode_info = $self->{_server_starter} ? ', server-starter' : '';
+    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status$mode_info)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -1947,7 +2082,23 @@ sub _listen_multiworker {
 
     my $listen_socket;
 
-    if ($reuseport) {
+    if (my $ss = $self->{_server_starter}) {
+        # Server::Starter: reuse inherited FD
+        my $fd = $ss->{fd};
+        open(my $sock_fh, '+<&=', $fd)
+            or die "Cannot dup Server::Starter fd $fd: $!\n";
+
+        if ($ss->{unix}) {
+            bless $sock_fh, 'IO::Socket::UNIX';
+        }
+        else {
+            bless $sock_fh, 'IO::Socket::INET';
+        }
+
+        $listen_socket = $sock_fh;
+        $self->{bound_port} = $ss->{port} if $ss->{port};
+    }
+    elsif ($reuseport) {
         # SO_REUSEPORT mode: each worker creates its own socket
         # Parent just needs to know the port for display purposes
         # We do a quick bind to validate port availability and get actual port if 0
@@ -1986,7 +2137,7 @@ sub _listen_multiworker {
     my $scheme = $self->{ssl} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
-    my $mode = $reuseport ? 'reuseport' : 'shared-socket';
+    my $mode = $self->{_server_starter} ? 'server-starter' : $reuseport ? 'reuseport' : 'shared-socket';
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
     my $http2_status = $self->_http2_status_string;
@@ -2091,7 +2242,8 @@ sub _initiate_multiworker_shutdown {
     }
 
     # Close the listen socket to stop accepting new connections
-    if ($self->{listen_socket}) {
+    # (Skip for Server::Starter - it owns the socket)
+    if ($self->{listen_socket} && !$self->{_server_starter}) {
         close($self->{listen_socket});
         delete $self->{listen_socket};
     }
@@ -2299,6 +2451,8 @@ sub _run_as_worker {
     }
 
     # Create a fresh server instance for this worker (single-worker mode)
+    # Workers should not re-detect SERVER_STARTER_PORT (parent already handled it)
+    local $ENV{SERVER_STARTER_PORT} if $self->{_server_starter};
     my $worker_server = PAGI::Server->new(
         app             => $self->{app},
         host            => $self->{host},
@@ -2308,6 +2462,7 @@ sub _run_as_worker {
         extensions      => $self->{extensions},
         on_error        => $self->{on_error},
         access_log      => $self->{access_log},
+        access_log_format => $self->{access_log_format},
         log_level       => $self->{log_level},
         quiet           => 1,  # Workers should be quiet
         timeout         => $self->{timeout},
@@ -2790,6 +2945,11 @@ async sub shutdown {
 
     # Stop accepting new connections
     if ($self->{listener}) {
+        # For Server::Starter, preserve the socket handle before removing the listener
+        # (Server::Starter owns the socket; we must not close it)
+        if ($self->{_server_starter}) {
+            $self->{_server_starter_handle} = $self->{listener}->read_handle;
+        }
         $self->remove_child($self->{listener});
         $self->{listener} = undef;
     }
@@ -2857,6 +3017,48 @@ async sub _drain_connections {
 
     delete $self->{drain_complete};
     return;
+}
+
+# --- Server::Starter FD passing ---
+
+sub _parse_server_starter_port {
+    my ($class_or_self, $env_value) = @_;
+
+    return undef unless defined $env_value && length $env_value;
+
+    # Use first entry if multiple (semicolon-separated)
+    my ($entry) = split /;/, $env_value;
+
+    # Parse: address=fd
+    my ($address, $fd) = $entry =~ /^(.+)=(\d+)$/
+        or die "Cannot parse SERVER_STARTER_PORT entry: '$entry'\n";
+
+    my %result = (fd => int($fd));
+
+    if ($address =~ m{^/}) {
+        # Unix socket path
+        $result{path} = $address;
+        $result{unix} = 1;
+    }
+    elsif ($address =~ /^\[([^\]]+)\]:(\d+)$/) {
+        # IPv6: [::]:port
+        $result{host} = "[$1]";
+        $result{port} = int($2);
+    }
+    elsif ($address =~ /^(.+):(\d+)$/) {
+        # host:port
+        $result{host} = $1;
+        $result{port} = int($2);
+    }
+    elsif ($address =~ /^\d+$/) {
+        # port only
+        $result{port} = int($address);
+    }
+    else {
+        die "Cannot parse SERVER_STARTER_PORT address: '$address'\n";
+    }
+
+    return \%result;
 }
 
 # --- Access log format compiler ---
