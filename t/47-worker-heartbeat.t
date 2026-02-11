@@ -80,6 +80,46 @@ my $normal_app = async sub {
     }
 };
 
+# App that blocks the event loop on GET /block
+my $blocking_app = async sub {
+    my ($scope, $receive, $send) = @_;
+    if ($scope->{type} eq 'lifespan') {
+        while (1) {
+            my $event = await $receive->();
+            if ($event->{type} eq 'lifespan.startup') {
+                await $send->({ type => 'lifespan.startup.complete' });
+            }
+            elsif ($event->{type} eq 'lifespan.shutdown') {
+                await $send->({ type => 'lifespan.shutdown.complete' });
+                return;
+            }
+        }
+    }
+    elsif ($scope->{type} eq 'http') {
+        while (1) {
+            my $event = await $receive->();
+            last if $event->{type} ne 'http.request';
+            last unless $event->{more};
+        }
+
+        if ($scope->{path} eq '/block') {
+            # Block the event loop entirely — heartbeat stops
+            sleep(1000);
+        }
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => "OK from worker $$",
+            more => 0,
+        });
+    }
+};
+
 # ============================================================================
 # Configuration Acceptance Tests
 # ============================================================================
@@ -229,6 +269,85 @@ subtest 'heartbeat_timeout=0 workers still functional' => sub {
     # Clean up
     kill 'TERM', $server_pid;
     my ($terminated, $elapsed) = _wait_for_exit($server_pid, 5);
+    unless ($terminated) {
+        kill 'KILL', $server_pid;
+        waitpid($server_pid, 0);
+    }
+};
+
+# ============================================================================
+# Stuck Worker Detection
+# ============================================================================
+
+subtest 'Stuck worker killed by heartbeat and respawned' => sub {
+    my $port = 6300 + int(rand(100));
+
+    my $server_pid = fork();
+    die "Fork failed: $!" unless defined $server_pid;
+
+    if ($server_pid == 0) {
+        my $child_loop = IO::Async::Loop->new;
+        my $server = PAGI::Server->new(
+            app               => $blocking_app,
+            host              => '127.0.0.1',
+            port              => $port,
+            workers           => 1,  # Single worker — must be killed and respawned
+            heartbeat_timeout => 3,
+            quiet             => 1,
+        );
+        $child_loop->add($server);
+        $server->listen->get;
+        $child_loop->run;
+        exit(0);
+    }
+
+    ok(_wait_for_port($port), 'Server started and accepting connections');
+
+    # Verify server works before blocking it
+    my $pre_ok = 0;
+    eval {
+        my $loop = IO::Async::Loop->new;
+        my $http = Net::Async::HTTP->new(timeout => 3);
+        $loop->add($http);
+        my $response = $http->GET("http://127.0.0.1:$port/")->get;
+        $pre_ok = ($response->code == 200);
+        $loop->remove($http);
+    };
+    ok($pre_ok, 'Server responds before blocking');
+
+    # Fire-and-forget: send GET /block via raw TCP to jam the only worker
+    my $raw = IO::Socket::INET->new(
+        PeerAddr => '127.0.0.1',
+        PeerPort => $port,
+        Proto    => 'tcp',
+        Timeout  => 2,
+    );
+    if ($raw) {
+        print $raw "GET /block HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        # Don't close — keep connection open so worker stays blocked
+    }
+
+    # Wait for heartbeat timeout (3s) + check interval (1.5s) + respawn + slack
+    sleep(7);
+
+    # Close the raw socket now (after worker was killed)
+    close($raw) if $raw;
+
+    # The respawned worker should handle this request
+    my $responding = 0;
+    eval {
+        my $loop = IO::Async::Loop->new;
+        my $http = Net::Async::HTTP->new(timeout => 5);
+        $loop->add($http);
+        my $response = $http->GET("http://127.0.0.1:$port/")->get;
+        $responding = ($response->code == 200);
+        $loop->remove($http);
+    };
+    ok($responding, 'Server responds after stuck worker was killed and respawned');
+
+    # Clean up
+    kill 'TERM', $server_pid;
+    my ($terminated, $elapsed) = _wait_for_exit($server_pid, 8);
     unless ($terminated) {
         kill 'KILL', $server_pid;
         waitpid($server_pid, 0);
