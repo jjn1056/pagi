@@ -537,6 +537,7 @@ sub _parse_server_options {
 
             # Network
             'socket=s'              => \$opts{socket},
+            'socket-mode=s'         => \$opts{socket_mode},
 
             # TLS
             'ssl-cert=s'            => \$opts{_ssl_cert},
@@ -584,6 +585,11 @@ sub _parse_server_options {
         # Handle workers (0 for single-process, >1 for multi-worker)
         if (defined $opts{workers}) {
             $opts{workers} = $opts{workers} > 1 ? $opts{workers} : 0;
+        }
+
+        # Parse socket_mode as octal (CLI passes string like "0660")
+        if (defined $opts{socket_mode}) {
+            $opts{socket_mode} = oct($opts{socket_mode});
         }
     }
 

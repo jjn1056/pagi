@@ -290,4 +290,138 @@ subtest 'Multi-worker listens and responds on Unix socket' => sub {
     ok(! -e $socket_path, 'Socket file cleaned up after multi-worker shutdown');
 };
 
+# Test 8: socket_mode => 0660 sets correct permissions
+subtest 'socket_mode 0660 sets correct permissions' => sub {
+    my $socket_path = tmp_socket_path();
+    my $loop = IO::Async::Loop->new;
+
+    my $server = PAGI::Server->new(
+        app         => $app,
+        socket      => $socket_path,
+        socket_mode => 0660,
+        quiet       => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    ok(-S $socket_path, 'Socket file exists');
+    my $perms = (stat($socket_path))[2] & 07777;
+    is($perms, 0660, 'Socket has 0660 permissions');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+# Test 9: socket_mode => 0666 sets correct permissions
+subtest 'socket_mode 0666 sets correct permissions' => sub {
+    my $socket_path = tmp_socket_path();
+    my $loop = IO::Async::Loop->new;
+
+    my $server = PAGI::Server->new(
+        app         => $app,
+        socket      => $socket_path,
+        socket_mode => 0666,
+        quiet       => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    ok(-S $socket_path, 'Socket file exists');
+    my $perms = (stat($socket_path))[2] & 07777;
+    is($perms, 0666, 'Socket has 0666 permissions');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+# Test 10: Default (no socket_mode) works without error
+subtest 'Default permissions without socket_mode' => sub {
+    my $socket_path = tmp_socket_path();
+    my $loop = IO::Async::Loop->new;
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => $socket_path,
+        quiet  => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    ok(-S $socket_path, 'Socket file exists without socket_mode');
+    ok($server->is_running, 'Server runs without socket_mode');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+# Test 11: Multi-worker with socket_mode sets correct permissions
+subtest 'Multi-worker with socket_mode' => sub {
+    my $socket_path = tmp_socket_path();
+
+    my $server_pid = fork();
+    die "Fork failed: $!" unless defined $server_pid;
+
+    if ($server_pid == 0) {
+        # Child: run multi-worker server with socket_mode
+        my $child_loop = IO::Async::Loop->new;
+        my $server = PAGI::Server->new(
+            app         => $app,
+            socket      => $socket_path,
+            socket_mode => 0660,
+            workers     => 2,
+            quiet       => 1,
+            access_log  => undef,
+        );
+        $child_loop->add($server);
+        $server->listen->get;
+        $child_loop->run;
+        exit(0);
+    }
+
+    # Parent: wait for server to start
+    my $started = 0;
+    for my $i (1..30) {
+        if (-S $socket_path) {
+            $started = 1;
+            last;
+        }
+        select(undef, undef, undef, 0.1);
+    }
+    ok($started, 'Socket file appeared (server started)');
+
+    if ($started) {
+        my $perms = (stat($socket_path))[2] & 07777;
+        is($perms, 0660, 'Multi-worker socket has 0660 permissions');
+    }
+
+    # Clean up
+    kill 'TERM', $server_pid;
+    my $terminated = 0;
+    for my $i (1..10) {
+        my $result = waitpid($server_pid, POSIX::WNOHANG());
+        if ($result > 0) {
+            $terminated = 1;
+            last;
+        }
+        sleep 1;
+    }
+    ok($terminated, 'Server terminated after SIGTERM');
+};
+
+# Test 12: socket_mode without socket is silently ignored
+subtest 'socket_mode without socket is silently ignored' => sub {
+    my $server = PAGI::Server->new(
+        app         => $app,
+        socket_mode => 0660,
+        quiet       => 1,
+    );
+
+    ok($server, 'Server created with socket_mode but no socket');
+    is($server->{host}, '127.0.0.1', 'host defaults normally');
+    is($server->{port}, 5000, 'port defaults normally');
+};
+
 done_testing;

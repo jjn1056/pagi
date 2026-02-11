@@ -224,6 +224,13 @@ with C<--host>/C<--port>. Useful for nginx reverse proxy setups:
 
 See L<PAGI::Server/UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)> for details.
 
+=item B<--socket-mode> MODE
+
+Set file permissions on the Unix domain socket (octal, e.g., C<0660>).
+Useful when the reverse proxy runs as a different user:
+
+    pagi-server --socket /tmp/pagi.sock --socket-mode 0660 ./app.pl
+
 =item B<--ssl-cert> FILE, B<--ssl-key> FILE
 
 Enable HTTPS with the specified certificate and key files.

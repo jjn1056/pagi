@@ -223,6 +223,22 @@ startup. The C<reuseport> option is ignored when using Unix sockets.
 
 See L</UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)> for details.
 
+=item socket_mode => $octal_mode
+
+Set file permissions on the Unix domain socket after creation. The value
+should be a numeric mode (e.g., C<0660>). If not specified, the socket
+inherits the default permissions from the process umask.
+
+    my $server = PAGI::Server->new(
+        app         => $app,
+        socket      => '/tmp/pagi.sock',
+        socket_mode => 0660,
+    );
+
+This is useful when the server runs as a different user than the reverse
+proxy (e.g., nginx) that connects to it. Silently ignored if C<socket> is
+not set.
+
 =item ssl => \%config
 
 Optional TLS/HTTPS configuration. B<Requires additional modules> - see
@@ -927,6 +943,12 @@ Returns the bound port number. Useful when port => 0 is used.
 
 Returns the Unix domain socket path, or C<undef> if not using Unix sockets.
 
+=head2 socket_mode
+
+    my $mode = $server->socket_mode;
+
+Returns the configured socket permission mode, or C<undef> if not set.
+
 =head2 is_running
 
     my $bool = $server->is_running;
@@ -1320,6 +1342,9 @@ via fork.
 =item * The socket file is automatically B<removed on shutdown> (both
 graceful and multi-worker shutdown).
 
+=item * Use C<socket_mode> to set file permissions (e.g., C<0660>) after
+socket creation. Useful when nginx runs as a different user.
+
 =item * Use the C<socket_path> accessor to retrieve the configured path.
 
 =back
@@ -1425,6 +1450,7 @@ sub _init {
     $self->{host}             = delete $params->{host} // '127.0.0.1';
     $self->{port}             = delete $params->{port} // 5000;
     $self->{socket}           = delete $params->{socket};
+    $self->{socket_mode}      = delete $params->{socket_mode};
     $self->{ssl}              = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
 
@@ -1897,6 +1923,12 @@ async sub _listen_singleworker {
 
     await $listen_future;
 
+    # Set socket permissions if configured
+    if (defined $self->{socket_mode} && $self->{socket}) {
+        chmod($self->{socket_mode}, $self->{socket})
+            or die "Cannot chmod $self->{socket}: $!\n";
+    }
+
     # Configure accept error handler after listen() to avoid SSL extension conflicts
     # Note: SSL extensions may wrap the listener, so try to configure but ignore if it fails
     eval {
@@ -1999,6 +2031,11 @@ sub _listen_multiworker {
             Listen   => $self->{listener_backlog},
             Type     => SOCK_STREAM,
         ) or die "Cannot create Unix listening socket at $socket_path: $!";
+
+        if (defined $self->{socket_mode}) {
+            chmod($self->{socket_mode}, $socket_path)
+                or die "Cannot chmod $socket_path: $!\n";
+        }
     }
     elsif ($reuseport) {
         # SO_REUSEPORT mode: each worker creates its own socket
@@ -2813,6 +2850,12 @@ sub socket_path {
     my ($self) = @_;
 
     return $self->{socket};
+}
+
+sub socket_mode {
+    my ($self) = @_;
+
+    return $self->{socket_mode};
 }
 
 sub is_running {
