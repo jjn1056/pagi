@@ -140,6 +140,7 @@ sub new {
         closed        => 0,
         response_started => 0,
         response_status  => undef,  # Track response status for logging
+        _response_size   => 0,      # Track response body bytes for logging
         request_start    => undef,  # Track request start time for logging
         idle_timer    => undef,  # IO::Async::Timer for idle timeout
         stall_timer   => undef,  # IO::Async::Timer for request stall timeout
@@ -1728,6 +1729,7 @@ async sub _handle_request {
         $self->{handling_request} = 0;
         $self->{response_started} = 0;
         $self->{response_status} = undef;
+        $self->{_response_size} = 0;
         $self->{request_start} = undef;
         $self->{current_request} = undef;
         $self->{request_future} = undef;
@@ -2144,6 +2146,8 @@ sub _create_send {
                 $body //= '';
                 my $more = $event->{more} // 0;
 
+                $weak_self->{_response_size} += length($body);
+
                 if ($chunked) {
                     if (length $body) {
                         my $len = sprintf("%x", length($body));
@@ -2267,8 +2271,11 @@ sub _write_access_log {
     }
     my $timestamp = $_cached_log_timestamp;
 
+    my $size = $self->{_response_size} // 0;
+    my $size_display = $size || '-';
+
     my $log = $self->{access_log};
-    print $log "$client_ip - - [$timestamp] \"$method $path\" $status ${duration}s\n";
+    print $log "$client_ip - - [$timestamp] \"$method $path\" $status $size_display ${duration}s\n";
 }
 
 sub _handle_disconnect {
@@ -3411,6 +3418,8 @@ async sub _send_file_response {
     die "Cannot stat file $file: $!" unless defined $file_size;
     $length //= $file_size - $offset;
 
+    $self->{_response_size} += $length;
+
     my $stream = $self->{stream};
 
     if ($self->{sync_file_threshold} > 0 && $length <= $self->{sync_file_threshold}) {
@@ -3491,6 +3500,8 @@ async sub _send_fh_response {
 
         last if !defined $bytes_read;  # Error
         last if $bytes_read == 0;      # EOF
+
+        $self->{_response_size} += $bytes_read;
 
         if ($chunked) {
             my $len = sprintf("%x", length($chunk));
