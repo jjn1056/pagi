@@ -555,6 +555,7 @@ sub _parse_server_options {
             # Misc
             'log-level=s'           => \$opts{log_level},
             'sync-file-threshold=i' => \$opts{sync_file_threshold},
+            'access-log-format=s'   => \$opts{access_log_format},
         );
 
         # Build ssl hash if certs provided
