@@ -785,6 +785,30 @@ B<CLI:> C<--sse-idle-timeout 120>
 B<Note:> For SSE connections that may be legitimately idle, use
 C<< $sse->keepalive($interval) >> to send periodic comment keepalives.
 
+=item heartbeat_timeout => $seconds
+
+Worker heartbeat timeout in seconds. In multi-worker mode, workers send
+periodic heartbeats to the parent process via a Unix pipe. If a worker's
+event loop becomes unresponsive (blocking syscall, deadlock, CPU-bound
+computation) for longer than this timeout, the parent kills it with
+SIGKILL and respawns a replacement.
+
+B<Default:> 30 (seconds). Set to 0 to disable.
+
+B<Example:>
+
+    # Tighter heartbeat for latency-sensitive service
+    my $server = PAGI::Server->new(
+        app               => $app,
+        workers           => 4,
+        heartbeat_timeout => 10,
+    );
+
+B<CLI:> C<--heartbeat-timeout 10>
+
+B<Note:> Only active in multi-worker mode (C<< workers >= 1 >>).
+The worker heartbeat interval is derived as C<timeout / 5>.
+
 =item loop_type => $backend
 
 Specifies the IO::Async::Loop subclass to use when calling C<run()>.
@@ -1325,6 +1349,8 @@ When running with C<< workers => N >> (where N > 1):
 
 =item * Workers that crash are automatically respawned
 
+=item * Heartbeat monitoring detects stuck workers and replaces them automatically (see C<heartbeat_timeout>)
+
 =back
 
 =head2 Examples
@@ -1409,6 +1435,7 @@ sub _init {
     $self->{request_timeout}     = delete $params->{request_timeout} // 0;  # Request stall timeout in seconds (0 = disabled, default for performance)
     $self->{ws_idle_timeout}     = delete $params->{ws_idle_timeout} // 0;   # WebSocket idle timeout (0 = disabled)
     $self->{sse_idle_timeout}    = delete $params->{sse_idle_timeout} // 0;  # SSE idle timeout (0 = disabled)
+    $self->{heartbeat_timeout}   = delete $params->{heartbeat_timeout} // 30;  # Worker heartbeat timeout (0 = disabled)
     $self->{write_high_watermark} = delete $params->{write_high_watermark} // 65536;   # 64KB - pause sending above this
     $self->{write_low_watermark}  = delete $params->{write_low_watermark}  // 16384;   # 16KB - resume sending below this
     $self->{loop_type}           = delete $params->{loop_type};  # Optional loop backend (EPoll, EV, Poll, etc.)

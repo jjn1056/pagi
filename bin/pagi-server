@@ -267,6 +267,13 @@ WebSocket idle timeout in seconds (default: 0, disabled)
 
 SSE idle timeout in seconds (default: 0, disabled)
 
+=item B<--heartbeat-timeout> NUM
+
+Worker heartbeat timeout in seconds (default: 30, 0 = disabled).
+In multi-worker mode, workers send periodic heartbeats to the parent.
+If a worker's event loop is unresponsive for this long, the parent
+kills it with SIGKILL and respawns a replacement. Set to 0 to disable.
+
 =item B<--sync-file-threshold> NUM
 
 Sync file read threshold in bytes (default: 65536)
