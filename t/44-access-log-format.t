@@ -5,6 +5,7 @@ use IO::Async::Loop;
 use Net::Async::HTTP;
 use Future::AsyncAwait;
 use FindBin;
+use URI;
 
 use PAGI::Server;
 
@@ -57,11 +58,12 @@ subtest 'Response size tracked for single body' => sub {
     open(my $log_fh, '>', \$log_output) or die "Cannot create in-memory log: $!";
 
     my $server = PAGI::Server->new(
-        app        => $hello_app,
-        host       => '127.0.0.1',
-        port       => 0,
-        access_log => $log_fh,
-        quiet      => 1,
+        app               => $hello_app,
+        host              => '127.0.0.1',
+        port              => 0,
+        access_log        => $log_fh,
+        access_log_format => '%s %b',
+        quiet             => 1,
     );
 
     $loop->add($server);
@@ -77,8 +79,8 @@ subtest 'Response size tracked for single body' => sub {
     close($log_fh);
     $loop->delay_future(after => 0.1)->get;
 
-    # The access log should contain the response size (13 bytes)
-    like($log_output, qr/\b13\b/, 'Access log contains response size of 13 bytes');
+    # "Hello, World!" = 13 bytes; format: "status size"
+    like($log_output, qr/^200 13$/m, 'Access log contains response size of 13 bytes');
 
     $loop->remove($http);
     $server->shutdown->get;
@@ -90,11 +92,12 @@ subtest 'Response size accumulates across chunks' => sub {
     open(my $log_fh, '>', \$log_output) or die "Cannot create in-memory log: $!";
 
     my $server = PAGI::Server->new(
-        app        => $chunked_app,
-        host       => '127.0.0.1',
-        port       => 0,
-        access_log => $log_fh,
-        quiet      => 1,
+        app               => $chunked_app,
+        host              => '127.0.0.1',
+        port              => 0,
+        access_log        => $log_fh,
+        access_log_format => '%s %b',
+        quiet             => 1,
     );
 
     $loop->add($server);
@@ -112,7 +115,7 @@ subtest 'Response size accumulates across chunks' => sub {
     $loop->delay_future(after => 0.1)->get;
 
     # Total: 6 + 6 = 12 bytes
-    like($log_output, qr/\b12\b/, 'Access log contains accumulated size of 12 bytes');
+    like($log_output, qr/^200 12$/m, 'Access log contains accumulated size of 12 bytes');
 
     $loop->remove($http);
     $server->shutdown->get;
@@ -124,11 +127,12 @@ subtest 'Response size resets between keep-alive requests' => sub {
     open(my $log_fh, '>', \$log_output) or die "Cannot create in-memory log: $!";
 
     my $server = PAGI::Server->new(
-        app        => $hello_app,
-        host       => '127.0.0.1',
-        port       => 0,
-        access_log => $log_fh,
-        quiet      => 1,
+        app               => $hello_app,
+        host              => '127.0.0.1',
+        port              => 0,
+        access_log        => $log_fh,
+        access_log_format => '%s %b',
+        quiet             => 1,
     );
 
     $loop->add($server);
@@ -152,7 +156,7 @@ subtest 'Response size resets between keep-alive requests' => sub {
     is(scalar @lines, 2, 'Two log lines for two requests');
 
     for my $i (0, 1) {
-        like($lines[$i], qr/\b13\b/, "Request " . ($i+1) . " shows 13 bytes (reset between requests)");
+        is($lines[$i], '200 13', "Request " . ($i+1) . " shows 13 bytes (reset between requests)");
     }
 
     $loop->remove($http);
@@ -192,7 +196,7 @@ sub compile_and_format {
 subtest 'Format compiler: individual atoms' => sub {
     is(compile_and_format('%h'), '192.168.1.1', '%h returns client IP');
     is(compile_and_format('%s'), '200', '%s returns status code');
-    is(compile_and_format('%r'), 'GET /test/path HTTP/1.1', '%r returns request line');
+    is(compile_and_format('%r'), 'GET /test/path?foo=bar HTTP/1.1', '%r returns full request line with query');
     is(compile_and_format('%m'), 'GET', '%m returns method');
     is(compile_and_format('%U'), '/test/path', '%U returns URL path');
     is(compile_and_format('%q'), '?foo=bar', '%q returns ?query');
@@ -210,6 +214,9 @@ subtest 'Format compiler: individual atoms' => sub {
     is(compile_and_format('%B', size => 0), '0', '%B returns 0 when size is 0');
 
     # Duration atoms
+    is(compile_and_format('%d'), '0.123', '%d returns seconds with 3 decimal places');
+    is(compile_and_format('%d', duration => 2.7), '2.700', '%d returns 2.700 for 2.7s');
+
     my $result_D = compile_and_format('%D');
     like($result_D, qr/^\d+$/, '%D returns integer microseconds');
     is($result_D, '123456', '%D returns 123456 microseconds for 0.123456s');
@@ -238,11 +245,11 @@ subtest 'Format compiler: literal text and escapes' => sub {
 };
 
 subtest 'Format compiler: named presets' => sub {
-    # CLF preset should match current default output format
+    # CLF preset matches the server's default output format
     my $clf = compile_and_format('clf');
     like($clf, qr/^192\.168\.1\.1 - - \[/, 'CLF preset starts with IP and dashes');
-    like($clf, qr/"GET \/test\/path HTTP\/1\.1"/, 'CLF preset contains quoted request line');
-    like($clf, qr/200 \d+s$/, 'CLF preset ends with status and duration');
+    like($clf, qr/"GET \/test\/path\?foo=bar"/, 'CLF preset contains quoted method/path/query');
+    like($clf, qr/200 \d+\.\d+s$/, 'CLF preset ends with status and duration in seconds');
 
     # Combined preset
     my $combined = compile_and_format('combined');
@@ -261,6 +268,203 @@ subtest 'Format compiler: named presets' => sub {
     like($tiny, qr/\/test\/path\?foo=bar/, 'tiny contains path with query');
     like($tiny, qr/200/, 'tiny contains status');
     like($tiny, qr/\d+ms$/, 'tiny ends with duration in ms');
+};
+
+# --- Step 3: Integration tests (real server with format options) ---
+
+# App that echoes back with known headers for combined format testing
+my $echo_app = async sub {
+    my ($scope, $receive, $send) = @_;
+    die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
+
+    await $send->({
+        type    => 'http.response.start',
+        status  => 200,
+        headers => [['content-type', 'text/plain']],
+    });
+    await $send->({
+        type => 'http.response.body',
+        body => 'OK',    # 2 bytes
+    });
+};
+
+subtest 'Integration: combined format includes User-Agent and Referer' => sub {
+    my $log_output = '';
+    open(my $log_fh, '>', \$log_output) or die "Cannot create in-memory log: $!";
+
+    my $server = PAGI::Server->new(
+        app               => $echo_app,
+        host              => '127.0.0.1',
+        port              => 0,
+        access_log        => $log_fh,
+        access_log_format => 'combined',
+        quiet             => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    my $port = $server->port;
+    my $http = Net::Async::HTTP->new;
+    $loop->add($http);
+
+    my $response = $http->do_request(
+        method  => 'GET',
+        uri     => URI->new("http://127.0.0.1:$port/test"),
+        headers => {
+            'Referer'    => 'http://example.com/',
+            'User-Agent' => 'TestBot/2.0',
+        },
+    )->get;
+
+    is($response->code, 200, 'Response is 200');
+
+    close($log_fh);
+    $loop->delay_future(after => 0.1)->get;
+
+    like($log_output, qr/"TestBot\/2\.0"/, 'combined format includes User-Agent');
+    like($log_output, qr/"http:\/\/example\.com\/"/, 'combined format includes Referer');
+    like($log_output, qr/\b2\b/, 'combined format includes response size');
+
+    $loop->remove($http);
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+subtest 'Integration: tiny format is minimal' => sub {
+    my $log_output = '';
+    open(my $log_fh, '>', \$log_output) or die "Cannot create in-memory log: $!";
+
+    my $server = PAGI::Server->new(
+        app               => $echo_app,
+        host              => '127.0.0.1',
+        port              => 0,
+        access_log        => $log_fh,
+        access_log_format => 'tiny',
+        quiet             => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    my $port = $server->port;
+    my $http = Net::Async::HTTP->new;
+    $loop->add($http);
+
+    my $response = $http->GET("http://127.0.0.1:$port/hello?x=1")->get;
+    is($response->code, 200, 'Response is 200');
+
+    close($log_fh);
+    $loop->delay_future(after => 0.1)->get;
+
+    like($log_output, qr/^GET \/hello\?x=1 200 \d+ms$/m, 'tiny format matches expected pattern');
+
+    $loop->remove($http);
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+subtest 'Integration: custom format string' => sub {
+    my $log_output = '';
+    open(my $log_fh, '>', \$log_output) or die "Cannot create in-memory log: $!";
+
+    my $server = PAGI::Server->new(
+        app               => $echo_app,
+        host              => '127.0.0.1',
+        port              => 0,
+        access_log        => $log_fh,
+        access_log_format => '%h %s %Dms',
+        quiet             => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    my $port = $server->port;
+    my $http = Net::Async::HTTP->new;
+    $loop->add($http);
+
+    my $response = $http->GET("http://127.0.0.1:$port/")->get;
+    is($response->code, 200, 'Response is 200');
+
+    close($log_fh);
+    $loop->delay_future(after => 0.1)->get;
+
+    like($log_output, qr/^127\.0\.0\.1 200 \d+ms$/m, 'custom format matches expected pattern');
+
+    $loop->remove($http);
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+subtest 'Integration: default format matches CLF (backward compat)' => sub {
+    my $log_output = '';
+    open(my $log_fh, '>', \$log_output) or die "Cannot create in-memory log: $!";
+
+    my $server = PAGI::Server->new(
+        app        => $echo_app,
+        host       => '127.0.0.1',
+        port       => 0,
+        access_log => $log_fh,
+        quiet      => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    my $port = $server->port;
+    my $http = Net::Async::HTTP->new;
+    $loop->add($http);
+
+    my $response = $http->GET("http://127.0.0.1:$port/test")->get;
+    is($response->code, 200, 'Response is 200');
+
+    close($log_fh);
+    $loop->delay_future(after => 0.1)->get;
+
+    # CLF default format: IP - - [timestamp] "METHOD /path" status duration_in_seconds_s
+    like($log_output,
+        qr/^127\.0\.0\.1 - - \[\d{2}\/\w{3}\/\d{4}:\d{2}:\d{2}:\d{2} \+0000\] "GET \/test" 200 \d+\.\d+s$/m,
+        'Default format matches CLF pattern');
+
+    $loop->remove($http);
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+subtest 'Integration: combined format has correct response size' => sub {
+    my $log_output = '';
+    open(my $log_fh, '>', \$log_output) or die "Cannot create in-memory log: $!";
+
+    my $server = PAGI::Server->new(
+        app               => $hello_app,
+        host              => '127.0.0.1',
+        port              => 0,
+        access_log        => $log_fh,
+        access_log_format => 'combined',
+        quiet             => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    my $port = $server->port;
+    my $http = Net::Async::HTTP->new;
+    $loop->add($http);
+
+    my $response = $http->GET("http://127.0.0.1:$port/")->get;
+    is($response->code, 200, 'Response is 200');
+    is($response->content, 'Hello, World!', 'Body is correct');
+
+    close($log_fh);
+    $loop->delay_future(after => 0.1)->get;
+
+    # "Hello, World!" = 13 bytes
+    like($log_output, qr/ 200 13 /, 'combined format shows correct 13-byte size');
+
+    $loop->remove($http);
+    $server->shutdown->get;
+    $loop->remove($server);
 };
 
 subtest 'Format compiler: unknown atom dies' => sub {

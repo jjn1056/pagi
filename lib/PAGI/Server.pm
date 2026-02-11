@@ -1364,6 +1364,10 @@ sub _init {
     $self->{extensions}       = delete $params->{extensions} // {};
     $self->{on_error}         = delete $params->{on_error} // sub { warn @_ };
     $self->{access_log}       = exists $params->{access_log} ? delete $params->{access_log} : \*STDERR;
+    $self->{access_log_format} = delete $params->{access_log_format} // 'clf';
+    $self->{_access_log_formatter} = $self->_compile_access_log_format(
+        $self->{access_log_format}
+    );
     $self->{quiet}            = delete $params->{quiet} // 0;
     $self->{log_level}        = delete $params->{log_level} // 'info';
     # Validate log level
@@ -2292,6 +2296,7 @@ sub _on_connection {
         sse_idle_timeout  => $self->{sse_idle_timeout},
         max_body_size     => $self->{max_body_size},
         access_log        => $self->{access_log},
+        _access_log_formatter => $self->{_access_log_formatter},
         max_receive_queue => $self->{max_receive_queue},
         max_ws_frame_size => $self->{max_ws_frame_size},
         sync_file_threshold => $self->{sync_file_threshold},
@@ -2663,7 +2668,7 @@ async sub _drain_connections {
 # --- Access log format compiler ---
 
 my %ACCESS_LOG_PRESETS = (
-    clf      => '%h - - [%t] "%r" %s %Ds',
+    clf      => '%h - - [%t] "%m %U%q" %s %ds',
     combined => '%h - - [%t] "%r" %s %b "%{Referer}i" "%{User-Agent}i"',
     common   => '%h - - [%t] "%r" %s %b',
     tiny     => '%m %U%q %s %Dms',
@@ -2757,7 +2762,10 @@ sub _access_log_atom {
         t => sub { $_[0]->{timestamp} // '-' },
         r => sub {
             my $i = $_[0];
-            sprintf('%s %s HTTP/%s', $i->{method} // '-', $i->{path} // '/', $i->{http_version} // '1.1');
+            my $uri = $i->{path} // '/';
+            my $qs = $i->{query};
+            $uri .= "?$qs" if defined $qs && length $qs;
+            sprintf('%s %s HTTP/%s', $i->{method} // '-', $uri, $i->{http_version} // '1.1');
         },
         m => sub { $_[0]->{method} // '-' },
         U => sub { $_[0]->{path} // '/' },
@@ -2772,6 +2780,7 @@ sub _access_log_atom {
             $size ? $size : '-';
         },
         B => sub { $_[0]->{size} // 0 },
+        d => sub { sprintf('%.3f', $_[0]->{duration} // 0) },
         D => sub { int(($_[0]->{duration} // 0) * 1_000_000) },
         T => sub { int($_[0]->{duration} // 0) },
     );
