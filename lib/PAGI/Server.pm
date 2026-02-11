@@ -1989,8 +1989,23 @@ sub _initiate_multiworker_shutdown {
     # If no workers, stop the loop immediately
     if (!keys %{$self->{worker_pids}}) {
         $self->loop->stop;
+        return;
     }
-    # Otherwise, watch_process callbacks will stop the loop when all workers exit
+
+    # Escalate to SIGKILL after shutdown_timeout for workers that ignore SIGTERM
+    my $timeout = $self->{shutdown_timeout} // 30;
+    weaken(my $weak_self = $self);
+    $self->{_shutdown_kill_timer} = $self->loop->watch_time(
+        after => $timeout,
+        code  => sub {
+            return unless $weak_self;
+            for my $pid (keys %{$weak_self->{worker_pids}}) {
+                $weak_self->_log(warn =>
+                    "Worker $pid did not exit after ${timeout}s, sending SIGKILL");
+                kill 'KILL', $pid;
+            }
+        },
+    );
 }
 
 # Graceful restart: replace all workers one by one
@@ -2003,8 +2018,23 @@ sub _graceful_restart {
 
     # Signal all current workers to shutdown
     # watch_process callbacks will respawn them
+    my $timeout = $self->{shutdown_timeout} // 30;
     for my $pid (keys %{$self->{worker_pids}}) {
         kill 'TERM', $pid;
+
+        # Escalate to SIGKILL if worker doesn't exit within shutdown_timeout
+        weaken(my $weak_self = $self);
+        $self->{_restart_kill_timers}{$pid} = $self->loop->watch_time(
+            after => $timeout,
+            code  => sub {
+                return unless $weak_self;
+                if (exists $weak_self->{worker_pids}{$pid}) {
+                    $weak_self->_log(warn =>
+                        "Worker $pid did not exit after ${timeout}s during restart, sending SIGKILL");
+                    kill 'KILL', $pid;
+                }
+            },
+        );
     }
 }
 
@@ -2078,6 +2108,11 @@ sub _spawn_worker {
         # Remove from tracking
         delete $weak_self->{worker_pids}{$exit_pid};
 
+        # Cancel per-worker restart kill timer if one exists
+        if (my $timer_id = delete $weak_self->{_restart_kill_timers}{$exit_pid}) {
+            $loop->unwatch_time($timer_id);
+        }
+
         # Check exit code: exit(2) = startup failure, don't respawn
         my $exit_code = $exitcode >> 8;
         if ($exit_code == 2) {
@@ -2094,6 +2129,11 @@ sub _spawn_worker {
 
         # Check if all workers have exited (for shutdown)
         if ($weak_self->{shutting_down} && !keys %{$weak_self->{worker_pids}}) {
+            # Cancel the shutdown SIGKILL escalation timer
+            if ($weak_self->{_shutdown_kill_timer}) {
+                $loop->unwatch_time($weak_self->{_shutdown_kill_timer});
+                delete $weak_self->{_shutdown_kill_timer};
+            }
             $loop->stop;
         }
     });
@@ -2140,6 +2180,15 @@ sub _run_as_worker {
         max_header_count => $self->{max_header_count},
         max_body_size    => $self->{max_body_size},
         max_requests     => $self->{max_requests},
+        shutdown_timeout    => $self->{shutdown_timeout},
+        request_timeout     => $self->{request_timeout},
+        ws_idle_timeout     => $self->{ws_idle_timeout},
+        sse_idle_timeout    => $self->{sse_idle_timeout},
+        sync_file_threshold => $self->{sync_file_threshold},
+        max_receive_queue   => $self->{max_receive_queue},
+        max_ws_frame_size   => $self->{max_ws_frame_size},
+        write_high_watermark => $self->{write_high_watermark},
+        write_low_watermark  => $self->{write_low_watermark},
         workers          => 0,  # Single-worker mode in worker process
     );
     $worker_server->{is_worker} = 1;
