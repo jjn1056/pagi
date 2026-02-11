@@ -276,6 +276,24 @@ externally (e.g., by a reverse proxy).
         access_log => undef,
     );
 
+=item access_log_format => $format_or_preset
+
+Access log format string or preset name. Default: C<'clf'>
+
+Named presets:
+
+    clf      - PAGI default: IP, timestamp, method/path, status, duration
+    combined - Apache combined: adds Referer and User-Agent
+    common   - Apache common: adds response size
+    tiny     - Minimal: method, path, status, duration
+
+Custom format strings use Apache-style atoms. See L</ACCESS LOG FORMAT>.
+
+    my $server = PAGI::Server->new(
+        app               => $app,
+        access_log_format => 'combined',
+    );
+
 =item log_level => $level
 
 Controls the verbosity of server log messages. Default: 'info'
@@ -2946,6 +2964,77 @@ For other systems I recommend testing the various backend loop options
 and find what works best.   Your notes and updates appreciated.
 
 =cut
+
+=head1 ACCESS LOG FORMAT
+
+The C<access_log_format> option accepts Apache-style format strings or preset
+names. Format strings are pre-compiled into closures at server startup for
+fast per-request formatting.
+
+=head2 Format Atoms
+
+=over 4
+
+=item C<%h> - Client IP address
+
+=item C<%l> - Remote logname (always C<->)
+
+=item C<%u> - Remote user (always C<->)
+
+=item C<%t> - CLF timestamp (e.g., C<10/Feb/2026:12:34:56 +0000>)
+
+=item C<%r> - Request line (e.g., C<GET /path?query HTTP/1.1>)
+
+=item C<%m> - Request method
+
+=item C<%U> - URL path (without query string)
+
+=item C<%q> - Query string (with leading C<?>, or empty)
+
+=item C<%H> - Protocol (e.g., C<HTTP/1.1>)
+
+=item C<%s> - Response status code
+
+=item C<%b> - Response body size in bytes (C<-> if zero)
+
+=item C<%B> - Response body size in bytes (C<0> if zero)
+
+=item C<%d> - Duration in seconds with 3 decimal places (e.g., C<0.123>)
+
+=item C<%D> - Duration in microseconds (integer)
+
+=item C<%T> - Duration in seconds (integer)
+
+=item C<%{Header}i> - Value of request header (case-insensitive, C<-> if missing)
+
+=item C<%%> - Literal percent sign
+
+=back
+
+=head2 Named Presets
+
+=over 4
+
+=item C<clf> (default)
+
+C<%h - - [%t] "%m %U%q" %s %ds> - PAGI's default format with fractional
+second duration.
+
+=item C<combined>
+
+C<%h - - [%t] "%r" %s %b "%{Referer}i" "%{User-Agent}i"> - Apache combined
+format with referrer and user agent.
+
+=item C<common>
+
+C<%h - - [%t] "%r" %s %b> - Apache common log format with response size.
+
+=item C<tiny>
+
+C<%m %U%q %s %Dms> - Minimal format showing method, path, status, and
+duration in milliseconds.
+
+=back
 
 =head1 RECOMMENDED MIDDLEWARE
 
