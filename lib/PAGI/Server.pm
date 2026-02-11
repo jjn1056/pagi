@@ -203,6 +203,9 @@ rules are in place. For production, consider a reverse proxy (nginx, etc.)
 
 Bind port. Default: 5000
 
+B<Note:> Cannot specify C<host> or C<port> when C<$ENV{SERVER_STARTER_PORT}>
+is set. See L</SERVER::STARTER INTEGRATION>.
+
 =item ssl => \%config
 
 Optional TLS/HTTPS configuration. B<Requires additional modules> - see
@@ -1347,6 +1350,64 @@ B<Graceful shutdown for maintenance:>
 
     # Stop accepting new connections, drain existing ones
     kill -TERM $(cat /var/run/pagi.pid)
+
+=head1 SERVER::STARTER INTEGRATION
+
+PAGI::Server automatically detects C<$ENV{SERVER_STARTER_PORT}> and reuses
+the inherited file descriptor instead of creating a new listening socket.
+This enables zero-downtime binary upgrades via L<Server::Starter|https://metacpan.org/pod/Server::Starter>.
+
+=head2 How It Works
+
+=over 4
+
+=item 1. C<start_server> creates the listening socket and sets C<SERVER_STARTER_PORT>
+
+=item 2. PAGI::Server detects the env var and uses the inherited FD
+
+=item 3. On upgrade, C<start_server> forks a new server and signals the old one
+
+=item 4. The old server drains connections and exits; the new server takes over
+
+=back
+
+=head2 Usage
+
+    # Install Server::Starter
+    cpanm Server::Starter
+
+    # Start with zero-downtime support
+    start_server --port 5000 -- pagi-server ./app.pl
+
+    # Zero-downtime restart (sends HUP to start_server)
+    kill -HUP $(cat /var/run/start_server.pid)
+
+=head2 Constraints
+
+=over 4
+
+=item * Cannot specify explicit C<host> or C<port> when C<SERVER_STARTER_PORT> is set
+
+=item * Socket ownership belongs to C<start_server> — PAGI::Server will not close it on shutdown
+
+=item * Works in both single-worker and multi-worker modes
+
+=back
+
+=head2 Environment Variables
+
+=over 4
+
+=item C<SERVER_STARTER_PORT>
+
+Set by C<start_server>. Format: C<host:port=fd>, C<port=fd>, C</path=fd>,
+or C<[ipv6]:port=fd>. Multiple entries separated by C<;> (first is used).
+
+=item C<SERVER_STARTER_GENERATION>
+
+Set by C<start_server> to track the generation number during restarts.
+
+=back
 
 =cut
 
