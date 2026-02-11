@@ -2041,6 +2041,13 @@ sub _initiate_multiworker_shutdown {
     $self->{shutting_down} = 1;
     $self->{running} = 0;
 
+    # Stop heartbeat monitoring — shutdown escalation timer handles stuck workers
+    if ($self->{_heartbeat_check_timer}) {
+        $self->{_heartbeat_check_timer}->stop;
+        $self->remove_child($self->{_heartbeat_check_timer});
+        delete $self->{_heartbeat_check_timer};
+    }
+
     # Close the listen socket to stop accepting new connections
     if ($self->{listen_socket}) {
         close($self->{listen_socket});
