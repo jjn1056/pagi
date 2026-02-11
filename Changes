@@ -1,5 +1,46 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001017 - 2026-02-11
+  [New Features]
+  - HTTP/2 support (experimental). Requires Net::HTTP2::nghttp2. Enable with
+    --http2 flag. Supports ALPN negotiation (h2/http1.1 over TLS), cleartext
+    h2c via connection preface detection, WebSocket over HTTP/2 (RFC 8441),
+    streaming responses with backpressure, and configurable protocol settings
+    (h2_max_concurrent_streams, h2_initial_window_size, etc.)
+  - Worker heartbeat monitoring for multi-worker mode. Parent process detects
+    workers with blocked event loops via Unix pipe heartbeat and replaces them
+    with SIGKILL + respawn. Default 50s timeout (heartbeat_timeout option,
+    --heartbeat-timeout CLI flag). Only detects event loop starvation — async
+    handlers using await are unaffected regardless of duration.
+  - Custom access log format strings (--access-log-format). Supports atoms
+    like %a (address), %s (status), %D (duration μs), %b (body size).
+    Enables structured JSON logging via format string.
+  - Track response body size in access log (%b atom)
+
+  [Bug Fixes]
+  - Fix TLS performance cliff at 8+ concurrent connections caused by
+    per-connection SSL context creation parsing the entire CA bundle.
+    Shared SSL context via SSL_reuse_ctx gives ~26x throughput improvement.
+  - Fix TLS in multi-worker mode — workers now SSL-upgrade connections
+    in on_stream rather than relying on listener-level TLS
+  - Fix SSE wire format to handle CRLF, LF, and bare CR line endings
+    per the SSE specification
+  - Fix multi-worker shutdown escalation — SIGKILL timer now fires
+    correctly when workers don't exit after SIGTERM
+  - Fix multi-worker parameter pass-through for server options
+  - Fix flaky multi-worker TLS test
+
+  [Improvements]
+  - Add on_ssl_error callback to TLS listener setup for cleaner error
+    handling (suppresses "EV: error in callback" noise)
+  - Cache Server header string to avoid per-response interpolation
+  - Merge double header loop in serialize_response_start
+  - Cache access log timestamp at per-second granularity
+  - Cache client_host in access log to avoid per-request getpeername syscall
+  - Skip HTTP/2 tests when Net::HTTP2::nghttp2 is not installed
+  - Skip SSE tests when Future::IO is not installed
+  - Remove unused Sys::Sendfile recommendation from cpanfile
+
 0.001016 - 2026-01-31
   [New Features]
   - Add query parameter parsing to PAGI::SSE: query_params(), query_param(),
