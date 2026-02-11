@@ -1973,7 +1973,23 @@ sub _listen_multiworker {
 
     my $listen_socket;
 
-    if ($reuseport) {
+    if (my $ss = $self->{_server_starter}) {
+        # Server::Starter: reuse inherited FD
+        my $fd = $ss->{fd};
+        open(my $sock_fh, '+<&=', $fd)
+            or die "Cannot dup Server::Starter fd $fd: $!\n";
+
+        if ($ss->{unix}) {
+            bless $sock_fh, 'IO::Socket::UNIX';
+        }
+        else {
+            bless $sock_fh, 'IO::Socket::INET';
+        }
+
+        $listen_socket = $sock_fh;
+        $self->{bound_port} = $ss->{port} if $ss->{port};
+    }
+    elsif ($reuseport) {
         # SO_REUSEPORT mode: each worker creates its own socket
         # Parent just needs to know the port for display purposes
         # We do a quick bind to validate port availability and get actual port if 0
@@ -2012,7 +2028,7 @@ sub _listen_multiworker {
     my $scheme = $self->{ssl} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
-    my $mode = $reuseport ? 'reuseport' : 'shared-socket';
+    my $mode = $self->{_server_starter} ? 'server-starter' : $reuseport ? 'reuseport' : 'shared-socket';
     my $max_conn = $self->effective_max_connections;
     my $tls_status = $self->_tls_status_string;
     my $http2_status = $self->_http2_status_string;
@@ -2072,7 +2088,8 @@ sub _initiate_multiworker_shutdown {
     $self->{running} = 0;
 
     # Close the listen socket to stop accepting new connections
-    if ($self->{listen_socket}) {
+    # (Skip for Server::Starter - it owns the socket)
+    if ($self->{listen_socket} && !$self->{_server_starter}) {
         close($self->{listen_socket});
         delete $self->{listen_socket};
     }
@@ -2220,6 +2237,8 @@ sub _run_as_worker {
     }
 
     # Create a fresh server instance for this worker (single-worker mode)
+    # Workers should not re-detect SERVER_STARTER_PORT (parent already handled it)
+    local $ENV{SERVER_STARTER_PORT} if $self->{_server_starter};
     my $worker_server = PAGI::Server->new(
         app             => $self->{app},
         host            => $self->{host},
@@ -2229,6 +2248,7 @@ sub _run_as_worker {
         extensions      => $self->{extensions},
         on_error        => $self->{on_error},
         access_log      => $self->{access_log},
+        access_log_format => $self->{access_log_format},
         log_level       => $self->{log_level},
         quiet           => 1,  # Workers should be quiet
         timeout         => $self->{timeout},

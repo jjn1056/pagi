@@ -203,4 +203,61 @@ subtest 'Server::Starter shutdown preserves socket FD' => sub {
     close($listen_sock);
 };
 
+# --- Step 6: Multi-worker integration ---
+
+subtest 'Server::Starter multi-worker integration' => sub {
+    my $listen_sock = IO::Socket::INET->new(
+        LocalAddr => '127.0.0.1',
+        LocalPort => 0,
+        Proto     => 'tcp',
+        Listen    => 128,
+        ReuseAddr => 1,
+        Blocking  => 0,
+    ) or die "Cannot create test socket: $!";
+
+    my $port = $listen_sock->sockport;
+    my $fd = fileno($listen_sock);
+
+    local $ENV{SERVER_STARTER_PORT} = "127.0.0.1:$port=$fd";
+
+    # Capture STDERR for startup log
+    my $stderr_output = '';
+    open(my $stderr_fh, '>', \$stderr_output) or die "Cannot create in-memory stderr: $!";
+    local *STDERR = $stderr_fh;
+
+    my $server = PAGI::Server->new(
+        app        => $app,
+        workers    => 2,
+        access_log => undef,
+        quiet      => 0,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    is($server->port, $port, 'Multi-worker server reports correct port');
+
+    # Verify we can make requests
+    my $http = Net::Async::HTTP->new;
+    $loop->add($http);
+
+    my $response = $http->GET("http://127.0.0.1:$port/")->get;
+    is($response->code, 200, 'Response is 200');
+    is($response->content, 'hello-starter', 'Got expected body');
+
+    # Verify startup log mentions server-starter
+    like($stderr_output, qr/server-starter/i, 'Multi-worker startup log mentions server-starter');
+
+    $loop->remove($http);
+
+    # Shutdown - use signal since multi-worker uses different shutdown path
+    # Send TERM to trigger shutdown
+    kill 'TERM', $$;
+    $loop->delay_future(after => 1)->get;
+
+    # Socket should still be valid after shutdown
+    ok(defined fileno($listen_sock), 'Socket FD still valid after multi-worker shutdown');
+    close($listen_sock);
+};
+
 done_testing;
