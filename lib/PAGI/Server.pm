@@ -2406,7 +2406,8 @@ sub _run_as_worker {
     # Run the event loop
     $loop->run;
 
-    # Clean up listen socket before exit (avoid FD leak)
+    # Clean up FDs before exit
+    close($heartbeat_wr)  if $heartbeat_wr;
     close($listen_socket) if $listen_socket;
     exit(0);
 }
