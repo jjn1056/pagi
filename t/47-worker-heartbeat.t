@@ -124,7 +124,7 @@ my $blocking_app = async sub {
 # Configuration Acceptance Tests
 # ============================================================================
 
-subtest 'heartbeat_timeout defaults to 30' => sub {
+subtest 'heartbeat_timeout defaults to 50' => sub {
     my $loop = IO::Async::Loop->new;
     my $server = PAGI::Server->new(
         app     => $normal_app,
@@ -135,7 +135,7 @@ subtest 'heartbeat_timeout defaults to 30' => sub {
     );
     $loop->add($server);
 
-    is($server->{heartbeat_timeout}, 30, 'Default heartbeat_timeout is 30');
+    is($server->{heartbeat_timeout}, 50, 'Default heartbeat_timeout is 50');
 
     $loop->remove($server);
 };
