@@ -770,13 +770,29 @@ C<< $sse->keepalive($interval) >> to send periodic comment keepalives.
 
 =item heartbeat_timeout => $seconds
 
-Worker heartbeat timeout in seconds. In multi-worker mode, workers send
-periodic heartbeats to the parent process via a Unix pipe. If a worker's
-event loop becomes unresponsive (blocking syscall, deadlock, CPU-bound
-computation) for longer than this timeout, the parent kills it with
+Worker liveness timeout in seconds. Only active in multi-worker mode
+(C<< workers >= 2 >>). Has no effect in single-worker mode — use
+C<timeout> for idle connection management there.
+
+Each worker sends a heartbeat to the parent process via a Unix pipe at
+an interval of C<heartbeat_timeout / 5>. The parent checks for missed
+heartbeats every C<heartbeat_timeout / 2>. If a worker has not sent a
+heartbeat within C<heartbeat_timeout> seconds, the parent kills it with
 SIGKILL and respawns a replacement.
 
-B<Default:> 30 (seconds). Set to 0 to disable.
+B<What this detects:> Event loop starvation — when the worker's event
+loop is completely blocked and cannot process any events. This happens
+with blocking syscalls (C<sleep()>, synchronous DNS, blocking database
+drivers), deadlocks, runaway CPU-bound computation, or any code that
+does not yield to the event loop.
+
+B<What this does NOT detect:> Slow async operations. A request handler
+that does C<< await $db->query(...) >> for 5 minutes is fine — the
+C<await> returns control to the event loop, so heartbeats continue
+normally. This value should be larger than the maximum time you expect
+any single operation to block the event loop without yielding.
+
+B<Default:> 50 (seconds). Set to 0 to disable.
 
 B<Example:>
 
@@ -784,13 +800,17 @@ B<Example:>
     my $server = PAGI::Server->new(
         app               => $app,
         workers           => 4,
-        heartbeat_timeout => 10,
+        heartbeat_timeout => 20,
     );
 
-B<CLI:> C<--heartbeat-timeout 10>
+    # Disable heartbeat monitoring
+    my $server = PAGI::Server->new(
+        app               => $app,
+        workers           => 4,
+        heartbeat_timeout => 0,
+    );
 
-B<Note:> Only active in multi-worker mode (C<< workers >= 1 >>).
-The worker heartbeat interval is derived as C<timeout / 5>.
+B<CLI:> C<--heartbeat-timeout 20>
 
 =item loop_type => $backend
 
@@ -1332,7 +1352,7 @@ When running with C<< workers => N >> (where N > 1):
 
 =item * Workers that crash are automatically respawned
 
-=item * Heartbeat monitoring detects stuck workers and replaces them automatically (see C<heartbeat_timeout>)
+=item * Heartbeat monitoring detects workers with blocked event loops and replaces them automatically (see C<heartbeat_timeout>)
 
 =back
 
@@ -1414,7 +1434,7 @@ sub _init {
     $self->{request_timeout}     = delete $params->{request_timeout} // 0;  # Request stall timeout in seconds (0 = disabled, default for performance)
     $self->{ws_idle_timeout}     = delete $params->{ws_idle_timeout} // 0;   # WebSocket idle timeout (0 = disabled)
     $self->{sse_idle_timeout}    = delete $params->{sse_idle_timeout} // 0;  # SSE idle timeout (0 = disabled)
-    $self->{heartbeat_timeout}   = delete $params->{heartbeat_timeout} // 30;  # Worker heartbeat timeout (0 = disabled)
+    $self->{heartbeat_timeout}   = delete $params->{heartbeat_timeout} // 50;  # Worker heartbeat timeout (0 = disabled)
     $self->{write_high_watermark} = delete $params->{write_high_watermark} // 65536;   # 64KB - pause sending above this
     $self->{write_low_watermark}  = delete $params->{write_low_watermark}  // 16384;   # 16KB - resume sending below this
     $self->{loop_type}           = delete $params->{loop_type};  # Optional loop backend (EPoll, EV, Poll, etc.)
@@ -2378,7 +2398,7 @@ sub _run_as_worker {
 
     # Set up heartbeat writer: periodically signal liveness to parent
     if ($heartbeat_wr) {
-        my $interval = ($self->{heartbeat_timeout} || 30) / 5;
+        my $interval = ($self->{heartbeat_timeout} || 50) / 5;
         my $hb_timer = IO::Async::Timer::Periodic->new(
             interval => $interval,
             on_tick  => sub {

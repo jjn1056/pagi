@@ -269,10 +269,15 @@ SSE idle timeout in seconds (default: 0, disabled)
 
 =item B<--heartbeat-timeout> NUM
 
-Worker heartbeat timeout in seconds (default: 30, 0 = disabled).
-In multi-worker mode, workers send periodic heartbeats to the parent.
-If a worker's event loop is unresponsive for this long, the parent
-kills it with SIGKILL and respawns a replacement. Set to 0 to disable.
+Worker heartbeat timeout in seconds (default: 50, 0 = disabled).
+Only active in multi-worker mode. Workers send periodic heartbeats to
+the parent via a Unix pipe. If a worker's event loop is blocked for
+longer than this timeout (blocking syscall, deadlock, CPU-bound work),
+the parent kills it with SIGKILL and respawns a replacement.
+
+This should be larger than the maximum time you expect any single
+operation to block the event loop. Async operations using C<await> do
+not block the event loop and will never trigger this timeout.
 
 =item B<--sync-file-threshold> NUM
 
