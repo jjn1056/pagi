@@ -271,6 +271,19 @@ SSE idle timeout in seconds (default: 0, disabled)
 
 Sync file read threshold in bytes (default: 65536)
 
+=item B<--access-log-format> FORMAT
+
+Access log format string or preset name (default: C<clf>).
+
+Preset names: C<clf>, C<combined>, C<common>, C<tiny>.
+
+Custom format strings use Apache-style atoms:
+
+    --access-log-format combined
+    --access-log-format '%h %s %Dms'
+
+See L<PAGI::Server/ACCESS LOG FORMAT> for the full atoms table.
+
 =item B<--future-xs>
 
 Enable L<Future::XS> for improved Future performance.

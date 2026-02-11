@@ -276,6 +276,24 @@ externally (e.g., by a reverse proxy).
         access_log => undef,
     );
 
+=item access_log_format => $format_or_preset
+
+Access log format string or preset name. Default: C<'clf'>
+
+Named presets:
+
+    clf      - PAGI default: IP, timestamp, method/path, status, duration
+    combined - Apache combined: adds Referer and User-Agent
+    common   - Apache common: adds response size
+    tiny     - Minimal: method, path, status, duration
+
+Custom format strings use Apache-style atoms. See L</ACCESS LOG FORMAT>.
+
+    my $server = PAGI::Server->new(
+        app               => $app,
+        access_log_format => 'combined',
+    );
+
 =item log_level => $level
 
 Controls the verbosity of server log messages. Default: 'info'
@@ -1364,6 +1382,10 @@ sub _init {
     $self->{extensions}       = delete $params->{extensions} // {};
     $self->{on_error}         = delete $params->{on_error} // sub { warn @_ };
     $self->{access_log}       = exists $params->{access_log} ? delete $params->{access_log} : \*STDERR;
+    $self->{access_log_format} = delete $params->{access_log_format} // 'clf';
+    $self->{_access_log_formatter} = $self->_compile_access_log_format(
+        $self->{access_log_format}
+    );
     $self->{quiet}            = delete $params->{quiet} // 0;
     $self->{log_level}        = delete $params->{log_level} // 'info';
     # Validate log level
@@ -2292,6 +2314,7 @@ sub _on_connection {
         sse_idle_timeout  => $self->{sse_idle_timeout},
         max_body_size     => $self->{max_body_size},
         access_log        => $self->{access_log},
+        _access_log_formatter => $self->{_access_log_formatter},
         max_receive_queue => $self->{max_receive_queue},
         max_ws_frame_size => $self->{max_ws_frame_size},
         sync_file_threshold => $self->{sync_file_threshold},
@@ -2660,6 +2683,133 @@ async sub _drain_connections {
     return;
 }
 
+# --- Access log format compiler ---
+
+my %ACCESS_LOG_PRESETS = (
+    clf      => '%h - - [%t] "%m %U%q" %s %ds',
+    combined => '%h - - [%t] "%r" %s %b "%{Referer}i" "%{User-Agent}i"',
+    common   => '%h - - [%t] "%r" %s %b',
+    tiny     => '%m %U%q %s %Dms',
+);
+
+sub _compile_access_log_format {
+    my ($class_or_self, $format) = @_;
+
+    # Resolve preset names
+    if (exists $ACCESS_LOG_PRESETS{$format}) {
+        $format = $ACCESS_LOG_PRESETS{$format};
+    }
+
+    # Parse format string into a list of fragments (closures or literal strings)
+    my @fragments;
+    my $pos = 0;
+    my $len = length($format);
+
+    while ($pos < $len) {
+        my $ch = substr($format, $pos, 1);
+
+        if ($ch eq '%') {
+            $pos++;
+            last if $pos >= $len;
+
+            my $next = substr($format, $pos, 1);
+
+            if ($next eq '%') {
+                # Literal percent
+                push @fragments, '%';
+                $pos++;
+            }
+            elsif ($next eq '{') {
+                # Header extraction: %{Name}i
+                my $end = index($format, '}', $pos);
+                die "Unterminated %{...} in access log format\n" if $end < 0;
+                my $header_name = substr($format, $pos + 1, $end - $pos - 1);
+                $pos = $end + 1;
+
+                # Must be followed by 'i' (request header)
+                die "Expected 'i' after %{$header_name} in access log format\n"
+                    if $pos >= $len || substr($format, $pos, 1) ne 'i';
+                $pos++;
+
+                my $lc_name = lc($header_name);
+                push @fragments, sub {
+                    my ($info) = @_;
+                    for my $h (@{$info->{request_headers}}) {
+                        return $h->[1] if lc($h->[0]) eq $lc_name;
+                    }
+                    return '-';
+                };
+            }
+            else {
+                # Simple atom
+                my $atom = $next;
+                $pos++;
+
+                my $frag = _access_log_atom($atom);
+                push @fragments, $frag;
+            }
+        }
+        else {
+            # Literal text: collect until next %
+            my $next_pct = index($format, '%', $pos);
+            if ($next_pct < 0) {
+                push @fragments, substr($format, $pos);
+                $pos = $len;
+            }
+            else {
+                push @fragments, substr($format, $pos, $next_pct - $pos);
+                $pos = $next_pct;
+            }
+        }
+    }
+
+    # Build a single closure from fragments
+    return sub {
+        my ($info) = @_;
+        return join('', map { ref $_ ? $_->($info) : $_ } @fragments);
+    };
+}
+
+sub _access_log_atom {
+    my ($atom) = @_;
+
+    my %atoms = (
+        h => sub { $_[0]->{client_ip} // '-' },
+        l => sub { '-' },
+        u => sub { '-' },
+        t => sub { $_[0]->{timestamp} // '-' },
+        r => sub {
+            my $i = $_[0];
+            my $uri = $i->{path} // '/';
+            my $qs = $i->{query};
+            $uri .= "?$qs" if defined $qs && length $qs;
+            sprintf('%s %s HTTP/%s', $i->{method} // '-', $uri, $i->{http_version} // '1.1');
+        },
+        m => sub { $_[0]->{method} // '-' },
+        U => sub { $_[0]->{path} // '/' },
+        q => sub {
+            my $qs = $_[0]->{query};
+            (defined $qs && length $qs) ? "?$qs" : '';
+        },
+        H => sub { 'HTTP/' . ($_[0]->{http_version} // '1.1') },
+        s => sub { $_[0]->{status} // '-' },
+        b => sub {
+            my $size = $_[0]->{size} // 0;
+            $size ? $size : '-';
+        },
+        B => sub { $_[0]->{size} // 0 },
+        d => sub { sprintf('%.3f', $_[0]->{duration} // 0) },
+        D => sub { int(($_[0]->{duration} // 0) * 1_000_000) },
+        T => sub { int($_[0]->{duration} // 0) },
+    );
+
+    if (my $frag = $atoms{$atom}) {
+        return $frag;
+    }
+
+    die "Unknown access log format atom '%$atom'\n";
+}
+
 sub port {
     my ($self) = @_;
 
@@ -2814,6 +2964,77 @@ For other systems I recommend testing the various backend loop options
 and find what works best.   Your notes and updates appreciated.
 
 =cut
+
+=head1 ACCESS LOG FORMAT
+
+The C<access_log_format> option accepts Apache-style format strings or preset
+names. Format strings are pre-compiled into closures at server startup for
+fast per-request formatting.
+
+=head2 Format Atoms
+
+=over 4
+
+=item C<%h> - Client IP address
+
+=item C<%l> - Remote logname (always C<->)
+
+=item C<%u> - Remote user (always C<->)
+
+=item C<%t> - CLF timestamp (e.g., C<10/Feb/2026:12:34:56 +0000>)
+
+=item C<%r> - Request line (e.g., C<GET /path?query HTTP/1.1>)
+
+=item C<%m> - Request method
+
+=item C<%U> - URL path (without query string)
+
+=item C<%q> - Query string (with leading C<?>, or empty)
+
+=item C<%H> - Protocol (e.g., C<HTTP/1.1>)
+
+=item C<%s> - Response status code
+
+=item C<%b> - Response body size in bytes (C<-> if zero)
+
+=item C<%B> - Response body size in bytes (C<0> if zero)
+
+=item C<%d> - Duration in seconds with 3 decimal places (e.g., C<0.123>)
+
+=item C<%D> - Duration in microseconds (integer)
+
+=item C<%T> - Duration in seconds (integer)
+
+=item C<%{Header}i> - Value of request header (case-insensitive, C<-> if missing)
+
+=item C<%%> - Literal percent sign
+
+=back
+
+=head2 Named Presets
+
+=over 4
+
+=item C<clf> (default)
+
+C<%h - - [%t] "%m %U%q" %s %ds> - PAGI's default format with fractional
+second duration.
+
+=item C<combined>
+
+C<%h - - [%t] "%r" %s %b "%{Referer}i" "%{User-Agent}i"> - Apache combined
+format with referrer and user agent.
+
+=item C<common>
+
+C<%h - - [%t] "%r" %s %b> - Apache common log format with response size.
+
+=item C<tiny>
+
+C<%m %U%q %s %Dms> - Minimal format showing method, path, status, and
+duration in milliseconds.
+
+=back
 
 =head1 RECOMMENDED MIDDLEWARE
 

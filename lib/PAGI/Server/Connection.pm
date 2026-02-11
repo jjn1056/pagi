@@ -125,6 +125,7 @@ sub new {
         sse_idle_timeout => $args{sse_idle_timeout} // 0,  # SSE idle timeout (0 = disabled)
         max_body_size     => $args{max_body_size},  # 0 = unlimited
         access_log        => $args{access_log},     # Filehandle for access logging
+        _access_log_formatter => $args{_access_log_formatter},  # Pre-compiled format closure
         max_receive_queue => $args{max_receive_queue} // 1000,  # Max WebSocket receive queue size
         max_ws_frame_size => $args{max_ws_frame_size} // 65536,  # Max WebSocket frame size in bytes
         sync_file_threshold => $args{sync_file_threshold} // 65536,  # Threshold for sync file reads (default 64KB)
@@ -140,6 +141,7 @@ sub new {
         closed        => 0,
         response_started => 0,
         response_status  => undef,  # Track response status for logging
+        _response_size   => 0,      # Track response body bytes for logging
         request_start    => undef,  # Track request start time for logging
         idle_timer    => undef,  # IO::Async::Timer for idle timeout
         stall_timer   => undef,  # IO::Async::Timer for request stall timeout
@@ -1728,6 +1730,7 @@ async sub _handle_request {
         $self->{handling_request} = 0;
         $self->{response_started} = 0;
         $self->{response_status} = undef;
+        $self->{_response_size} = 0;
         $self->{request_start} = undef;
         $self->{current_request} = undef;
         $self->{request_future} = undef;
@@ -2144,6 +2147,8 @@ sub _create_send {
                 $body //= '';
                 my $more = $event->{more} // 0;
 
+                $weak_self->{_response_size} += length($body);
+
                 if ($chunked) {
                     if (length $body) {
                         my $len = sprintf("%x", length($body));
@@ -2239,23 +2244,14 @@ sub _write_access_log {
     return unless $self->{current_request};
 
     my $request = $self->{current_request};
-    my $method = $request->{method} // '-';
-    my $path = $request->{raw_path} // '/';
-    my $query = $request->{query_string};
-    $path .= "?$query" if defined $query && length $query;
-
-    my $status = $self->{response_status} // '-';
 
     # Calculate request duration
-    my $duration = '-';
+    my $duration = 0;
     if ($self->{request_start}) {
-        $duration = sprintf("%.3f", tv_interval($self->{request_start}));
+        $duration = tv_interval($self->{request_start});
     }
 
-    # Use client_host cached at connection start (avoids per-request getpeername syscall)
-    my $client_ip = $self->{client_host} // '-';
-
-    # Format: client_ip - - [timestamp] "METHOD /path" status duration
+    # Per-second cached CLF timestamp
     my $now = time();
     if ($now != $_cached_log_time) {
         $_cached_log_time = $now;
@@ -2265,10 +2261,31 @@ sub _write_access_log {
             $gmt[3], $months[$gmt[4]], $gmt[5] + 1900,
             $gmt[2], $gmt[1], $gmt[0]);
     }
-    my $timestamp = $_cached_log_timestamp;
 
-    my $log = $self->{access_log};
-    print $log "$client_ip - - [$timestamp] \"$method $path\" $status ${duration}s\n";
+    my $info = {
+        client_ip       => $self->{client_host} // '-',
+        timestamp       => $_cached_log_timestamp,
+        method          => $request->{method} // '-',
+        path            => $request->{raw_path} // '/',
+        query           => $request->{query_string},
+        http_version    => $request->{http_version} // '1.1',
+        status          => $self->{response_status} // '-',
+        size            => $self->{_response_size} // 0,
+        duration        => $duration,
+        request_headers => $request->{headers} // [],
+    };
+
+    my $formatter = $self->{_access_log_formatter};
+    if ($formatter) {
+        print {$self->{access_log}} $formatter->($info), "\n";
+    }
+    else {
+        # Fallback (should not happen with properly initialized server)
+        my $path = $info->{path};
+        my $query = $info->{query};
+        $path .= "?$query" if defined $query && length $query;
+        print {$self->{access_log}} "$info->{client_ip} - - [$info->{timestamp}] \"$info->{method} $path\" $info->{status} $info->{duration}s\n";
+    }
 }
 
 sub _handle_disconnect {
@@ -3411,6 +3428,8 @@ async sub _send_file_response {
     die "Cannot stat file $file: $!" unless defined $file_size;
     $length //= $file_size - $offset;
 
+    $self->{_response_size} += $length;
+
     my $stream = $self->{stream};
 
     if ($self->{sync_file_threshold} > 0 && $length <= $self->{sync_file_threshold}) {
@@ -3491,6 +3510,8 @@ async sub _send_fh_response {
 
         last if !defined $bytes_read;  # Error
         last if $bytes_read == 0;      # EOF
+
+        $self->{_response_size} += $bytes_read;
 
         if ($chunked) {
             my $len = sprintf("%x", length($chunk));
