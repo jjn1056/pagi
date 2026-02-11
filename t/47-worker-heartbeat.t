@@ -354,4 +354,47 @@ subtest 'Stuck worker killed by heartbeat and respawned' => sub {
     }
 };
 
+# ============================================================================
+# Shutdown Cleanup
+# ============================================================================
+
+subtest 'Clean shutdown with heartbeat enabled' => sub {
+    my $port = 6400 + int(rand(100));
+
+    my $server_pid = fork();
+    die "Fork failed: $!" unless defined $server_pid;
+
+    if ($server_pid == 0) {
+        my $child_loop = IO::Async::Loop->new;
+        my $server = PAGI::Server->new(
+            app               => $normal_app,
+            host              => '127.0.0.1',
+            port              => $port,
+            workers           => 2,
+            heartbeat_timeout => 3,
+            quiet             => 1,
+        );
+        $child_loop->add($server);
+        $server->listen->get;
+        $child_loop->run;
+        exit(0);
+    }
+
+    ok(_wait_for_port($port), 'Server started with heartbeat enabled');
+
+    # Send SIGTERM for graceful shutdown
+    kill 'TERM', $server_pid;
+
+    # Server should exit quickly (< 5s) without heartbeat timer interference
+    my ($terminated, $elapsed) = _wait_for_exit($server_pid, 5);
+
+    ok($terminated, 'Server with heartbeat exited cleanly on SIGTERM');
+    ok($elapsed < 5, "Shutdown completed in ${elapsed}s (no heartbeat interference)");
+
+    unless ($terminated) {
+        kill 'KILL', $server_pid;
+        waitpid($server_pid, 0);
+    }
+};
+
 done_testing;
