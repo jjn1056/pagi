@@ -543,6 +543,7 @@ sub _parse_server_options {
             'request-timeout=i'     => \$opts{request_timeout},
             'ws-idle-timeout=i'     => \$opts{ws_idle_timeout},
             'sse-idle-timeout=i'    => \$opts{sse_idle_timeout},
+            'heartbeat-timeout=i'  => \$opts{heartbeat_timeout},
 
             # Limits
             'max-body-size=i'       => \$opts{max_body_size},
