@@ -36,6 +36,7 @@ use parent 'IO::Async::Notifier';
 use IO::Async::Listener;
 use IO::Async::Stream;
 use IO::Async::Loop;
+use IO::Async::Timer::Periodic;
 use IO::Socket::INET;
 use Future;
 use Future::AsyncAwait;
@@ -2103,6 +2104,12 @@ sub _spawn_worker {
     my $loop = $self->loop;
     weaken(my $weak_self = $self);
 
+    # Create heartbeat pipe if enabled
+    my ($hb_rd, $hb_wr);
+    if ($self->{heartbeat_timeout} && $self->{heartbeat_timeout} > 0) {
+        pipe($hb_rd, $hb_wr) or die "Cannot create heartbeat pipe: $!";
+    }
+
     # Set IGNORE before fork - child inherits it. IO::Async only resets
     # CODE refs, so 'IGNORE' (a string) survives. Child must NOT call
     # watch_signal(INT) or it will overwrite the IGNORE.
@@ -2111,7 +2118,8 @@ sub _spawn_worker {
 
     my $pid = $loop->fork(
         code => sub {
-            $self->_run_as_worker($listen_socket, $worker_num);
+            close($hb_rd) if $hb_rd;
+            $self->_run_as_worker($listen_socket, $worker_num, $hb_wr);
             return 0;
         },
     );
@@ -2121,16 +2129,29 @@ sub _spawn_worker {
 
     die "Fork failed" unless defined $pid;
 
+    # Parent — close write end, set read end non-blocking
+    if ($hb_wr) {
+        close($hb_wr);
+        $hb_rd->blocking(0);
+    }
+
     # Parent - track the worker
     $self->{worker_pids}{$pid} = {
-        worker_num => $worker_num,
-        started    => time(),
+        worker_num     => $worker_num,
+        started        => time(),
+        heartbeat_rd   => $hb_rd,
+        last_heartbeat => time(),
     };
 
     # Use watch_process to handle worker exit (replaces manual SIGCHLD handling)
     $loop->watch_process($pid => sub {
         my ($exit_pid, $exitcode) = @_;
         return unless $weak_self;
+
+        # Close heartbeat pipe read end
+        if (my $info = $weak_self->{worker_pids}{$exit_pid}) {
+            close($info->{heartbeat_rd}) if $info->{heartbeat_rd};
+        }
 
         # Remove from tracking
         delete $weak_self->{worker_pids}{$exit_pid};
@@ -2169,7 +2190,7 @@ sub _spawn_worker {
 }
 
 sub _run_as_worker {
-    my ($self, $listen_socket, $worker_num) = @_;
+    my ($self, $listen_socket, $worker_num, $heartbeat_wr) = @_;
 
     # Note: $ONE_TRUE_LOOP already cleared by $loop->fork(), so this creates a fresh loop
     # Note: $SIG{INT} = 'IGNORE' inherited from parent - do NOT call watch_signal(INT)
@@ -2309,6 +2330,19 @@ sub _run_as_worker {
 
     $worker_server->add_child($listener);
     $worker_server->{listener} = $listener;
+
+    # Set up heartbeat writer: periodically signal liveness to parent
+    if ($heartbeat_wr) {
+        my $interval = ($self->{heartbeat_timeout} || 30) / 5;
+        my $hb_timer = IO::Async::Timer::Periodic->new(
+            interval => $interval,
+            on_tick  => sub {
+                syswrite($heartbeat_wr, "\x00", 1);
+            },
+        );
+        $worker_server->add_child($hb_timer);
+        $hb_timer->start;
+    }
 
     # Configure accept error handler - try but ignore if it fails (SSL listeners may not support it)
     eval {

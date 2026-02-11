@@ -134,4 +134,105 @@ subtest 'heartbeat_timeout=0 disables' => sub {
     $loop->remove($server);
 };
 
+# ============================================================================
+# Normal Workers Survive Heartbeat Monitoring
+# ============================================================================
+
+subtest 'Normal workers survive heartbeat monitoring' => sub {
+    my $port = 6100 + int(rand(100));
+
+    my $server_pid = fork();
+    die "Fork failed: $!" unless defined $server_pid;
+
+    if ($server_pid == 0) {
+        my $child_loop = IO::Async::Loop->new;
+        my $server = PAGI::Server->new(
+            app               => $normal_app,
+            host              => '127.0.0.1',
+            port              => $port,
+            workers           => 2,
+            heartbeat_timeout => 3,
+            quiet             => 1,
+        );
+        $child_loop->add($server);
+        $server->listen->get;
+        $child_loop->run;
+        exit(0);
+    }
+
+    ok(_wait_for_port($port), 'Server started and accepting connections');
+
+    # Send 5 requests over ~5 seconds (1/sec) — all should succeed
+    my $all_ok = 1;
+    for my $i (1..5) {
+        eval {
+            my $loop = IO::Async::Loop->new;
+            my $http = Net::Async::HTTP->new;
+            $loop->add($http);
+            my $response = $http->GET("http://127.0.0.1:$port/")->get;
+            $all_ok = 0 unless $response->code == 200;
+            $loop->remove($http);
+        };
+        if ($@) {
+            $all_ok = 0;
+            last;
+        }
+        sleep(1) if $i < 5;
+    }
+
+    ok($all_ok, 'All 5 requests succeeded — healthy workers not killed by heartbeat');
+
+    # Clean up
+    kill 'TERM', $server_pid;
+    my ($terminated, $elapsed) = _wait_for_exit($server_pid, 5);
+    unless ($terminated) {
+        kill 'KILL', $server_pid;
+        waitpid($server_pid, 0);
+    }
+};
+
+subtest 'heartbeat_timeout=0 workers still functional' => sub {
+    my $port = 6200 + int(rand(100));
+
+    my $server_pid = fork();
+    die "Fork failed: $!" unless defined $server_pid;
+
+    if ($server_pid == 0) {
+        my $child_loop = IO::Async::Loop->new;
+        my $server = PAGI::Server->new(
+            app               => $normal_app,
+            host              => '127.0.0.1',
+            port              => $port,
+            workers           => 2,
+            heartbeat_timeout => 0,
+            quiet             => 1,
+        );
+        $child_loop->add($server);
+        $server->listen->get;
+        $child_loop->run;
+        exit(0);
+    }
+
+    ok(_wait_for_port($port), 'Server started with heartbeat disabled');
+
+    my $responding = 0;
+    eval {
+        my $loop = IO::Async::Loop->new;
+        my $http = Net::Async::HTTP->new;
+        $loop->add($http);
+        my $response = $http->GET("http://127.0.0.1:$port/")->get;
+        $responding = ($response->code == 200);
+        $loop->remove($http);
+    };
+    ok($responding, 'Server with heartbeat_timeout=0 handles requests normally');
+
+    # Clean up
+    kill 'TERM', $server_pid;
+    my ($terminated, $elapsed) = _wait_for_exit($server_pid, 5);
+    unless ($terminated) {
+        kill 'KILL', $server_pid;
+        waitpid($server_pid, 0);
+    }
+};
+
 done_testing;
