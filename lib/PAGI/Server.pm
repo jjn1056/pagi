@@ -1354,8 +1354,27 @@ sub _init {
     my ($self, $params) = @_;
 
     $self->{app}              = delete $params->{app} or die "app is required";
+
+    # Detect Server::Starter before processing host/port
+    my $explicit_host = exists $params->{host};
+    my $explicit_port = exists $params->{port};
     $self->{host}             = delete $params->{host} // '127.0.0.1';
     $self->{port}             = delete $params->{port} // 5000;
+
+    if (my $ss = $self->_parse_server_starter_port($ENV{SERVER_STARTER_PORT})) {
+        if ($explicit_host || $explicit_port) {
+            die "Cannot specify explicit host/port when SERVER_STARTER_PORT is set\n";
+        }
+        $self->{_server_starter} = $ss;
+        if ($ss->{unix}) {
+            # Unix socket - host/port not applicable
+        }
+        else {
+            $self->{host} = $ss->{host} // '0.0.0.0';
+            $self->{port} = $ss->{port};
+        }
+    }
+
     $self->{ssl}              = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
 
@@ -1774,43 +1793,97 @@ async sub _listen_singleworker {
         die "Lifespan startup failed: $message\n";
     }
 
-    my $listener = IO::Async::Listener->new(
-        on_stream => sub  {
-        my ($listener, $stream) = @_;
-            return unless $weak_self;
-            $weak_self->_on_connection($stream);
-        },
-    );
+    my $ssl_params = $self->_build_ssl_config;
+    my $listener;
 
-    $self->add_child($listener);
-    $self->{listener} = $listener;
+    if (my $ss = $self->{_server_starter}) {
+        # Server::Starter: use inherited file descriptor
+        my $fd = $ss->{fd};
+        open(my $sock_fh, '+<&=', $fd)
+            or die "Cannot dup Server::Starter fd $fd: $!\n";
 
-    # Build listener options
-    my %listen_opts = (
-        queuesize => $self->{listener_backlog},
-        addr => {
-            family   => 'inet',
-            socktype => 'stream',
-            ip       => $self->{host},
-            port     => $self->{port},
-        },
-    );
+        if ($ss->{unix}) {
+            bless $sock_fh, 'IO::Socket::UNIX';
+        }
+        else {
+            bless $sock_fh, 'IO::Socket::INET';
+        }
 
-    # Add SSL options if configured
-    if (my $ssl_params = $self->_build_ssl_config) {
-        $listen_opts{extensions} = ['SSL'];
-        %listen_opts = (%listen_opts, %$ssl_params);
+        if ($ssl_params) {
+            # SSL with Server::Starter: per-connection SSL upgrade (like multi-worker)
+            $self->_check_tls_available;
+            $self->{tls_enabled} = 1;
+            $listener = IO::Async::Listener->new(
+                handle => $sock_fh,
+                on_stream => sub {
+                    my ($listener, $stream) = @_;
+                    return unless $weak_self;
 
-        $listen_opts{on_ssl_error} = sub {
-            return unless $weak_self;
-            $weak_self->_log(debug => "SSL handshake failed: $_[0]");
-        };
+                    $weak_self->loop->SSL_upgrade(
+                        handle        => $stream,
+                        SSL_server    => 1,
+                        SSL_reuse_ctx => $weak_self->{_ssl_ctx},
+                    )->on_done(sub {
+                        $weak_self->_on_connection($stream) if $weak_self;
+                    })->on_fail(sub {
+                        my ($failure) = @_;
+                        $weak_self->_log(debug => "SSL handshake failed: $failure")
+                            if $weak_self;
+                    });
+                },
+            );
+        }
+        else {
+            $listener = IO::Async::Listener->new(
+                handle => $sock_fh,
+                on_stream => sub {
+                    my ($listener, $stream) = @_;
+                    return unless $weak_self;
+                    $weak_self->_on_connection($stream);
+                },
+            );
+        }
+    }
+    else {
+        # Normal mode: create listener and bind to address
+        $listener = IO::Async::Listener->new(
+            on_stream => sub {
+                my ($listener, $stream) = @_;
+                return unless $weak_self;
+                $weak_self->_on_connection($stream);
+            },
+        );
+
+        $self->add_child($listener);
+
+        my %listen_opts = (
+            queuesize => $self->{listener_backlog},
+            addr => {
+                family   => 'inet',
+                socktype => 'stream',
+                ip       => $self->{host},
+                port     => $self->{port},
+            },
+        );
+
+        if ($ssl_params) {
+            $listen_opts{extensions} = ['SSL'];
+            %listen_opts = (%listen_opts, %$ssl_params);
+
+            $listen_opts{on_ssl_error} = sub {
+                return unless $weak_self;
+                $weak_self->_log(debug => "SSL handshake failed: $_[0]");
+            };
+        }
+
+        my $listen_future = $listener->listen(%listen_opts);
+        await $listen_future;
     }
 
-    # Start listening
-    my $listen_future = $listener->listen(%listen_opts);
-
-    await $listen_future;
+    if (!$listener->parent) {
+        $self->add_child($listener);
+    }
+    $self->{listener} = $listener;
 
     # Configure accept error handler after listen() to avoid SSL extension conflicts
     # Note: SSL extensions may wrap the listener, so try to configure but ignore if it fails
@@ -1877,7 +1950,8 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    my $mode_info = $self->{_server_starter} ? ', server-starter' : '';
+    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status$mode_info)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -2614,6 +2688,11 @@ async sub shutdown {
 
     # Stop accepting new connections
     if ($self->{listener}) {
+        # For Server::Starter, preserve the socket handle before removing the listener
+        # (Server::Starter owns the socket; we must not close it)
+        if ($self->{_server_starter}) {
+            $self->{_server_starter_handle} = $self->{listener}->read_handle;
+        }
         $self->remove_child($self->{listener});
         $self->{listener} = undef;
     }
@@ -2681,6 +2760,48 @@ async sub _drain_connections {
 
     delete $self->{drain_complete};
     return;
+}
+
+# --- Server::Starter FD passing ---
+
+sub _parse_server_starter_port {
+    my ($class_or_self, $env_value) = @_;
+
+    return undef unless defined $env_value && length $env_value;
+
+    # Use first entry if multiple (semicolon-separated)
+    my ($entry) = split /;/, $env_value;
+
+    # Parse: address=fd
+    my ($address, $fd) = $entry =~ /^(.+)=(\d+)$/
+        or die "Cannot parse SERVER_STARTER_PORT entry: '$entry'\n";
+
+    my %result = (fd => int($fd));
+
+    if ($address =~ m{^/}) {
+        # Unix socket path
+        $result{path} = $address;
+        $result{unix} = 1;
+    }
+    elsif ($address =~ /^\[([^\]]+)\]:(\d+)$/) {
+        # IPv6: [::]:port
+        $result{host} = "[$1]";
+        $result{port} = int($2);
+    }
+    elsif ($address =~ /^(.+):(\d+)$/) {
+        # host:port
+        $result{host} = $1;
+        $result{port} = int($2);
+    }
+    elsif ($address =~ /^\d+$/) {
+        # port only
+        $result{port} = int($address);
+    }
+    else {
+        die "Cannot parse SERVER_STARTER_PORT address: '$address'\n";
+    }
+
+    return \%result;
 }
 
 # --- Access log format compiler ---
