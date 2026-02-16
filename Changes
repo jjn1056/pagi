@@ -1,5 +1,10 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001018 - 2026-02-15
+  [Bug Fixes]
+  - Skip HTTP/2 subtests when Net::HTTP2::nghttp2 is not installed, fixing
+    CPAN tester failures on systems without optional nghttp2 dependency
+
 0.001017 - 2026-02-11
   [New Features]
   - HTTP/2 support (experimental). Requires Net::HTTP2::nghttp2. Enable with
