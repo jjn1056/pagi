@@ -21,6 +21,8 @@ my $app = sub { };
 # http2 flag is accepted and stored
 # ============================================================
 subtest 'http2 flag accepted by Server' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = PAGI::Server->new(
         app   => $app,
         host  => '127.0.0.1',
@@ -46,6 +48,8 @@ subtest 'http2 flag accepted by Server' => sub {
 # http2 via environment variable
 # ============================================================
 subtest 'http2 via _PAGI_SERVER_HTTP2 env var' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     local $ENV{_PAGI_SERVER_HTTP2} = 1;
 
     my $server = PAGI::Server->new(
@@ -62,6 +66,7 @@ subtest 'http2 via _PAGI_SERVER_HTTP2 env var' => sub {
 # _build_ssl_config includes ALPN when http2 is enabled
 # ============================================================
 subtest 'SSL config includes ALPN with http2' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
     plan skip_all => "IO::Async::SSL not installed" unless PAGI::Server->has_tls;
 
     my $server = PAGI::Server->new(
@@ -121,6 +126,8 @@ subtest 'SSL config excludes ALPN without http2' => sub {
 # HTTP/2 protocol singleton is created when http2 is enabled
 # ============================================================
 subtest 'HTTP/2 protocol singleton created' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = PAGI::Server->new(
         app   => $app,
         host  => '127.0.0.1',
@@ -151,7 +158,8 @@ subtest 'HTTP/2 protocol singleton not created when off' => sub {
 # has_http2 class method
 # ============================================================
 subtest 'has_http2 reflects availability' => sub {
-    # nghttp2 is installed on this system so it should be available
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     ok(PAGI::Server->has_http2, 'has_http2 returns true when nghttp2 installed');
 };
 
@@ -159,6 +167,8 @@ subtest 'has_http2 reflects availability' => sub {
 # h2c_enabled flag for cleartext HTTP/2
 # ============================================================
 subtest 'h2c_enabled set for cleartext http2' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = PAGI::Server->new(
         app   => $app,
         host  => '127.0.0.1',
@@ -173,6 +183,7 @@ subtest 'h2c_enabled set for cleartext http2' => sub {
 };
 
 subtest 'h2c_enabled NOT set for TLS http2' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
     plan skip_all => "IO::Async::SSL not installed" unless PAGI::Server->has_tls;
 
     my $server = PAGI::Server->new(
@@ -194,6 +205,8 @@ subtest 'h2c_enabled NOT set for TLS http2' => sub {
 # HTTP/2 protocol settings use sensible defaults
 # ============================================================
 subtest 'HTTP/2 protocol settings defaults' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = PAGI::Server->new(
         app   => $app,
         host  => '127.0.0.1',
@@ -216,6 +229,8 @@ subtest 'HTTP/2 protocol settings defaults' => sub {
 # HTTP/2 protocol settings can be customized
 # ============================================================
 subtest 'HTTP/2 protocol settings customization' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = PAGI::Server->new(
         app   => $app,
         host  => '127.0.0.1',

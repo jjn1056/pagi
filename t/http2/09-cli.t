@@ -18,6 +18,8 @@ use PAGI::Server;
 # --http2 sets _PAGI_SERVER_HTTP2 environment variable
 # ============================================================
 subtest '--http2 flag sets environment variable' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     # The BEGIN block in bin/pagi-server processes --http2 by setting
     # $ENV{_PAGI_SERVER_HTTP2}. We test the full chain: env var → Server config.
     # The env var → Server path is tested in 02-server-config.t, so here

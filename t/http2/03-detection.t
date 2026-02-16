@@ -73,6 +73,8 @@ subtest 'Connection accepts alpn_protocol parameter' => sub {
 # Connection accepts h2_protocol parameter
 # ============================================================
 subtest 'Connection accepts h2_protocol parameter' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = create_test_server(http2 => 1);
 
     my ($rd, $wr);
@@ -102,6 +104,8 @@ subtest 'Connection accepts h2_protocol parameter' => sub {
 # Connection with ALPN 'h2' initializes HTTP/2 session
 # ============================================================
 subtest 'ALPN h2 initializes HTTP/2 session' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = create_test_server(http2 => 1);
 
     my ($rd, $wr);
@@ -137,6 +141,8 @@ subtest 'ALPN h2 initializes HTTP/2 session' => sub {
 # Connection with ALPN 'http/1.1' stays HTTP/1.1
 # ============================================================
 subtest 'ALPN http/1.1 stays HTTP/1.1' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = create_test_server(http2 => 1);
 
     my ($rd, $wr);
@@ -203,6 +209,8 @@ subtest 'No ALPN stays HTTP/1.1' => sub {
 # HTTP/2 session sends initial SETTINGS on start
 # ============================================================
 subtest 'HTTP/2 session sends initial SETTINGS on start' => sub {
+    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+
     my $server = create_test_server(http2 => 1);
 
     # Use socketpair for bidirectional I/O
