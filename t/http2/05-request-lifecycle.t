@@ -12,8 +12,8 @@ use Scalar::Util qw(weaken);
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
 BEGIN {
-    eval { require Net::HTTP2::nghttp2; 1 }
-        or plan(skip_all => 'Net::HTTP2::nghttp2 not installed (optional)');
+    eval { require Net::HTTP2::nghttp2; Net::HTTP2::nghttp2->VERSION(0.007); 1 }
+        or plan(skip_all => 'Net::HTTP2::nghttp2 0.007+ not installed (optional)');
 }
 
 # ============================================================
