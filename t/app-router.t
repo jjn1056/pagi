@@ -468,4 +468,41 @@ subtest 'constraints on websocket and sse routes' => sub {
     is $sent->[0]{status}, 404, 'sse chained constraint rejects';
 };
 
+subtest 'constraints error handling' => sub {
+    my $router = PAGI::App::Router->new;
+
+    # constraints() without preceding route
+    like dies { $router->constraints(id => qr/\d+/) },
+        qr/constraints\(\) called without a preceding route/,
+        'croak when no route to constrain';
+
+    # Non-regex constraint value
+    $router->get('/test/:id' => sub {});
+    like dies { $router->constraints(id => 'not_a_regex') },
+        qr/must be a Regexp/,
+        'croak on non-Regexp constraint';
+};
+
+subtest 'constraints with 405 interaction' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->get('/items/{id:\d+}' => make_handler('get_item', \@calls));
+    $router->delete('/items/{id:\d+}' => make_handler('delete_item', \@calls));
+
+    my $app = $router->to_app;
+
+    # PUT /items/5 — path matches but method doesn't, should be 405
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'PUT', path => '/items/5' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 405, 'constrained route gives 405 on wrong method';
+    my %headers = map { $_->[0] => $_->[1] } @{$sent->[0]{headers}};
+    like $headers{allow}, qr/DELETE/, 'Allow includes DELETE';
+    like $headers{allow}, qr/GET/, 'Allow includes GET';
+
+    # PUT /items/abc — constraint fails, no path match at all, should be 404
+    ($send, $sent) = mock_send();
+    $app->({ method => 'PUT', path => '/items/abc' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'failed constraint gives 404 not 405';
+};
+
 done_testing;
