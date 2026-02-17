@@ -49,6 +49,17 @@ PAGI::App::Router - Unified routing for HTTP, WebSocket, and SSE
     $router->uri_for('api.users.get', { id => 42 });
     # Returns: "/api/v1/users/42"
 
+    # Match any HTTP method
+    $router->any('/health' => $health_handler);
+    $router->any('/resource' => $handler, method => ['GET', 'POST']);
+
+    # Path constraints (inline)
+    $router->get('/users/{id:\d+}' => $get_user);
+
+    # Path constraints (chained)
+    $router->get('/posts/:slug' => $get_post)
+        ->constraints(slug => qr/^[a-z0-9-]+$/);
+
     my $app = $router->to_app;  # Handles all scope types
 
 =cut
@@ -654,6 +665,18 @@ and 405 for unmatched HTTP methods. Lifespan events are automatically ignored.
 
 Register a route for the given HTTP method. Returns C<$self> for chaining.
 
+=head2 any
+
+    $router->any('/health' => $app);                              # all methods
+    $router->any('/resource' => $app, method => ['GET', 'POST']); # specific methods
+    $router->any('/path' => \@middleware => $app);                 # with middleware
+
+Register a route that matches multiple or all HTTP methods. Without a
+C<method> option, matches any HTTP method. With C<method>, only matches
+the specified methods and returns 405 for others.
+
+Returns C<$self> for chaining (supports C<name()>, C<constraints()>).
+
 =head2 websocket
 
     $router->websocket('/ws/chat/:room' => $chat_handler);
@@ -799,11 +822,52 @@ Mount middleware runs before any sub-router middleware:
 
 =over 4
 
-=item * C</users/:id> - Named parameter, captured as C<params-E<gt>{id}>
+=item * C</users/:id> - Named parameter (colon syntax), captured as C<params-E<gt>{id}>
+
+=item * C</users/{id}> - Named parameter (brace syntax), same as C<:id>
+
+=item * C</users/{id:\d+}> - Constrained parameter, only matches if value matches C<\d+>
 
 =item * C</files/*path> - Wildcard, captures rest of path as C<params-E<gt>{path}>
 
 =back
+
+Literal path segments are properly escaped, so metacharacters like C<.>, C<(>, C<[>
+in paths match literally. For example, C</api/v1.0/users> only matches a literal
+dot, not any character.
+
+=head1 CONSTRAINTS
+
+Path parameters can be constrained with regex patterns. A constrained parameter
+must match its pattern for the route to match; if it doesn't, the router tries
+the next route.
+
+=head2 Inline Constraints
+
+Embed the pattern directly in the path:
+
+    $router->get('/users/{id:\d+}' => $handler);
+    $router->get('/posts/{slug:[a-z0-9-]+}' => $handler);
+
+=head2 Chained Constraints
+
+Apply constraints after route registration using C<constraints()>:
+
+    $router->get('/users/:id' => $handler)
+        ->constraints(id => qr/^\d+$/);
+
+Constraint values must be compiled regexes (C<qr//>). The regex is
+anchored to the full parameter value during matching.
+
+Both syntaxes can be combined. Chained constraints are merged with
+any inline constraints.
+
+=head2 constraints
+
+    $router->get('/path/:param' => $handler)->constraints(param => qr/pattern/);
+
+Apply regex constraints to path parameters. Returns C<$self> for chaining.
+Croaks if called without a preceding route or with a non-Regexp constraint.
 
 =head1 SCOPE ADDITIONS
 
