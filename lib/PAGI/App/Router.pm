@@ -107,13 +107,14 @@ sub options { my ($self, $path, @rest) = @_; $self->route('OPTIONS', $path, @res
 sub websocket {
     my ($self, $path, @rest) = @_;
     my ($middleware, $app) = $self->_parse_route_args(@rest);
-    my ($regex, @names) = $self->_compile_path($path);
+    my ($regex, $names, $constraints) = $self->_compile_path($path);
     my $route = {
-        path       => $path,
-        regex      => $regex,
-        names      => \@names,
-        app        => $app,
-        middleware => $middleware,
+        path        => $path,
+        regex       => $regex,
+        names       => $names,
+        constraints => $constraints,
+        app         => $app,
+        middleware  => $middleware,
     };
     push @{$self->{websocket_routes}}, $route;
     $self->{_last_route} = $route;
@@ -125,13 +126,14 @@ sub websocket {
 sub sse {
     my ($self, $path, @rest) = @_;
     my ($middleware, $app) = $self->_parse_route_args(@rest);
-    my ($regex, @names) = $self->_compile_path($path);
+    my ($regex, $names, $constraints) = $self->_compile_path($path);
     my $route = {
-        path       => $path,
-        regex      => $regex,
-        names      => \@names,
-        app        => $app,
-        middleware => $middleware,
+        path        => $path,
+        regex       => $regex,
+        names       => $names,
+        constraints => $constraints,
+        app         => $app,
+        middleware  => $middleware,
     };
     push @{$self->{sse_routes}}, $route;
     $self->{_last_route} = $route;
@@ -144,14 +146,15 @@ sub route {
     my ($self, $method, $path, @rest) = @_;
 
     my ($middleware, $app) = $self->_parse_route_args(@rest);
-    my ($regex, @names) = $self->_compile_path($path);
+    my ($regex, $names, $constraints) = $self->_compile_path($path);
     my $route = {
-        method     => uc($method),
-        path       => $path,
-        regex      => $regex,
-        names      => \@names,
-        app        => $app,
-        middleware => $middleware,
+        method      => uc($method),
+        path        => $path,
+        regex       => $regex,
+        names       => $names,
+        constraints => $constraints,
+        app         => $app,
+        middleware  => $middleware,
     };
     push @{$self->{routes}}, $route;
     $self->{_last_route} = $route;
@@ -164,19 +167,44 @@ sub _compile_path {
     my ($self, $path) = @_;
 
     my @names;
-    my $regex = $path;
+    my @constraints;
+    my $regex = '';
 
-    # Handle wildcard/splat
-    if ($regex =~ s{\*(\w+)}{(.+)}g) {
-        push @names, $1;
+    # Tokenize the path
+    my $remaining = $path;
+    while (length $remaining) {
+        # {name:pattern} — constrained parameter
+        if ($remaining =~ s/^\{(\w+):([^}]+)\}//) {
+            push @names, $1;
+            push @constraints, [$1, $2];
+            $regex .= "([^/]+)";
+        }
+        # {name} — unconstrained parameter (same as :name)
+        elsif ($remaining =~ s/^\{(\w+)\}//) {
+            push @names, $1;
+            $regex .= "([^/]+)";
+        }
+        # *name — wildcard/splat
+        elsif ($remaining =~ s/^\*(\w+)//) {
+            push @names, $1;
+            $regex .= "(.+)";
+        }
+        # :name — named parameter (legacy syntax)
+        elsif ($remaining =~ s/^:(\w+)//) {
+            push @names, $1;
+            $regex .= "([^/]+)";
+        }
+        # Literal text up to next special token
+        elsif ($remaining =~ s/^([^{:*]+)//) {
+            $regex .= quotemeta($1);
+        }
+        # Safety: consume one character to avoid infinite loop
+        else {
+            $regex .= quotemeta(substr($remaining, 0, 1, ''));
+        }
     }
 
-    # Handle named parameters
-    while ($regex =~ s{:(\w+)}{([^/]+)}) {
-        push @names, $1;
-    }
-
-    return (qr{^$regex$}, @names);
+    return (qr{^$regex$}, \@names, \@constraints);
 }
 
 # ============================================================
