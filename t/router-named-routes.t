@@ -159,4 +159,24 @@ subtest 'wildcard routes' => sub {
         'wildcard param substituted';
 };
 
+subtest 'any() route with name' => sub {
+    my $router = PAGI::App::Router->new;
+
+    $router->any('/health' => sub {})->name('health');
+    $router->any('/items/{id:\d+}' => sub {}, method => ['GET', 'PUT'])->name('items.detail');
+
+    is $router->uri_for('health'), '/health', 'any() route uri_for works';
+    is $router->uri_for('items.detail', { id => 5 }), '/items/5', 'any() with constraint uri_for works';
+};
+
+subtest 'uri_for with brace syntax' => sub {
+    my $router = PAGI::App::Router->new;
+
+    $router->get('/users/{id}' => sub {})->name('users.get');
+    $router->get('/posts/{slug:[a-z0-9-]+}' => sub {})->name('posts.get');
+
+    is $router->uri_for('users.get', { id => 42 }), '/users/42', 'uri_for with {name} syntax';
+    is $router->uri_for('posts.get', { slug => 'hello-world' }), '/posts/hello-world', 'uri_for with {name:pattern} syntax';
+};
+
 done_testing;

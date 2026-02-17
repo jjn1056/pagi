@@ -325,8 +325,9 @@ sub uri_for {
             croak "Missing required path parameter '$param_name' for route '$name'";
         }
         my $value = $path_params->{$param_name};
-        $path =~ s/:$param_name\b/$value/;
-        $path =~ s/\*$param_name\b/$value/;
+        $path =~ s/:$param_name\b/$value/
+            || $path =~ s/\{$param_name(?::[^}]*)?\}/$value/
+            || $path =~ s/\*$param_name\b/$value/;
     }
 
     # Prepend mount prefix
