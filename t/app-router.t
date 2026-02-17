@@ -386,4 +386,34 @@ subtest 'path parameter syntax variants' => sub {
     is $calls[0]{scope}{path_params}{review_id}, '10', 'second param captured';
 };
 
+subtest 'inline constraints {name:pattern}' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->get('/users/{id:\d+}' => make_handler('user_by_id', \@calls));
+    $router->get('/users/{name:[a-zA-Z]+}' => make_handler('user_by_name', \@calls));
+
+    my $app = $router->to_app;
+
+    # Numeric id matches first route
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/users/42' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'numeric id matches constrained route';
+    is $sent->[1]{body}, 'user_by_id', 'correct handler for numeric id';
+    is $calls[0]{scope}{path_params}{id}, '42', 'id param captured';
+
+    # Alpha name matches second route
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/users/alice' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'alpha name matches constrained route';
+    is $sent->[1]{body}, 'user_by_name', 'correct handler for alpha name';
+    is $calls[0]{scope}{path_params}{name}, 'alice', 'name param captured';
+
+    # Mixed alphanumeric matches neither — 404
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/users/bob123' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'mixed value matches no constrained route';
+};
+
 done_testing;
