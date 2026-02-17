@@ -104,6 +104,23 @@ sub delete  { my ($self, $path, @rest) = @_; $self->route('DELETE', $path, @rest
 sub head    { my ($self, $path, @rest) = @_; $self->route('HEAD', $path, @rest) }
 sub options { my ($self, $path, @rest) = @_; $self->route('OPTIONS', $path, @rest) }
 
+sub any {
+    my ($self, $path, @rest) = @_;
+
+    # Parse optional trailing key-value args (method => [...])
+    my %opts;
+    if (@rest >= 2 && !ref($rest[-2]) && $rest[-2] eq 'method') {
+        %opts = splice(@rest, -2);
+    }
+
+    my $method = $opts{method} // '*';
+    if (ref($method) eq 'ARRAY') {
+        $method = [map { uc($_) } @$method];
+    }
+
+    $self->route($method, $path, @rest);
+}
+
 sub websocket {
     my ($self, $path, @rest) = @_;
     my ($middleware, $app) = $self->_parse_route_args(@rest);
@@ -148,7 +165,7 @@ sub route {
     my ($middleware, $app) = $self->_parse_route_args(@rest);
     my ($regex, $names, $constraints) = $self->_compile_path($path);
     my $route = {
-        method      => uc($method),
+        method      => ref($method) eq 'ARRAY' ? $method : ($method eq '*' ? '*' : uc($method)),
         path        => $path,
         regex       => $regex,
         names       => $names,
@@ -545,7 +562,12 @@ sub to_app {
                 next unless $self_ref->_check_constraints($route, \%params);
 
                 # Check method
-                if ($route->{method} eq $match_method || $route->{method} eq $method) {
+                my $route_method = $route->{method};
+                my $method_match = ref($route_method) eq 'ARRAY'
+                    ? (grep { $_ eq $match_method || $_ eq $method } @$route_method)
+                    : ($route_method eq '*' || $route_method eq $match_method || $route_method eq $method);
+
+                if ($method_match) {
                     my $new_scope = {
                         %$scope,
                         path_params => \%params,
@@ -556,7 +578,11 @@ sub to_app {
                     return;
                 }
 
-                push @method_matches, $route->{method};
+                if (ref($route->{method}) eq 'ARRAY') {
+                    push @method_matches, @{$route->{method}};
+                } elsif ($route->{method} ne '*') {
+                    push @method_matches, $route->{method};
+                }
             }
         }
 
