@@ -505,4 +505,77 @@ subtest 'constraints with 405 interaction' => sub {
     is $sent->[0]{status}, 404, 'failed constraint gives 404 not 405';
 };
 
+subtest 'any() wildcard matches all methods' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->any('/health' => make_handler('health', \@calls));
+
+    my $app = $router->to_app;
+
+    for my $method (qw(GET POST PUT DELETE PATCH HEAD OPTIONS)) {
+        @calls = ();
+        my ($send, $sent) = mock_send();
+        $app->({ method => $method, path => '/health' }, sub { Future->done }, $send)->get;
+        is $sent->[0]{status}, 200, "any() matches $method";
+    }
+};
+
+subtest 'any() with explicit method list' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->any('/resource' => make_handler('resource', \@calls), method => ['GET', 'POST']);
+
+    my $app = $router->to_app;
+
+    # GET matches
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/resource' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'any([GET,POST]) matches GET';
+
+    # POST matches
+    ($send, $sent) = mock_send();
+    $app->({ method => 'POST', path => '/resource' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'any([GET,POST]) matches POST';
+
+    # DELETE does not match — should be 405
+    ($send, $sent) = mock_send();
+    $app->({ method => 'DELETE', path => '/resource' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 405, 'any([GET,POST]) gives 405 for DELETE';
+    my %headers = map { $_->[0] => $_->[1] } @{$sent->[0]{headers}};
+    like $headers{allow}, qr/GET/, 'Allow includes GET';
+    like $headers{allow}, qr/POST/, 'Allow includes POST';
+};
+
+subtest 'any() with params and constraints' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->any('/items/{id:\d+}' => make_handler('item', \@calls));
+
+    my $app = $router->to_app;
+
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'PATCH', path => '/items/42' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'any() with constraint matches';
+    is $calls[0]{scope}{path_params}{id}, '42', 'param captured';
+};
+
+subtest 'any() with middleware' => sub {
+    my @calls;
+    my $mw = async sub {
+        my ($scope, $receive, $send, $next) = @_;
+        $scope->{mw_ran} = 1;
+        await $next->();
+    };
+
+    my $router = PAGI::App::Router->new;
+    $router->any('/mw-test' => [$mw] => make_handler('mw_handler', \@calls));
+
+    my $app = $router->to_app;
+
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/mw-test' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'any() with middleware works';
+    is $calls[0]{scope}{mw_ran}, 1, 'middleware executed';
+};
+
 done_testing;
