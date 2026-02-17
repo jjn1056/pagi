@@ -363,4 +363,27 @@ subtest 'regex metacharacters in literal paths' => sub {
     is $sent->[1]{body}, 'report', 'correct handler for bracketed path';
 };
 
+subtest 'path parameter syntax variants' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->get('/users/{id}' => make_handler('brace_user', \@calls));
+    $router->get('/items/:item_id/reviews/:review_id' => make_handler('review', \@calls));
+
+    my $app = $router->to_app;
+
+    # {name} syntax (brace-style, unconstrained)
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/users/99' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, '{id} syntax matched';
+    is $calls[0]{scope}{path_params}{id}, '99', '{id} captured param';
+
+    # Multiple params with colon syntax
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/items/5/reviews/10' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'multiple params matched';
+    is $calls[0]{scope}{path_params}{item_id}, '5', 'first param captured';
+    is $calls[0]{scope}{path_params}{review_id}, '10', 'second param captured';
+};
+
 done_testing;
