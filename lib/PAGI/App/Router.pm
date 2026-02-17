@@ -207,6 +207,17 @@ sub _compile_path {
     return (qr{^$regex$}, \@names, \@constraints);
 }
 
+sub _check_constraints {
+    my ($self, $route, $params) = @_;
+    my $constraints = $route->{constraints} // [];
+    for my $c (@$constraints) {
+        my ($name, $pattern) = @$c;
+        my $value = $params->{$name} // return 0;
+        return 0 unless $value =~ m/^(?:$pattern)$/;
+    }
+    return 1;
+}
+
 # ============================================================
 # Named Routes
 # ============================================================
@@ -371,6 +382,7 @@ sub _build_middleware_chain {
 
 sub to_app {
     my ($self) = @_;
+    my $self_ref = $self;
 
     my @routes           = @{$self->{routes}};
     my @websocket_routes = @{$self->{websocket_routes}};
@@ -423,6 +435,10 @@ sub to_app {
                     for my $i (0 .. $#{$route->{names}}) {
                         $params{$route->{names}[$i]} = $captures[$i];
                     }
+
+                    # Check constraints — skip route if any fail
+                    next unless $self_ref->_check_constraints($route, \%params);
+
                     my $new_scope = {
                         %$scope,
                         path_params => \%params,
@@ -459,6 +475,10 @@ sub to_app {
                     for my $i (0 .. $#{$route->{names}}) {
                         $params{$route->{names}[$i]} = $captures[$i];
                     }
+
+                    # Check constraints — skip route if any fail
+                    next unless $self_ref->_check_constraints($route, \%params);
+
                     my $new_scope = {
                         %$scope,
                         path_params => \%params,
@@ -496,14 +516,17 @@ sub to_app {
             if ($path =~ $route->{regex}) {
                 my @captures = ($path =~ $route->{regex});
 
+                # Build params FIRST (needed for constraint checking)
+                my %params;
+                for my $i (0 .. $#{$route->{names}}) {
+                    $params{$route->{names}[$i]} = $captures[$i];
+                }
+
+                # Check constraints — skip route if any fail
+                next unless $self_ref->_check_constraints($route, \%params);
+
                 # Check method
                 if ($route->{method} eq $match_method || $route->{method} eq $method) {
-                    # Build params
-                    my %params;
-                    for my $i (0 .. $#{$route->{names}}) {
-                        $params{$route->{names}[$i]} = $captures[$i];
-                    }
-
                     my $new_scope = {
                         %$scope,
                         path_params => \%params,
