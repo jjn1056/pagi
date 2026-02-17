@@ -239,6 +239,25 @@ sub name {
     return $self;
 }
 
+sub constraints {
+    my ($self, %new_constraints) = @_;
+
+    croak "constraints() called without a preceding route" unless $self->{_last_route};
+
+    my $route = $self->{_last_route};
+    my $existing = $route->{constraints} // [];
+
+    for my $name (keys %new_constraints) {
+        my $pattern = $new_constraints{$name};
+        croak "Constraint for '$name' must be a Regexp (qr//), got " . ref($pattern)
+            unless ref($pattern) eq 'Regexp';
+        push @$existing, [$name, $pattern];
+    }
+    $route->{constraints} = $existing;
+
+    return $self;
+}
+
 sub as {
     my ($self, $namespace) = @_;
 
