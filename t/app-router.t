@@ -578,4 +578,55 @@ subtest 'any() with middleware' => sub {
     is $calls[0]{scope}{mw_ran}, 1, 'middleware executed';
 };
 
+subtest 'combined features integration' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+
+    # Feature #1: Regex escaping with Feature #2: constraints
+    $router->get('/api/v2.0/users/{id:\d+}' => make_handler('v2_user', \@calls));
+
+    # Feature #2: Chained constraints with Feature #3: any()
+    $router->any('/articles/:slug' => make_handler('article', \@calls), method => ['GET', 'PUT'])
+        ->constraints(slug => qr/^[a-z0-9-]+$/);
+
+    # Feature #3: Wildcard any() with Feature #1: escaped path
+    $router->any('/status(check)' => make_handler('status', \@calls));
+
+    my $app = $router->to_app;
+
+    # v2.0 with dots + constraint
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/v2.0/users/99' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'dotted path + constraint match';
+    is $calls[0]{scope}{path_params}{id}, '99', 'param captured';
+
+    # v2.0 + failed constraint
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/v2.0/users/abc' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'dotted path + failed constraint = 404';
+
+    # any() + chained constraint — valid slug, allowed method
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/articles/my-first-post' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'any() + chained constraint match';
+
+    # any() + chained constraint — valid slug, disallowed method
+    ($send, $sent) = mock_send();
+    $app->({ method => 'DELETE', path => '/articles/my-first-post' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 405, 'any() + chained constraint 405 on wrong method';
+
+    # any() + chained constraint — invalid slug
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/articles/BAD SLUG!' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'any() + failed chained constraint = 404';
+
+    # Escaped parens in path
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ method => 'POST', path => '/status(check)' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'escaped parens in path match';
+};
+
 done_testing;
