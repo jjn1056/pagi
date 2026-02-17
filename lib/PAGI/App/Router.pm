@@ -430,7 +430,6 @@ sub _build_middleware_chain {
 
 sub to_app {
     my ($self) = @_;
-    my $self_ref = $self;
 
     my @routes           = @{$self->{routes}};
     my @websocket_routes = @{$self->{websocket_routes}};
@@ -477,15 +476,14 @@ sub to_app {
         # WebSocket routes (path-only matching) - check before mounts
         if ($type eq 'websocket') {
             for my $route (@websocket_routes) {
-                if ($path =~ $route->{regex}) {
-                    my @captures = ($path =~ $route->{regex});
+                if (my @captures = ($path =~ $route->{regex})) {
                     my %params;
                     for my $i (0 .. $#{$route->{names}}) {
                         $params{$route->{names}[$i]} = $captures[$i];
                     }
 
                     # Check constraints — skip route if any fail
-                    next unless $self_ref->_check_constraints($route, \%params);
+                    next unless $self->_check_constraints($route, \%params);
 
                     my $new_scope = {
                         %$scope,
@@ -517,15 +515,14 @@ sub to_app {
         # SSE routes (path-only matching) - check before mounts
         if ($type eq 'sse') {
             for my $route (@sse_routes) {
-                if ($path =~ $route->{regex}) {
-                    my @captures = ($path =~ $route->{regex});
+                if (my @captures = ($path =~ $route->{regex})) {
                     my %params;
                     for my $i (0 .. $#{$route->{names}}) {
                         $params{$route->{names}[$i]} = $captures[$i];
                     }
 
                     # Check constraints — skip route if any fail
-                    next unless $self_ref->_check_constraints($route, \%params);
+                    next unless $self->_check_constraints($route, \%params);
 
                     my $new_scope = {
                         %$scope,
@@ -561,8 +558,7 @@ sub to_app {
         my @method_matches;
 
         for my $route (@routes) {
-            if ($path =~ $route->{regex}) {
-                my @captures = ($path =~ $route->{regex});
+            if (my @captures = ($path =~ $route->{regex})) {
 
                 # Build params FIRST (needed for constraint checking)
                 my %params;
@@ -571,7 +567,7 @@ sub to_app {
                 }
 
                 # Check constraints — skip route if any fail
-                next unless $self_ref->_check_constraints($route, \%params);
+                next unless $self->_check_constraints($route, \%params);
 
                 # Check method
                 my $route_method = $route->{method};
@@ -710,8 +706,9 @@ When a request for C</api/users/42> hits a router with C</api> mounted:
 
 =back
 
-Mounts are checked before regular routes. Longer prefixes match first,
-so C</api/v2> takes priority over C</api>.
+Routes are checked before mounts. If no route matches, mounts are tried
+as a fallback. Longer prefixes match first, so C</api/v2> takes priority
+over C</api>.
 
 B<Example: Organizing a large application>
 
