@@ -336,4 +336,31 @@ subtest 'mixed protocol routing' => sub {
     is scalar(@$sent), 0, 'lifespan events are ignored';
 };
 
+subtest 'regex metacharacters in literal paths' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->get('/api/v1.0/users' => make_handler('v1_users', \@calls));
+    $router->get('/files/report[2024]' => make_handler('report', \@calls));
+    $router->get('/search' => make_handler('search', \@calls));
+
+    my $app = $router->to_app;
+
+    # Dot in path should match literally, not as regex "any char"
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/v1.0/users' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'literal dot in path matches';
+    is $sent->[1]{body}, 'v1_users', 'correct handler for dotted path';
+
+    # /api/v1X0/users should NOT match (dot is not "any char")
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/v1X0/users' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'dot does not match arbitrary char';
+
+    # Brackets in path should match literally
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/files/report[2024]' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'literal brackets in path match';
+    is $sent->[1]{body}, 'report', 'correct handler for bracketed path';
+};
+
 done_testing;
