@@ -416,4 +416,56 @@ subtest 'inline constraints {name:pattern}' => sub {
     is $sent->[0]{status}, 404, 'mixed value matches no constrained route';
 };
 
+subtest 'chained constraints() method' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->get('/posts/:id' => make_handler('post', \@calls))
+        ->constraints(id => qr/^\d+$/);
+
+    my $app = $router->to_app;
+
+    # Numeric id matches
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/posts/7' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'numeric id matches with chained constraint';
+    is $calls[0]{scope}{path_params}{id}, '7', 'param captured';
+
+    # Non-numeric id does not match — 404
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/posts/latest' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'non-numeric id rejected by chained constraint';
+};
+
+subtest 'constraints on websocket and sse routes' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+    $router->websocket('/ws/{room:\w+}' => make_handler('ws', \@calls));
+    $router->sse('/events/:channel' => make_handler('sse', \@calls))
+        ->constraints(channel => qr/^[a-z]+$/);
+
+    my $app = $router->to_app;
+
+    # WebSocket with inline constraint
+    my ($send, $sent) = mock_send();
+    $app->({ type => 'websocket', path => '/ws/lobby' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'websocket inline constraint matches';
+
+    # WebSocket fails constraint
+    ($send, $sent) = mock_send();
+    $app->({ type => 'websocket', path => '/ws/lobby!!' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'websocket inline constraint rejects';
+
+    # SSE with chained constraint
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ type => 'sse', path => '/events/news' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'sse chained constraint matches';
+
+    # SSE fails chained constraint
+    ($send, $sent) = mock_send();
+    $app->({ type => 'sse', path => '/events/NEWS123' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'sse chained constraint rejects';
+};
+
 done_testing;
