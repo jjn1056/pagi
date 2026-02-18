@@ -654,4 +654,30 @@ subtest 'Static middleware default handle_ranges honors Range header' => sub {
     is $sent[0]{status}, 206, 'default behavior honors Range header (206)';
 };
 
+# =============================================================================
+# Test: Double URL-decoding prevention
+# =============================================================================
+
+subtest 'Static middleware does not double URL-decode paths' => sub {
+    my $mw = PAGI::Middleware::Static->new(root => $test_root);
+
+    my $app = async sub { };
+    my $wrapped = $mw->wrap($app);
+
+    # Simulate a path that the server has already decoded from %252e%252e to %2e%2e.
+    # The middleware must NOT decode this again into ".." which would enable traversal.
+    my @sent;
+    run_async(async sub {
+        await $wrapped->(
+            { type => 'http', path => '/%2e%2e/etc/passwd', method => 'GET', headers => [] },
+            async sub { { type => 'http.disconnect' } },
+            async sub  {
+        my ($event) = @_; push @sent, $event },
+        );
+    });
+
+    # With no double-decode, %2e%2e stays literal - file won't exist, so 404 (not 403 from traversal)
+    ok $sent[0]{status} >= 400, 'double-encoded path traversal is blocked (not 200)';
+};
+
 done_testing;

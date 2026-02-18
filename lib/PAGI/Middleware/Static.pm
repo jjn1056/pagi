@@ -349,9 +349,8 @@ sub wrap {
 sub _resolve_path {
     my ($self, $url_path) = @_;
 
-    # Decode URL path
+    # Path is already URL-decoded by the server, so no decoding here
     my $decoded = $url_path;
-    $decoded =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/eg;
 
     # Remove query string
     $decoded =~ s/\?.*//;
