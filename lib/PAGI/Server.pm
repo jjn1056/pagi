@@ -1329,10 +1329,15 @@ to ensure proper lifespan.shutdown handling.
     kill -INT <pid>
     # or press Ctrl-C in terminal
 
-=item B<SIGHUP> - Graceful restart (multi-worker only)
+=item B<SIGHUP> - Graceful worker restart (multi-worker only)
 
-Performs a zero-downtime restart by spawning new workers before terminating
-old ones. Useful for deploying new code without dropping connections.
+Performs a zero-downtime worker restart by spawning new workers before
+terminating old ones. Useful for recycling workers to reclaim leaked memory
+or reset per-worker state without dropping active connections.
+
+B<Note:> This does NOT reload application code. New workers fork from the
+existing parent process and inherit the same loaded code. For code deploys,
+perform a full server restart (SIGTERM + start).
 
     kill -HUP <pid>
 
