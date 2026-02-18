@@ -133,6 +133,31 @@ sub any {
     $self->route($method, $path, @rest);
 }
 
+sub group {
+    my ($self, $prefix, @rest) = @_;
+    $prefix =~ s{/$}{}; # strip trailing slash
+
+    my ($middleware, $target) = $self->_parse_route_args(@rest);
+
+    if (ref($target) eq 'CODE') {
+        push @{$self->{_group_stack}}, {
+            prefix     => $prefix,
+            middleware => [@$middleware],
+        };
+        $target->($self);
+        pop @{$self->{_group_stack}};
+    }
+    else {
+        croak "group() target must be a coderef, PAGI::App::Router, or package name, got "
+            . (ref($target) || 'scalar');
+    }
+
+    $self->{_last_route} = undef;
+    $self->{_last_mount} = undef;
+
+    return $self;
+}
+
 sub websocket {
     my ($self, $path, @rest) = @_;
     my ($middleware, $app) = $self->_parse_route_args(@rest);
