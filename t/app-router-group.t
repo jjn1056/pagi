@@ -344,4 +344,35 @@ subtest 'string form: bad package' => sub {
     }, qr/Failed to load/, 'croak on failed require';
 };
 
+subtest 'websocket and sse in groups' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+
+    $router->group('/realtime' => sub {
+        my ($r) = @_;
+        $r->websocket('/chat/:room' => make_handler('ws_chat', \@calls));
+        $r->sse('/events/:channel' => make_handler('sse_events', \@calls));
+    });
+
+    my $app = $router->to_app;
+
+    # WebSocket
+    my ($send, $sent) = mock_send();
+    $app->({ type => 'websocket', path => '/realtime/chat/general' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'websocket in group matches';
+    is $calls[0]{scope}{path_params}{room}, 'general', 'ws param captured';
+
+    # SSE
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ type => 'sse', path => '/realtime/events/news' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'sse in group matches';
+    is $calls[0]{scope}{path_params}{channel}, 'news', 'sse param captured';
+
+    # Without prefix — 404
+    ($send, $sent) = mock_send();
+    $app->({ type => 'websocket', path => '/chat/general' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'ws without group prefix is 404';
+};
+
 done_testing;
