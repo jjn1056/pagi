@@ -162,8 +162,8 @@ sub websocket {
     my ($self, $path, @rest) = @_;
     my ($middleware, $app) = $self->_parse_route_args(@rest);
 
-    # Apply accumulated group context
-    for my $ctx (@{$self->{_group_stack}}) {
+    # Apply accumulated group context (reverse: innermost prefix first)
+    for my $ctx (reverse @{$self->{_group_stack}}) {
         $path = $ctx->{prefix} . $path;
         unshift @$middleware, @{$ctx->{middleware}};
     }
@@ -188,8 +188,8 @@ sub sse {
     my ($self, $path, @rest) = @_;
     my ($middleware, $app) = $self->_parse_route_args(@rest);
 
-    # Apply accumulated group context
-    for my $ctx (@{$self->{_group_stack}}) {
+    # Apply accumulated group context (reverse: innermost prefix first)
+    for my $ctx (reverse @{$self->{_group_stack}}) {
         $path = $ctx->{prefix} . $path;
         unshift @$middleware, @{$ctx->{middleware}};
     }
@@ -215,8 +215,8 @@ sub route {
 
     my ($middleware, $app) = $self->_parse_route_args(@rest);
 
-    # Apply accumulated group context
-    for my $ctx (@{$self->{_group_stack}}) {
+    # Apply accumulated group context (reverse: innermost prefix first)
+    for my $ctx (reverse @{$self->{_group_stack}}) {
         $path = $ctx->{prefix} . $path;
         unshift @$middleware, @{$ctx->{middleware}};
     }
