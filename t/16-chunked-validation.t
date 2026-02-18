@@ -190,33 +190,45 @@ subtest 'Whitespace handling in chunk sizes' => sub {
     }
 };
 
-subtest 'Extremely large chunk sizes' => sub {
-    # Test protection against memory exhaustion via huge chunk size
-    # "FFFFFFFFFFFFFFFF\r\n" would be 18 exabytes
-
+subtest 'Extremely large chunk sizes are rejected' => sub {
+    # "FFFFFFFFFFFFFFFF\r\n" would be 18 exabytes — must return error
     my $huge = "FFFFFFFFFFFFFFFF\r\ndata\r\n0\r\n\r\n";
-    my ($data, $consumed, $complete, $error);
+    my ($data, $consumed, $complete) = $proto->parse_chunked_body($huge);
+    ref_ok($data, 'HASH', 'Huge chunk size returns error structure');
+    is($data->{error}, 413, 'Huge chunk size returns 413 Payload Too Large');
 
-    eval {
-        ($data, $consumed, $complete) = $proto->parse_chunked_body($huge);
-    };
-    $error = $@;
+    # Just over default 10MB limit: A00001 hex = 10485761 bytes
+    my $over_limit = "A00001\r\ndata\r\n0\r\n\r\n";
+    ($data, $consumed, $complete) = $proto->parse_chunked_body($over_limit);
+    ref_ok($data, 'HASH', 'Chunk slightly over limit returns error');
+    is($data->{error}, 413, 'Over-limit chunk returns 413');
 
-    # Should either:
-    # 1. Return (undef, 0, 0) because it's waiting for impossibly large chunk
-    # 2. Return an error about chunk size being too large
-    # 3. Be limited by max_body_size elsewhere
-
-    if ($error) {
-        like($error, qr/size|large|limit/i, 'Huge chunk size rejected with error');
-    } elsif ($consumed == 0 && !$complete) {
-        pass('Huge chunk size waiting for more data (will timeout/fail elsewhere)');
-    } elsif (ref($data) eq 'HASH' && $data->{error}) {
-        pass('Huge chunk size returned error structure');
+    # Right at the limit: A00000 hex = 10485760 bytes (exactly 10MB)
+    # This should NOT be rejected (but will wait for more data since buffer is small)
+    my $at_limit = "A00000\r\ndata\r\n0\r\n\r\n";
+    ($data, $consumed, $complete) = $proto->parse_chunked_body($at_limit);
+    if (ref($data) eq 'HASH') {
+        fail('Chunk at limit should not be rejected');
     } else {
-        # Document behavior - this might be handled at a higher level
-        ok(1, "Huge chunk size behavior: consumed=$consumed, complete=$complete");
+        # Waiting for more data is fine — the chunk size is valid
+        pass('Chunk at exact limit is accepted (waiting for data)');
     }
+};
+
+subtest 'Custom max_chunk_size is respected' => sub {
+    my $strict_proto = PAGI::Server::Protocol::HTTP1->new(max_chunk_size => 100);
+
+    # 101 bytes: 65 hex = 101 decimal
+    my $over = "65\r\n" . ("x" x 101) . "\r\n0\r\n\r\n";
+    my ($data, $consumed, $complete) = $strict_proto->parse_chunked_body($over);
+    ref_ok($data, 'HASH', 'Over custom limit returns error');
+    is($data->{error}, 413, 'Custom limit triggers 413');
+
+    # 100 bytes: 64 hex = 100 decimal — exactly at limit, should be fine
+    my $at = "64\r\n" . ("x" x 100) . "\r\n0\r\n\r\n";
+    ($data, $consumed, $complete) = $strict_proto->parse_chunked_body($at);
+    is($data, "x" x 100, 'Chunk at custom limit parses correctly');
+    is($complete, 1, 'Body complete');
 };
 
 done_testing;

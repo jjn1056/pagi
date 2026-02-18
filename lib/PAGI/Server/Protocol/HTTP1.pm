@@ -143,6 +143,7 @@ sub new {
         max_header_size       => $args{max_header_size} // 8192,
         max_request_line_size => $args{max_request_line_size} // 8192,  # 8KB per RFC 7230
         max_header_count      => $args{max_header_count} // 100,  # Max number of headers
+        max_chunk_size        => $args{max_chunk_size} // 10_485_760,  # 10MB default
     }, $class;
     return $self;
 }
@@ -423,7 +424,18 @@ sub parse_chunked_body {
             return ({ error => 400, message => 'Invalid chunk size' }, 0, 0);
         }
 
+        # Reject obviously oversized chunk sizes before hex() conversion
+        # 7 hex digits = max 268MB, 8+ digits certainly exceeds any reasonable limit
+        if (length($size_line) > 7) {
+            return ({ error => 413, message => 'Chunk Too Large' }, 0, 0);
+        }
+
         my $chunk_size = hex($size_line);
+
+        # Reject chunks exceeding max_chunk_size (DoS protection)
+        if ($chunk_size > $self->{max_chunk_size}) {
+            return ({ error => 413, message => 'Chunk Too Large' }, 0, 0);
+        }
 
         # Check if we have the full chunk + trailing CRLF
         my $chunk_start = $crlf + 2;
