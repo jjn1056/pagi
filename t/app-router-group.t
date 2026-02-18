@@ -178,4 +178,28 @@ subtest 'callback group: nested groups' => sub {
     is $team_mw_ran, 1, 'inner middleware ran for nested route';
 };
 
+subtest 'named routes in groups' => sub {
+    my $router = PAGI::App::Router->new;
+
+    $router->group('/api/v1' => sub {
+        my ($r) = @_;
+        $r->get('/users' => sub {})->name('users.list');
+        $r->get('/users/:id' => sub {})->name('users.get');
+    });
+
+    # Named routes get full prefixed path
+    is $router->uri_for('users.list'), '/api/v1/users', 'grouped named route has prefix';
+    is $router->uri_for('users.get', { id => 42 }), '/api/v1/users/42', 'grouped named route with param';
+};
+
+subtest 'named route conflict detection' => sub {
+    my $router = PAGI::App::Router->new;
+
+    $router->get('/a' => sub {})->name('dup');
+
+    like dies {
+        $router->get('/b' => sub {})->name('dup');
+    }, qr/already exists/, 'croak on duplicate named route';
+};
+
 done_testing;

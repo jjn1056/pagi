@@ -303,6 +303,7 @@ sub name {
 
     croak "name() called without a preceding route" unless $self->{_last_route};
     croak "Route name required" unless defined $name && length $name;
+    croak "Named route '$name' already exists" if exists $self->{_named_routes}{$name};
 
     my $route = $self->{_last_route};
     $route->{name} = $name;
