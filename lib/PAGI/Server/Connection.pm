@@ -854,8 +854,10 @@ sub _h2_create_websocket_scope {
     my ($path, $query_string) = split(/\?/, $full_path, 2);
     $query_string //= '';
 
-    my $decoded_path = $path;
-    $decoded_path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+    # Match HTTP/1.1 pipeline: URI::Escape + UTF-8 decode with fallback
+    my $unescaped = uri_unescape($path);
+    my $decoded_path = eval { decode('UTF-8', $unescaped, Encode::FB_CROAK) }
+                       // $unescaped;
 
     # Extract subprotocols from headers
     my @subprotocols;
