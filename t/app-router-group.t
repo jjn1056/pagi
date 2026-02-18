@@ -406,4 +406,88 @@ subtest 'group clears _last_route' => sub {
     }, qr/name\(\) called without a preceding route/, 'group clears _last_route';
 };
 
+subtest 'group with constraints and any()' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+
+    $router->group('/api' => sub {
+        my ($r) = @_;
+        $r->get('/users/{id:\d+}' => make_handler('user', \@calls));
+        $r->any('/health' => make_handler('health', \@calls));
+        $r->any('/items/:id' => make_handler('item', \@calls), method => ['GET', 'PUT'])
+            ->constraints(id => qr/^\d+$/);
+    });
+
+    my $app = $router->to_app;
+
+    # Inline constraint in group
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/users/42' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'inline constraint in group works';
+
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/users/abc' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'inline constraint in group rejects';
+
+    # any() in group
+    ($send, $sent) = mock_send();
+    $app->({ method => 'DELETE', path => '/api/health' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'any() in group matches DELETE';
+
+    # any() with method list + chained constraint in group
+    ($send, $sent) = mock_send();
+    $app->({ method => 'PUT', path => '/api/items/5' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'any() + constraint in group — match';
+
+    ($send, $sent) = mock_send();
+    $app->({ method => 'DELETE', path => '/api/items/5' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 405, 'any() method restriction in group — 405';
+
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/items/abc' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'chained constraint in group — reject';
+};
+
+subtest 'group with 405 across grouped and ungrouped' => sub {
+    my $router = PAGI::App::Router->new;
+
+    $router->get('/shared' => make_handler('get_shared'));
+    $router->group('/api' => sub {
+        my ($r) = @_;
+        $r->post('/shared' => make_handler('post_shared'));
+    });
+
+    # Note: /shared and /api/shared are different paths
+    # This tests that grouped routes participate in 405 correctly
+    my $app = $router->to_app;
+
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'DELETE', path => '/shared' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 405, '405 for ungrouped route';
+
+    ($send, $sent) = mock_send();
+    $app->({ method => 'DELETE', path => '/api/shared' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 405, '405 for grouped route';
+};
+
+subtest 'group with regex metacharacters in prefix' => sub {
+    my @calls;
+    my $router = PAGI::App::Router->new;
+
+    $router->group('/api/v1.0' => sub {
+        my ($r) = @_;
+        $r->get('/users' => make_handler('users', \@calls));
+    });
+
+    my $app = $router->to_app;
+
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/v1.0/users' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'group prefix with dot matches literally';
+
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/v1X0/users' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'dot in group prefix is not wildcard';
+};
+
 done_testing;
