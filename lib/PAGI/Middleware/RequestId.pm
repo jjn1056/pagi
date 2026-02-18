@@ -4,6 +4,7 @@ use strict;
 use warnings;
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
+use PAGI::Utils::Random qw(secure_random_bytes);
 
 =head1 NAME
 
@@ -60,18 +61,16 @@ sub _init {
 
 sub _generate_id {
     my ($scope) = @_;
-    $scope //= undef;
 
-    # Generate a UUID-like ID: timestamp + counter + random
+    # Generate a UUID-like ID: timestamp + PID + counter + secure random
     my $time = time();
     $counter = ($counter + 1) % 0xFFFF;
-    my $rand = int(rand(0xFFFFFFFF));
-    return sprintf('%08x-%04x-%04x-%04x-%012x',
+    my $rand_bytes = secure_random_bytes(6);
+    return sprintf('%08x-%04x-%04x-%s',
         $time,
-        $$,
+        $$ & 0xFFFF,
         $counter,
-        int(rand(0xFFFF)),
-        $rand
+        unpack('H12', $rand_bytes),
     );
 }
 
@@ -128,15 +127,17 @@ __END__
 
 The default ID generator creates IDs in the format:
 
-    TTTTTTTT-PPPP-CCCC-RRRR-RRRRRRRRRRRR
+    TTTTTTTT-PPPP-CCCC-RRRRRRRRRRRR
 
 Where:
 - TTTTTTTT: Unix timestamp (hex)
-- PPPP: Process ID (hex)
+- PPPP: Process ID (hex, lower 16 bits)
 - CCCC: Counter (hex)
-- RRRR-RRRRRRRRRRRR: Random bytes (hex)
+- RRRRRRRRRRRR: Cryptographically secure random bytes (hex)
 
-This ensures uniqueness across processes and restarts.
+This ensures uniqueness across processes and restarts. The random
+component uses C<PAGI::Utils::Random::secure_random_bytes> for
+unpredictability.
 
 =head1 SEE ALSO
 
