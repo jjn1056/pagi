@@ -215,10 +215,10 @@ sub _build_panel {
 
     # Request section
     if ($self->{show_scope}) {
-        my $method = $scope->{method} // '';
-        my $path = $scope->{path} // '';
-        my $query = $scope->{query_string} // '';
-        my $scheme = $scope->{scheme} // '';
+        my $method = _html_escape($scope->{method});
+        my $path = _html_escape($scope->{path});
+        my $query = _html_escape($scope->{query_string});
+        my $scheme = _html_escape($scope->{scheme});
         $html .= qq{
         <div class="section">
             <div class="section-title">Request</div>
