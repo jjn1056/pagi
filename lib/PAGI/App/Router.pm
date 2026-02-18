@@ -157,6 +157,26 @@ sub group {
         $self->_include_router($target);
         pop @{$self->{_group_stack}};
     }
+    elsif (!ref($target)) {
+        # String form: auto-require and call ->router
+        my $pkg = $target;
+        {
+            local $@;
+            eval "require $pkg; 1" or croak "Failed to load '$pkg': $@";
+        }
+        croak "'$pkg' does not have a router() method" unless $pkg->can('router');
+        my $router_obj = $pkg->router;
+        croak "'${pkg}->router()' must return a PAGI::App::Router, got "
+            . (ref($router_obj) || 'scalar')
+            unless blessed($router_obj) && $router_obj->isa('PAGI::App::Router');
+
+        push @{$self->{_group_stack}}, {
+            prefix     => $prefix,
+            middleware => [@$middleware],
+        };
+        $self->_include_router($router_obj);
+        pop @{$self->{_group_stack}};
+    }
     else {
         croak "group() target must be a coderef, PAGI::App::Router, or package name, got "
             . (ref($target) || 'scalar');

@@ -5,6 +5,8 @@ use Test2::V0;
 use Future::AsyncAwait;
 
 use PAGI::App::Router;
+use FindBin;
+use lib "$FindBin::Bin/lib";
 
 # Helper to capture response
 sub mock_send {
@@ -316,6 +318,30 @@ subtest 'router-object form: chained constraints preserved' => sub {
     ($send, $sent) = mock_send();
     $app->({ method => 'GET', path => '/api/users/abc' }, sub { Future->done }, $send)->get;
     is $sent->[0]{status}, 404, 'chained constraint preserved — reject';
+};
+
+subtest 'string form: auto-require' => sub {
+    my $router = PAGI::App::Router->new;
+    $router->group('/api/users' => 'TestRoutes::Users');
+
+    my $app = $router->to_app;
+
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/users/' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'string form loads and registers routes';
+    is $sent->[1]{body}, 'users_list', 'correct handler';
+
+    # Named routes transferred
+    is $router->uri_for('users.list'), '/api/users/', 'named route from string form';
+    is $router->uri_for('users.get', { id => 7 }), '/api/users/7', 'named route with param';
+};
+
+subtest 'string form: bad package' => sub {
+    my $router = PAGI::App::Router->new;
+
+    like dies {
+        $router->group('/api' => 'No::Such::Package::At::All');
+    }, qr/Failed to load/, 'croak on failed require';
 };
 
 done_testing;
