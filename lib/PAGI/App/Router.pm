@@ -60,6 +60,19 @@ PAGI::App::Router - Unified routing for HTTP, WebSocket, and SSE
     $router->get('/posts/:slug' => $get_post)
         ->constraints(slug => qr/^[a-z0-9-]+$/);
 
+    # Route grouping (flattened into parent)
+    $router->group('/api' => [$auth_mw] => sub {
+        my ($r) = @_;
+        $r->get('/users' => $list_users);
+        $r->post('/users' => $create_user);
+    });
+
+    # Include routes from another router
+    $router->group('/api/v2' => $v2_router);
+
+    # Include routes from a package
+    $router->group('/api/users' => 'MyApp::Routes::Users');
+
     my $app = $router->to_app;  # Handles all scope types
 
 =cut
@@ -823,6 +836,71 @@ the specified methods and returns 405 for others.
 
 Returns C<$self> for chaining (supports C<name()>, C<constraints()>).
 
+=head2 group
+
+    # Callback form
+    $router->group('/prefix' => sub { my ($r) = @_; ... });
+    $router->group('/prefix' => \@middleware => sub { my ($r) = @_; ... });
+
+    # Router-object form
+    $router->group('/prefix' => $other_router);
+    $router->group('/prefix' => \@middleware => $other_router);
+
+    # String form (auto-require)
+    $router->group('/prefix' => 'MyApp::Routes::Users');
+    $router->group('/prefix' => \@middleware => 'MyApp::Routes::Users');
+
+Flatten routes under a shared prefix with optional shared middleware. Unlike
+C<mount()>, grouped routes are registered directly on the parent router —
+there is no separate dispatch context, 405 handling is unified, and named
+routes are directly accessible.
+
+B<Callback form:> The coderef receives the router itself. All route
+registrations inside the callback are prefixed automatically.
+
+B<Router-object form:> Routes are copied from the source router at call
+time (snapshot semantics). Later modifications to the source do not affect
+the parent.
+
+B<String form:> The package is loaded via C<require>, then
+C<< $package->router >> is called. The result must be a
+C<PAGI::App::Router> instance.
+
+Group middleware is prepended to each route's middleware chain:
+
+    $router->group('/api' => [$auth] => sub {
+        my ($r) = @_;
+        $r->get('/data' => [$rate_limit] => $handler);
+        # Middleware chain: $auth -> $rate_limit -> $handler
+    });
+
+Groups can be nested:
+
+    $router->group('/orgs/:org_id' => [$load_org] => sub {
+        my ($r) = @_;
+        $r->group('/teams/:team_id' => [$load_team] => sub {
+            my ($r) = @_;
+            $r->get('/members' => $handler);
+            # Path: /orgs/:org_id/teams/:team_id/members
+            # Middleware: $load_org -> $load_team -> $handler
+        });
+    });
+
+Returns C<$self> for chaining (supports C<as()> for named route namespacing).
+
+=head3 group vs mount
+
+    # group: routes flattened into parent
+    $router->group('/api' => $api_router);
+
+    # mount: separate dispatch context
+    $router->mount('/api' => $api_router->to_app);
+
+Use C<group()> to organize routes within one application. Use C<mount()>
+to compose independent applications.
+
+=cut
+
 =head2 websocket
 
     $router->websocket('/ws/chat/:room' => $chat_handler);
@@ -1067,9 +1145,20 @@ Returns a hashref of all named routes for inspection.
 =head2 as
 
     $router->mount('/api' => $sub_router)->as('api');
+    $router->group('/api' => $api_router)->as('api');
 
-Assign a namespace to a mounted router's named routes. This imports all
-named routes from the sub-router into the parent with the namespace prefix.
+Assign a namespace to named routes from a mounted router or group.
+
+    $router->group('/api/v1' => sub {
+        my ($r) = @_;
+        $r->get('/users' => $h)->name('users.list');
+    })->as('v1');
+
+    $router->uri_for('v1.users.list');
+    # Returns: "/api/v1/users"
+
+For mounts, imports all named routes from the sub-router into the parent
+with the namespace prefix:
 
     my $api = PAGI::App::Router->new;
     $api->get('/users/:id' => $h)->name('users.get');
@@ -1080,7 +1169,7 @@ named routes from the sub-router into the parent with the namespace prefix.
     $main->uri_for('api.users.get', { id => 42 });
     # Returns: "/api/v1/users/42"
 
-Croaks if called without a preceding mount or if the mount target is an
-app coderef rather than a router object.
+Croaks if called without a preceding mount or group, or if the mount target
+is an app coderef rather than a router object.
 
 =cut
