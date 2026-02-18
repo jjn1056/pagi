@@ -196,7 +196,7 @@ sub group {
     }
 
     my @new_names = grep { !$names_before{$_} } keys %{$self->{_named_routes}};
-    $self->{_last_group_names} = \@new_names if @new_names;
+    $self->{_last_group_names} = @new_names ? \@new_names : undef;
 
     $self->{_last_route} = undef;
     $self->{_last_mount} = undef;

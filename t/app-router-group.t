@@ -490,4 +490,41 @@ subtest 'group with regex metacharacters in prefix' => sub {
     is $sent->[0]{status}, 404, 'dot in group prefix is not wildcard';
 };
 
+subtest 'as() with router-object form' => sub {
+    my $api = PAGI::App::Router->new;
+    $api->get('/users' => sub {})->name('users.list');
+    $api->get('/users/:id' => sub {})->name('users.get');
+
+    my $router = PAGI::App::Router->new;
+    $router->group('/api' => $api)->as('api');
+
+    is $router->uri_for('api.users.list'), '/api/users', 'as() with router-object form';
+    is $router->uri_for('api.users.get', { id => 3 }), '/api/users/3', 'as() with router-object and params';
+    ok !exists($router->named_routes->{'users.list'}), 'original name removed';
+};
+
+subtest 'as() not confused by preceding group without names' => sub {
+    my $router = PAGI::App::Router->new;
+
+    # First group adds named routes
+    $router->group('/v1' => sub {
+        my ($r) = @_;
+        $r->get('/a' => sub {})->name('a');
+    })->as('v1');
+
+    # Second group adds NO named routes
+    $router->group('/v2' => sub {
+        my ($r) = @_;
+        $r->get('/b' => sub {});
+    });
+
+    # as() after second group should croak (no group names to namespace)
+    like dies {
+        $router->as('v2');
+    }, qr/as\(\) called without a preceding mount or group/, 'as() not confused by nameless group';
+
+    # v1 names still intact
+    is $router->uri_for('v1.a'), '/v1/a', 'earlier namespaced route unaffected';
+};
+
 done_testing;
