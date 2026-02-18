@@ -202,4 +202,21 @@ subtest 'named route conflict detection' => sub {
     }, qr/already exists/, 'croak on duplicate named route';
 };
 
+subtest 'as() namespacing for groups' => sub {
+    my $router = PAGI::App::Router->new;
+
+    $router->group('/api/v1' => sub {
+        my ($r) = @_;
+        $r->get('/users' => sub {})->name('users.list');
+        $r->get('/users/:id' => sub {})->name('users.get');
+    })->as('v1');
+
+    # Named routes should be namespaced
+    is $router->uri_for('v1.users.list'), '/api/v1/users', 'as() namespaces group named routes';
+    is $router->uri_for('v1.users.get', { id => 5 }), '/api/v1/users/5', 'as() with params';
+
+    # Original names should not exist
+    ok !exists($router->named_routes->{'users.list'}), 'original name removed';
+};
+
 done_testing;

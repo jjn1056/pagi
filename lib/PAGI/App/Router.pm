@@ -139,6 +139,8 @@ sub group {
 
     my ($middleware, $target) = $self->_parse_route_args(@rest);
 
+    my %names_before = map { $_ => 1 } keys %{$self->{_named_routes}};
+
     if (ref($target) eq 'CODE') {
         push @{$self->{_group_stack}}, {
             prefix     => $prefix,
@@ -151,6 +153,9 @@ sub group {
         croak "group() target must be a coderef, PAGI::App::Router, or package name, got "
             . (ref($target) || 'scalar');
     }
+
+    my @new_names = grep { !$names_before{$_} } keys %{$self->{_named_routes}};
+    $self->{_last_group_names} = \@new_names if @new_names;
 
     $self->{_last_route} = undef;
     $self->{_last_mount} = undef;
@@ -337,8 +342,24 @@ sub constraints {
 sub as {
     my ($self, $namespace) = @_;
 
-    croak "as() called without a preceding mount" unless $self->{_last_mount};
     croak "Namespace required" unless defined $namespace && length $namespace;
+
+    # Handle group namespacing
+    if ($self->{_last_group_names} && @{$self->{_last_group_names}}) {
+        for my $name (@{$self->{_last_group_names}}) {
+            my $info = delete $self->{_named_routes}{$name};
+            my $full_name = "$namespace.$name";
+            croak "Named route '$full_name' already exists"
+                if exists $self->{_named_routes}{$full_name};
+            $self->{_named_routes}{$full_name} = $info;
+        }
+        $self->{_last_group_names} = undef;
+        return $self;
+    }
+
+    # Handle mount namespacing
+    croak "as() called without a preceding mount or group"
+        unless $self->{_last_mount};
 
     my $mount = $self->{_last_mount};
     my $sub_router = $mount->{sub_router};
