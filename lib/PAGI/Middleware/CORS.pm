@@ -70,6 +70,13 @@ sub _init {
     $self->{expose_headers} = $config->{expose_headers} // [];
     $self->{credentials}    = $config->{credentials} // 0;
     $self->{max_age}        = $config->{max_age} // 86400;
+
+    if ($self->{credentials} && grep { $_ eq '*' } @{$self->{origins}}) {
+        warn "PAGI::Middleware::CORS: wildcard origins ('*') with credentials "
+           . "enabled reflects any Origin with Access-Control-Allow-Credentials. "
+           . "This allows any website to make credentialed cross-origin requests. "
+           . "Consider specifying explicit origins.\n";
+    }
 }
 
 sub wrap {
