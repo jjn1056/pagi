@@ -375,4 +375,35 @@ subtest 'websocket and sse in groups' => sub {
     is $sent->[0]{status}, 404, 'ws without group prefix is 404';
 };
 
+subtest 'group() error handling' => sub {
+    my $router = PAGI::App::Router->new;
+
+    # Invalid target type
+    like dies {
+        $router->group('/api' => { foo => 'bar' });
+    }, qr/group\(\) target must be/, 'croak on invalid target type';
+
+    # String form: package without router() method
+    # Use a known module that doesn't have router()
+    like dies {
+        $router->group('/api' => 'Carp');
+    }, qr/does not have a router\(\) method/, 'croak on package without router()';
+};
+
+subtest 'group clears _last_route' => sub {
+    my $router = PAGI::App::Router->new;
+
+    $router->get('/before' => sub {})->name('before');
+
+    $router->group('/api' => sub {
+        my ($r) = @_;
+        $r->get('/inside' => sub {});
+    });
+
+    # name() after group() should croak — _last_route was cleared
+    like dies {
+        $router->name('bad');
+    }, qr/name\(\) called without a preceding route/, 'group clears _last_route';
+};
+
 done_testing;
