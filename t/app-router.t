@@ -3,6 +3,8 @@ use warnings;
 
 use Test2::V0;
 use Future::AsyncAwait;
+use FindBin;
+use lib "$FindBin::Bin/lib";
 
 use PAGI::App::Router;
 
@@ -639,6 +641,56 @@ subtest 'internal: chained constraints stored separately' => sub {
     ok $route->{_user_constraints}, 'has separate user constraints';
     is scalar @{$route->{constraints}}, 1, 'one inline constraint';
     is scalar @{$route->{_user_constraints}}, 1, 'one user constraint';
+};
+
+subtest 'mount string form (auto-require + to_app)' => sub {
+    my $router = PAGI::App::Router->new;
+    $router->mount('/admin' => 'TestRoutes::Admin');
+
+    my $app = $router->to_app;
+
+    # Dashboard route
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/admin/' }, sub { Future->done }, $send)->get;
+    is $sent->[1]{body}, 'admin_dashboard', 'stringy mount routes to dashboard';
+
+    # Settings route
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/admin/settings' }, sub { Future->done }, $send)->get;
+    is $sent->[1]{body}, 'admin_settings', 'stringy mount routes to settings';
+};
+
+subtest 'mount string form with middleware' => sub {
+    my $mw_called = 0;
+    my $mw = async sub {
+        my ($scope, $receive, $send, $next) = @_;
+        $mw_called = 1;
+        await $next->();
+    };
+
+    my $router = PAGI::App::Router->new;
+    $router->mount('/admin' => [$mw] => 'TestRoutes::Admin');
+
+    my $app = $router->to_app;
+
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/admin/' }, sub { Future->done }, $send)->get;
+    is $sent->[1]{body}, 'admin_dashboard', 'stringy mount with middleware routes correctly';
+    ok $mw_called, 'middleware was executed';
+};
+
+subtest 'mount string form error handling' => sub {
+    my $router = PAGI::App::Router->new;
+
+    # Bad package name
+    like dies { $router->mount('/bad' => 'NoSuch::Package::AtAll') },
+        qr/Failed to load/,
+        'croak on bad package';
+
+    # Package without to_app
+    like dies { $router->mount('/bad' => 'strict') },
+        qr/does not have a to_app\(\) method/,
+        'croak when package lacks to_app';
 };
 
 done_testing;

@@ -34,6 +34,9 @@ PAGI::App::Router - Unified routing for HTTP, WebSocket, and SSE
     # Mount with middleware (applies to all sub-routes)
     $router->mount('/api' => [$auth_mw] => $api_router->to_app);
 
+    # Mount from a package (auto-require + to_app)
+    $router->mount('/admin' => 'MyApp::Admin');
+
     # Static files as fallback
     $router->mount('/' => $static_files);
 
@@ -98,13 +101,23 @@ sub mount {
     $prefix =~ s{/$}{};  # strip trailing slash
     my ($middleware, $app_or_router) = $self->_parse_route_args(@rest);
 
-    # Check if it's a router object (has named_routes method)
     my $sub_router;
     my $app;
     if (blessed($app_or_router) && $app_or_router->isa('PAGI::App::Router')) {
         $sub_router = $app_or_router;
         $app = $sub_router->to_app;
-    } else {
+    }
+    elsif (!ref($app_or_router)) {
+        # String form: auto-require and call ->to_app
+        my $pkg = $app_or_router;
+        {
+            local $@;
+            eval "require $pkg; 1" or croak "Failed to load '$pkg': $@";
+        }
+        croak "'$pkg' does not have a to_app() method" unless $pkg->can('to_app');
+        $app = $pkg->to_app;
+    }
+    else {
         $app = $app_or_router;
     }
 
@@ -910,10 +923,34 @@ HTTP routes.
 =head2 mount
 
     $router->mount('/api' => $api_app);
-    $router->mount('/admin' => $admin_router->to_app);
+    $router->mount('/admin' => $admin_router);
+
+    # String form (auto-require)
+    $router->mount('/admin' => 'MyApp::Admin');
+    $router->mount('/admin' => \@middleware => 'MyApp::Admin');
 
 Mount a PAGI app under a path prefix. The mounted app receives requests
 with the prefix stripped from the path and added to C<root_path>.
+
+The target can be a PAGI app coderef, a C<PAGI::App::Router> object, or
+a package name string. When a Router object is passed directly, C<< ->as() >>
+can be used to namespace its named routes. When a coderef or string form
+is used, C<< ->as() >> is not available because there is no router object
+to import names from.
+
+B<String form:> The package is loaded via C<require>, then
+C<< $package->to_app >> is called. The result must be a PAGI app coderef.
+This is useful for packages that implement C<to_app> as a class method:
+
+    package MyApp::Admin;
+    sub to_app {
+        my $r = PAGI::App::Router->new;
+        $r->get('/dashboard' => $dashboard);
+        return $r->to_app;
+    }
+
+    # Then in your main router:
+    $router->mount('/admin' => 'MyApp::Admin');
 
 When a request for C</api/users/42> hits a router with C</api> mounted:
 
