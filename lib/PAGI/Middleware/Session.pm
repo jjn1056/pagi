@@ -5,6 +5,7 @@ use warnings;
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Digest::SHA qw(sha256_hex);
+use PAGI::Utils::Random qw(secure_random_bytes);
 
 =head1 NAME
 
@@ -216,34 +217,9 @@ sub _generate_session_id {
     my ($self) = @_;
 
     # Use cryptographically secure random bytes
-    my $random = unpack('H*', _secure_random_bytes(16));
+    my $random = unpack('H*', secure_random_bytes(16));
     my $time = time();
     return sha256_hex("$random-$time-$self->{secret}");
-}
-
-sub _secure_random_bytes {
-    my ($length) = @_;
-
-    # Try /dev/urandom first (Unix)
-    if (open my $fh, '<:raw', '/dev/urandom') {
-        my $bytes;
-        read($fh, $bytes, $length);
-        close $fh;
-        return $bytes if defined $bytes && length($bytes) == $length;
-    }
-
-    # Fallback: use Crypt::URandom if available
-    if (eval { require Crypt::URandom; 1 }) {
-        return Crypt::URandom::urandom($length);
-    }
-
-    # Last resort: warn and use less secure method
-    warn "PAGI::Middleware::Session: No secure random source available, using fallback\n";
-    my $bytes = '';
-    for (1..$length) {
-        $bytes .= chr(int(rand(256)));
-    }
-    return $bytes;
 }
 
 sub _valid_session_id {
