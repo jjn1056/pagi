@@ -53,9 +53,11 @@ Secret key for session ID generation and validation.
 
 Name of the session cookie.
 
-=item * cookie_options (default: { httponly => 1, path => '/' })
+=item * cookie_options (default: { httponly => 1, path => '/', samesite => 'Lax' })
 
-Options for the session cookie.
+Options for the session cookie. For production HTTPS deployments,
+add C<< secure => 1 >> to prevent the cookie from being sent over
+plain HTTP.
 
 =item * expire (default: 3600)
 
@@ -128,6 +130,7 @@ sub _init {
     $self->{cookie_options} = $config->{cookie_options} // {
         httponly => 1,
         path     => '/',
+        samesite => 'Lax',
     };
     $self->{expire} = $config->{expire} // 3600;
     $self->{store} = $config->{store};

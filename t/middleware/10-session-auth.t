@@ -348,4 +348,70 @@ subtest 'Auth::Bearer - rejects invalid signature' => sub {
     is $events[0]{status}, 401, 'rejects invalid signature';
 };
 
+# ===================
+# Session Cookie SameSite Tests
+# ===================
+
+subtest 'Session middleware - default cookie includes SameSite=Lax' => sub {
+    PAGI::Middleware::Session->clear_sessions();
+
+    my $session = PAGI::Middleware::Session->new(secret => 'test-secret');
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $wrapped = $session->wrap($app);
+    my $scope = make_scope();
+
+    my @events;
+    my $receive = async sub { {} };
+    my $send = async sub {
+        my ($event) = @_; push @events, $event };
+
+    run_async { $wrapped->($scope, $receive, $send) };
+
+    my @set_cookies = map { $_->[1] }
+        grep { lc($_->[0]) eq 'set-cookie' } @{$events[0]{headers}};
+    ok scalar(@set_cookies), 'has Set-Cookie header';
+    like $set_cookies[0], qr/SameSite=Lax/, 'default cookie includes SameSite=Lax';
+};
+
+subtest 'Session middleware - custom samesite overrides default' => sub {
+    PAGI::Middleware::Session->clear_sessions();
+
+    my $session = PAGI::Middleware::Session->new(
+        secret => 'test-secret',
+        cookie_options => {
+            httponly => 1,
+            path     => '/',
+            samesite => 'Strict',
+        },
+    );
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $wrapped = $session->wrap($app);
+    my $scope = make_scope();
+
+    my @events;
+    my $receive = async sub { {} };
+    my $send = async sub {
+        my ($event) = @_; push @events, $event };
+
+    run_async { $wrapped->($scope, $receive, $send) };
+
+    my @set_cookies = map { $_->[1] }
+        grep { lc($_->[0]) eq 'set-cookie' } @{$events[0]{headers}};
+    ok scalar(@set_cookies), 'has Set-Cookie header';
+    like $set_cookies[0], qr/SameSite=Strict/, 'custom samesite=Strict is used';
+    unlike $set_cookies[0], qr/SameSite=Lax/, 'default Lax is not present';
+};
+
 done_testing;
