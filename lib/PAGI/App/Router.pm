@@ -237,11 +237,12 @@ sub _compile_path {
 
 sub _check_constraints {
     my ($self, $route, $params) = @_;
-    my $constraints = $route->{constraints} // [];
-    for my $c (@$constraints) {
-        my ($name, $pattern) = @$c;
-        my $value = $params->{$name} // return 0;
-        return 0 unless $value =~ m/^(?:$pattern)$/;
+    for my $constraints_list ($route->{constraints} // [], $route->{_user_constraints} // []) {
+        for my $c (@$constraints_list) {
+            my ($name, $pattern) = @$c;
+            my $value = $params->{$name} // return 0;
+            return 0 unless $value =~ m/^(?:$pattern)$/;
+        }
     }
     return 1;
 }
@@ -273,15 +274,14 @@ sub constraints {
     croak "constraints() called without a preceding route" unless $self->{_last_route};
 
     my $route = $self->{_last_route};
-    my $existing = $route->{constraints} // [];
+    my $user_constraints = $route->{_user_constraints} //= [];
 
     for my $name (keys %new_constraints) {
         my $pattern = $new_constraints{$name};
         croak "Constraint for '$name' must be a Regexp (qr//), got " . ref($pattern)
             unless ref($pattern) eq 'Regexp';
-        push @$existing, [$name, $pattern];
+        push @$user_constraints, [$name, $pattern];
     }
-    $route->{constraints} = $existing;
 
     return $self;
 }

@@ -629,4 +629,16 @@ subtest 'combined features integration' => sub {
     is $sent->[0]{status}, 200, 'escaped parens in path match';
 };
 
+subtest 'internal: chained constraints stored separately' => sub {
+    my $router = PAGI::App::Router->new;
+    $router->get('/users/{id:\d+}' => sub {})
+        ->constraints(id => qr/^\d+$/);
+
+    my $route = $router->{routes}[0];
+    ok $route->{constraints}, 'has inline constraints';
+    ok $route->{_user_constraints}, 'has separate user constraints';
+    is scalar @{$route->{constraints}}, 1, 'one inline constraint';
+    is scalar @{$route->{_user_constraints}}, 1, 'one user constraint';
+};
+
 done_testing;
