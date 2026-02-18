@@ -5,6 +5,7 @@ use warnings;
 use parent 'PAGI::Middleware';
 use Future::AsyncAwait;
 use Digest::SHA qw(sha256_hex);
+use PAGI::Utils::Random qw(secure_random_bytes);
 
 =head1 NAME
 
@@ -129,33 +130,8 @@ sub _generate_token {
     my ($self) = @_;
 
     # Use cryptographically secure random bytes
-    my $random = _secure_random_bytes(32);
+    my $random = secure_random_bytes(32);
     return sha256_hex($self->{secret} . time() . $random . $$);
-}
-
-sub _secure_random_bytes {
-    my ($length) = @_;
-
-    # Try /dev/urandom first (Unix)
-    if (open my $fh, '<:raw', '/dev/urandom') {
-        my $bytes;
-        read($fh, $bytes, $length);
-        close $fh;
-        return $bytes if defined $bytes && length($bytes) == $length;
-    }
-
-    # Fallback: use Crypt::URandom if available
-    if (eval { require Crypt::URandom; 1 }) {
-        return Crypt::URandom::urandom($length);
-    }
-
-    # Last resort: warn and use less secure method
-    warn "PAGI::Middleware::CSRF: No secure random source available, using fallback\n";
-    my $bytes = '';
-    for (1..$length) {
-        $bytes .= chr(int(rand(256)));
-    }
-    return $bytes;
 }
 
 sub _get_cookie_token {
