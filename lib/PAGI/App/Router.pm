@@ -73,6 +73,7 @@ sub new {
         sse_routes       => [],
         mounts           => [],
         not_found        => $args{not_found},
+        _group_stack     => [],   # for group() prefix/middleware accumulation
         _named_routes    => {},   # name => route info
         _last_route      => undef, # for ->name() chaining
         _last_mount      => undef, # for ->as() chaining
@@ -135,6 +136,13 @@ sub any {
 sub websocket {
     my ($self, $path, @rest) = @_;
     my ($middleware, $app) = $self->_parse_route_args(@rest);
+
+    # Apply accumulated group context
+    for my $ctx (@{$self->{_group_stack}}) {
+        $path = $ctx->{prefix} . $path;
+        unshift @$middleware, @{$ctx->{middleware}};
+    }
+
     my ($regex, $names, $constraints) = $self->_compile_path($path);
     my $route = {
         path        => $path,
@@ -154,6 +162,13 @@ sub websocket {
 sub sse {
     my ($self, $path, @rest) = @_;
     my ($middleware, $app) = $self->_parse_route_args(@rest);
+
+    # Apply accumulated group context
+    for my $ctx (@{$self->{_group_stack}}) {
+        $path = $ctx->{prefix} . $path;
+        unshift @$middleware, @{$ctx->{middleware}};
+    }
+
     my ($regex, $names, $constraints) = $self->_compile_path($path);
     my $route = {
         path        => $path,
@@ -174,6 +189,13 @@ sub route {
     my ($self, $method, $path, @rest) = @_;
 
     my ($middleware, $app) = $self->_parse_route_args(@rest);
+
+    # Apply accumulated group context
+    for my $ctx (@{$self->{_group_stack}}) {
+        $path = $ctx->{prefix} . $path;
+        unshift @$middleware, @{$ctx->{middleware}};
+    }
+
     my ($regex, $names, $constraints) = $self->_compile_path($path);
     my $route = {
         method      => ref($method) eq 'ARRAY' ? $method : ($method eq '*' ? '*' : uc($method)),
