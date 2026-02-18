@@ -48,11 +48,26 @@ Coderef to generate rate limit key from $scope.
 Rate limit storage backend. Can be 'memory' or a custom object
 implementing get/set methods.
 
+=item * cleanup_interval (default: 60)
+
+Seconds between periodic cleanup of stale buckets.
+
+=item * max_buckets (default: 10000)
+
+Maximum number of tracked client buckets. When exceeded, the oldest
+half are evicted as a safety valve.
+
 =back
 
 =cut
 
 my %buckets;  # In-memory storage
+my $_time_offset = 0;
+
+sub _clear_buckets { %buckets = (); $_time_offset = 0; }
+sub _bucket_count  { return scalar keys %buckets }
+sub _advance_time_for_test { $_time_offset += $_[1] }
+sub _now { return time() + $_time_offset }
 
 sub _init {
     my ($self, $config) = @_;
@@ -64,6 +79,8 @@ sub _init {
         return $scope->{client}[0] // 'unknown';
     };
     $self->{backend} = $config->{backend} // 'memory';
+    $self->{cleanup_interval} = $config->{cleanup_interval} // 60;
+    $self->{max_buckets}      = $config->{max_buckets} // 10_000;
 }
 
 sub wrap {
@@ -108,7 +125,7 @@ sub wrap {
 sub _check_rate_limit {
     my ($self, $key) = @_;
 
-    my $now = time();
+    my $now = _now();
     my $rate = $self->{requests_per_second};
     my $burst = $self->{burst};
 
@@ -125,24 +142,42 @@ sub _check_rate_limit {
     $bucket->{tokens} = $burst if $bucket->{tokens} > $burst;
     $bucket->{last_time} = $now;
 
-    # Try to consume a token
+    # Determine rate limit result
+    my @result;
     if ($bucket->{tokens} >= 1) {
         $bucket->{tokens} -= 1;
         my $remaining = int($bucket->{tokens});
         my $reset = $now + int(($burst - $bucket->{tokens}) / $rate);
-        return (1, $remaining, $reset);  # Allowed
+        @result = (1, $remaining, $reset);  # Allowed
+    } else {
+        my $wait_time = (1 - $bucket->{tokens}) / $rate;
+        my $reset = $now + int($wait_time) + 1;
+        @result = (0, 0, $reset);  # Not allowed
     }
 
-    # Calculate reset time (when 1 token will be available)
-    my $wait_time = (1 - $bucket->{tokens}) / $rate;
-    my $reset = $now + int($wait_time) + 1;
-    return (0, 0, $reset);  # Not allowed
+    # Periodic cleanup of stale buckets
+    if (!$self->{_last_cleanup} || ($now - $self->{_last_cleanup}) >= $self->{cleanup_interval}) {
+        $self->{_last_cleanup} = $now;
+        my $stale_threshold = $now - (2 * $burst / $rate);
+        for my $k (keys %buckets) {
+            delete $buckets{$k} if $buckets{$k}{last_time} < $stale_threshold;
+        }
+    }
+
+    # Safety valve: evict oldest buckets when over max
+    if (keys %buckets > $self->{max_buckets}) {
+        my @sorted = sort { $buckets{$a}{last_time} <=> $buckets{$b}{last_time} } keys %buckets;
+        my $to_remove = @sorted - int($self->{max_buckets} / 2);
+        delete $buckets{$_} for @sorted[0 .. $to_remove - 1];
+    }
+
+    return @result;
 }
 
 async sub _send_rate_limited {
     my ($self, $send, $remaining, $reset) = @_;
 
-    my $retry_after = $reset - time();
+    my $retry_after = $reset - _now();
     $retry_after = 1 if $retry_after < 1;
 
     my $body = 'Rate limit exceeded. Try again later.';
@@ -168,7 +203,7 @@ async sub _send_rate_limited {
 
 # Class method to reset rate limits (useful for testing)
 sub reset_all {
-    %buckets = ();
+    _clear_buckets();
 }
 
 1;
@@ -194,6 +229,13 @@ This middleware uses the token bucket algorithm:
 =back
 
 This allows short bursts of traffic while maintaining an average rate.
+
+=head1 MULTI-WORKER NOTE
+
+The in-memory bucket storage is per-process. In a pre-fork multi-worker
+setup each worker maintains its own independent rate limit state, so the
+effective rate limit is multiplied by the number of workers. For accurate
+cross-worker rate limiting, use an external backend such as Redis.
 
 =head1 SEE ALSO
 
