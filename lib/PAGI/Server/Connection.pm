@@ -8,6 +8,7 @@ use Protocol::WebSocket::Handshake::Server;
 use Protocol::WebSocket::Frame;
 use Digest::SHA qw(sha1_base64);
 use Encode;
+use URI::Escape qw(uri_unescape);
 use IO::Async::Timer::Countdown;
 use IO::Async::Timer::Periodic;
 use Time::HiRes qw(gettimeofday tv_interval);
@@ -629,8 +630,10 @@ sub _h2_create_scope {
     $query_string //= '';
 
     # Decode percent-encoded path for scope (keep raw_path as-is)
-    my $decoded_path = $path;
-    $decoded_path =~ s/%([0-9A-Fa-f]{2})/chr(hex($1))/ge;
+    # Match HTTP/1.1 pipeline: URI::Escape + UTF-8 decode with fallback
+    my $unescaped = uri_unescape($path);
+    my $decoded_path = eval { decode('UTF-8', $unescaped, Encode::FB_CROAK) }
+                       // $unescaped;
 
     my $connection_state = PAGI::Server::ConnectionState->new(
         connection => $self,
