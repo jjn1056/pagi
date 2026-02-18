@@ -219,4 +219,103 @@ subtest 'as() namespacing for groups' => sub {
     ok !exists($router->named_routes->{'users.list'}), 'original name removed';
 };
 
+subtest 'router-object form: basic' => sub {
+    my @calls;
+    my $api = PAGI::App::Router->new;
+    $api->get('/users' => make_handler('list_users', \@calls));
+    $api->get('/users/:id' => make_handler('get_user', \@calls));
+
+    my $router = PAGI::App::Router->new;
+    $router->group('/api' => $api);
+
+    my $app = $router->to_app;
+
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/users' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'router-object group matches';
+    is $sent->[1]{body}, 'list_users', 'correct handler';
+
+    @calls = ();
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/users/7' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'router-object group with param';
+    is $calls[0]{scope}{path_params}{id}, '7', 'param captured';
+};
+
+subtest 'router-object form: with middleware' => sub {
+    my $mw_ran = 0;
+    my $mw = async sub {
+        my ($scope, $receive, $send, $next) = @_;
+        $mw_ran++;
+        await $next->();
+    };
+
+    my $api = PAGI::App::Router->new;
+    $api->get('/data' => make_handler('data'));
+
+    my $router = PAGI::App::Router->new;
+    $router->group('/api' => [$mw] => $api);
+
+    my $app = $router->to_app;
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/data' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'router-object with middleware matches';
+    is $mw_ran, 1, 'group middleware ran';
+};
+
+subtest 'router-object form: snapshot semantics' => sub {
+    my $api = PAGI::App::Router->new;
+    $api->get('/early' => make_handler('early'));
+
+    my $router = PAGI::App::Router->new;
+    $router->group('/api' => $api);
+
+    # Add route to source AFTER group() — should NOT appear in router
+    $api->get('/late' => make_handler('late'));
+
+    my $app = $router->to_app;
+
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/early' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'route from before group() works';
+
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/late' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'route added after group() is NOT included';
+};
+
+subtest 'router-object form: named routes' => sub {
+    my $api = PAGI::App::Router->new;
+    $api->get('/users' => sub {})->name('users.list');
+    $api->get('/users/:id' => sub {})->name('users.get');
+
+    my $router = PAGI::App::Router->new;
+    $router->group('/api' => $api);
+
+    is $router->uri_for('users.list'), '/api/users', 'named route from included router';
+    is $router->uri_for('users.get', { id => 3 }), '/api/users/3', 'named route with param';
+};
+
+subtest 'router-object form: chained constraints preserved' => sub {
+    my @calls;
+    my $api = PAGI::App::Router->new;
+    $api->get('/users/:id' => make_handler('user', \@calls))
+        ->constraints(id => qr/^\d+$/);
+
+    my $router = PAGI::App::Router->new;
+    $router->group('/api' => $api);
+
+    my $app = $router->to_app;
+
+    # Numeric id matches
+    my ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/users/42' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 200, 'chained constraint preserved — match';
+
+    # Non-numeric id rejected
+    ($send, $sent) = mock_send();
+    $app->({ method => 'GET', path => '/api/users/abc' }, sub { Future->done }, $send)->get;
+    is $sent->[0]{status}, 404, 'chained constraint preserved — reject';
+};
+
 done_testing;

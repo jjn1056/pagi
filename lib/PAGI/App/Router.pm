@@ -149,6 +149,14 @@ sub group {
         $target->($self);
         pop @{$self->{_group_stack}};
     }
+    elsif (blessed($target) && $target->isa('PAGI::App::Router')) {
+        push @{$self->{_group_stack}}, {
+            prefix     => $prefix,
+            middleware => [@$middleware],
+        };
+        $self->_include_router($target);
+        pop @{$self->{_group_stack}};
+    }
     else {
         croak "group() target must be a coderef, PAGI::App::Router, or package name, got "
             . (ref($target) || 'scalar');
@@ -427,6 +435,59 @@ sub uri_for {
     }
 
     return $path;
+}
+
+sub _include_router {
+    my ($self, $source) = @_;
+
+    # Re-register HTTP routes through route() (stack applies prefix/middleware)
+    for my $route (@{$source->{routes}}) {
+        $self->route(
+            $route->{method},
+            $route->{path},
+            [@{$route->{middleware}}],
+            $route->{app},
+        );
+        if ($route->{name}) {
+            $self->name($route->{name});
+        }
+        if ($route->{_user_constraints} && @{$route->{_user_constraints}}) {
+            my %uc = map { $_->[0] => $_->[1] } @{$route->{_user_constraints}};
+            $self->constraints(%uc);
+        }
+    }
+
+    # Re-register WebSocket routes
+    for my $route (@{$source->{websocket_routes}}) {
+        $self->websocket(
+            $route->{path},
+            [@{$route->{middleware}}],
+            $route->{app},
+        );
+        if ($route->{name}) {
+            $self->name($route->{name});
+        }
+        if ($route->{_user_constraints} && @{$route->{_user_constraints}}) {
+            my %uc = map { $_->[0] => $_->[1] } @{$route->{_user_constraints}};
+            $self->constraints(%uc);
+        }
+    }
+
+    # Re-register SSE routes
+    for my $route (@{$source->{sse_routes}}) {
+        $self->sse(
+            $route->{path},
+            [@{$route->{middleware}}],
+            $route->{app},
+        );
+        if ($route->{name}) {
+            $self->name($route->{name});
+        }
+        if ($route->{_user_constraints} && @{$route->{_user_constraints}}) {
+            my %uc = map { $_->[0] => $_->[1] } @{$route->{_user_constraints}};
+            $self->constraints(%uc);
+        }
+    }
 }
 
 sub _parse_route_args {
