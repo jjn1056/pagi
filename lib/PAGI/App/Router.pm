@@ -888,16 +888,7 @@ Groups can be nested:
 
 Returns C<$self> for chaining (supports C<as()> for named route namespacing).
 
-=head3 group vs mount
-
-    # group: routes flattened into parent
-    $router->group('/api' => $api_router);
-
-    # mount: separate dispatch context
-    $router->mount('/api' => $api_router->to_app);
-
-Use C<group()> to organize routes within one application. Use C<mount()>
-to compose independent applications.
+See L</GROUP VS MOUNT> for a detailed comparison.
 
 =cut
 
@@ -1171,5 +1162,157 @@ with the namespace prefix:
 
 Croaks if called without a preceding mount or group, or if the mount target
 is an app coderef rather than a router object.
+
+=head1 GROUP VS MOUNT
+
+C<group()> and C<mount()> both organize routes under a prefix, but they
+work very differently. Choosing the wrong one leads to surprising behavior,
+so it's worth understanding the distinction.
+
+=head2 The Short Version
+
+B<group()> flattens routes into the parent router.  B<mount()> delegates
+to a separate application.
+
+    # group: routes live in the parent
+    $router->group('/api' => sub {
+        my ($r) = @_;
+        $r->get('/users' => $list_users);    # registered on $router
+    });
+
+    # mount: routes live in a separate app
+    $router->mount('/api' => $api->to_app);  # $api is independent
+
+=head2 Key Differences
+
+=over 4
+
+=item B<Route storage>
+
+C<group()> registers every route directly on the parent router.
+C<mount()> keeps the mounted app opaque — the parent knows nothing about
+individual routes inside it.
+
+=item B<Path handling>
+
+C<group()> prepends the prefix to each route's path at registration time.
+The handler sees the full original path.
+
+C<mount()> strips the prefix before dispatching. The mounted app sees a
+shorter path in C<< $scope->{path} >> and the stripped prefix in
+C<< $scope->{root_path} >>.
+
+    # group: handler sees full path
+    $router->group('/api' => sub {
+        my ($r) = @_;
+        $r->get('/users' => sub {
+            my ($scope, $receive, $send) = @_;
+            # $scope->{path} is "/api/users"
+        });
+    });
+
+    # mount: handler sees stripped path
+    $router->mount('/api' => $api->to_app);
+    # Inside $api, handler sees $scope->{path} = "/users"
+    #                           $scope->{root_path} = "/api"
+
+=item B<405 Method Not Allowed>
+
+C<group()> routes participate in the parent's unified 405 detection.
+If C<GET /api/users> exists but someone sends C<DELETE /api/users>,
+the parent router knows to return 405 instead of 404.
+
+C<mount()> handles 405 independently. The parent router tries the mount
+as a fallback and whatever the mounted app returns is final.
+
+=item B<Named routes>
+
+C<group()> named routes are directly accessible on the parent:
+
+    $router->group('/api' => sub {
+        my ($r) = @_;
+        $r->get('/users' => $h)->name('users.list');
+    });
+    $router->uri_for('users.list');  # "/api/users"
+
+C<mount()> named routes require C<< ->as() >> to import them:
+
+    $router->mount('/api' => $api)->as('api');
+    $router->uri_for('api.users.list');  # "/api/users"
+
+=item B<Middleware>
+
+C<group()> middleware is prepended to each individual route's middleware
+chain at registration time. The parent's middleware chain is a single
+flat list.
+
+C<mount()> middleware wraps the entire mounted application. The mounted
+app also has its own middleware chains internally.
+
+=item B<Route introspection>
+
+Grouped routes are visible when inspecting the parent router's route table.
+Mounted routes are hidden inside the mounted app.
+
+=back
+
+=head2 When to Use group()
+
+Use C<group()> when routes are part of one logical application and you
+want them to share a prefix, middleware, or both:
+
+    # Versioned API with shared auth
+    $router->group('/api/v1' => [$auth_mw] => sub {
+        my ($r) = @_;
+        $r->get('/users' => $list_users);
+        $r->get('/users/:id' => $get_user);
+        $r->post('/users' => $create_user);
+    });
+
+    # Organize routes from separate files
+    $router->group('/api/users' => 'MyApp::Routes::Users');
+    $router->group('/api/posts' => 'MyApp::Routes::Posts');
+
+    # Nested resource hierarchy
+    $router->group('/orgs/:org_id' => [$load_org] => sub {
+        my ($r) = @_;
+        $r->get('/info' => $org_info);
+        $r->group('/teams/:team_id' => [$load_team] => sub {
+            my ($r) = @_;
+            $r->get('/members' => $team_members);
+        });
+    });
+
+=head2 When to Use mount()
+
+Use C<mount()> when composing independent applications that manage their
+own routing, middleware, and error handling:
+
+    # Mount a completely separate admin app
+    $router->mount('/admin' => MyApp::Admin->to_app);
+
+    # Mount a PSGI/Plack application
+    $router->mount('/legacy' => $plack_app);
+
+    # Mount a static file server
+    $router->mount('/static' => PAGI::App::File->new(root => './public'));
+
+=head2 Can I Combine Them?
+
+Yes. C<group()> and C<mount()> serve different purposes and work well
+together:
+
+    my $router = PAGI::App::Router->new;
+
+    # Grouped API routes (unified 405, shared middleware, named routes)
+    $router->group('/api' => [$auth] => sub {
+        my ($r) = @_;
+        $r->get('/users' => $list_users)->name('users.list');
+        $r->post('/users' => $create_user)->name('users.create');
+    });
+
+    # Mounted independent apps
+    $router->mount('/admin' => MyApp::Admin->to_app);
+    $router->mount('/docs' => PAGI::App::File->new(root => './docs'));
 
 =cut
