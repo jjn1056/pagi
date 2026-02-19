@@ -1556,14 +1556,14 @@ sub _start_sse_keepalive {
         on_tick  => sub {
             return unless $weak_self;
             return if $weak_self->{closed};
-            return unless $weak_self->{sse_mode};
 
-            # Send comment line with chunked encoding
             my $text = $weak_self->{sse_keepalive_comment};
             $text = ":$text" unless $text =~ /^:/;
-            my $chunk = "$text\n\n";
-            my $len = sprintf("%x", length($chunk));
-            $weak_self->{stream}->write("$len\r\n$chunk\r\n");
+            my $formatted = "$text\n\n";
+
+            if (my $writer = $weak_self->{sse_keepalive_writer}) {
+                $writer->($formatted);
+            }
         },
     );
 
@@ -2877,6 +2877,15 @@ sub _create_sse_send {
             );
 
             $weak_self->{stream}->write($response);
+
+            # Set protocol-specific keepalive writer (HTTP/1.1 chunked)
+            $weak_self->{sse_keepalive_writer} = sub {
+                my ($text) = @_;
+                return unless $weak_self;
+                return if $weak_self->{closed};
+                my $len = sprintf("%x", length($text));
+                $weak_self->{stream}->write("$len\r\n$text\r\n");
+            };
         }
         elsif ($type eq 'sse.send') {
             return unless $weak_self->{sse_started};
