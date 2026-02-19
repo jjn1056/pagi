@@ -101,7 +101,9 @@ connection. It handles:
 
 =item * Event queue management for $receive and $send
 
-=item * Protocol upgrades (WebSocket)
+=item * Protocol upgrades (WebSocket, SSE)
+
+=item * SSE over HTTP/1.1 and HTTP/2
 
 =item * Connection lifecycle and cleanup
 
@@ -3814,6 +3816,70 @@ async sub _send_fh_response {
 1;
 
 __END__
+
+=head1 SSE OVER HTTP/2
+
+SSE events (C<sse.start>, C<sse.send>, C<sse.comment>, C<sse.keepalive>)
+work transparently over both HTTP/1.1 and HTTP/2. Applications do not need
+to change their SSE handling code based on protocol version.
+
+=head2 How It Works
+
+When a request arrives with C<Accept: text/event-stream>, the connection
+detects it as SSE regardless of HTTP version. Over HTTP/1.1, SSE data is
+sent using chunked Transfer-Encoding. Over HTTP/2, SSE data is sent as
+DATA frames via the C<submit_response_streaming>/C<data_callback> mechanism.
+This difference is transparent to the application.
+
+The C<http_version> field in the scope hash will be C<'2'> for HTTP/2
+connections, allowing applications to distinguish if needed.
+
+=head2 SSE Idle Timeout over HTTP/2
+
+The C<sse_idle_timeout> setting applies at the B<connection level>,
+not per-stream. Over HTTP/1.1, this is a non-issue since each SSE
+stream occupies its own TCP connection. Over HTTP/2, where multiple
+streams share a single connection, an idle SSE stream timeout will
+close the B<entire connection>, terminating all active streams.
+
+=head3 Trade-offs
+
+B<Pros:>
+
+=over 4
+
+=item * Simple, consistent behavior across protocols
+
+=item * Matches the approach used by Go (net/http2), Rust (hyper/Axum),
+Java (Netty/Reactor Netty/Vert.x), Python (Hypercorn), and gRPC
+
+=item * No additional complexity in stream lifecycle management
+
+=back
+
+B<Cons:>
+
+=over 4
+
+=item * Closing the connection affects all multiplexed HTTP/2 streams,
+not just the idle SSE stream
+
+=item * Clients multiplexing SSE + REST on one HTTP/2 connection may
+see unexpected disconnects on their REST requests
+
+=back
+
+B<Recommendation:> Use SSE keepalive comments (C<sse.keepalive> event)
+with an interval shorter than C<sse_idle_timeout> to prevent the timer
+from firing. This is the industry-standard approach used across all
+major frameworks. For production deployments behind reverse proxies
+(Envoy, Nginx, HAProxy), align your keepalive interval with the
+proxy's stream idle timeout.
+
+B<Note:> Per-stream idle timeout (using HTTP/2 RST_STREAM to close
+only the idle SSE stream) is a future enhancement. Only Node.js
+(http2stream.setTimeout) and Envoy (stream_idle_timeout) implement
+this among mainstream servers.
 
 =head1 SEE ALSO
 

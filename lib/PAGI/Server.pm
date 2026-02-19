@@ -123,7 +123,7 @@ B<Currently supported:>
 
 =item * WebSocket (RFC 6455, including over HTTP/2 via RFC 8441)
 
-=item * Server-Sent Events (SSE)
+=item * Server-Sent Events (SSE, including over HTTP/2)
 
 =back
 
@@ -785,6 +785,10 @@ B<CLI:> C<--sse-idle-timeout 120>
 
 B<Note:> For SSE connections that may be legitimately idle, use
 C<< $sse->keepalive($interval) >> to send periodic comment keepalives.
+
+B<HTTP/2 caveat:> Over HTTP/2 this timeout applies at the connection level,
+not per-stream. See L<PAGI::Server::Connection/SSE Idle Timeout over HTTP/2>
+for details and recommendations.
 
 =item heartbeat_timeout => $seconds
 
