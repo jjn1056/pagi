@@ -434,6 +434,17 @@ sub _h2_on_request {
         }
     }
 
+    # Detect SSE (Accept: text/event-stream)
+    my $is_sse = 0;
+    if (!$is_websocket) {
+        for my $h (@$headers) {
+            if ($h->[0] eq 'accept' && $h->[1] =~ m{text/event-stream}) {
+                $is_sse = 1;
+                last;
+            }
+        }
+    }
+
     # Initialize per-stream state
     $self->{h2_streams}{$stream_id} = {
         pseudo    => $pseudo,
@@ -445,6 +456,7 @@ sub _h2_on_request {
         receive_queue => [],
         response_started => 0,
         is_websocket => $is_websocket,
+        is_sse       => $is_sse,
         ws_accepted  => 0,
         ws_frame     => undef,   # Protocol::WebSocket::Frame for parsing
         ws_connect_sent => 0,
@@ -555,6 +567,11 @@ sub _h2_on_close {
             code   => 1006,
             reason => '',
         };
+    } elsif ($stream->{is_sse}) {
+        push @{$stream->{receive_queue}}, {
+            type   => 'sse.disconnect',
+            reason => 'client_closed',
+        };
     } else {
         push @{$stream->{receive_queue}}, { type => 'http.disconnect' };
     }
@@ -585,6 +602,10 @@ sub _h2_dispatch_stream {
         $scope   = $self->_h2_create_websocket_scope($stream_id, $stream_state);
         $receive = $self->_h2_create_websocket_receive($stream_id, $stream_state);
         $send    = $self->_h2_create_websocket_send($stream_id, $stream_state);
+    } elsif ($stream_state->{is_sse}) {
+        $scope   = $self->_h2_create_sse_scope($stream_id, $stream_state);
+        $receive = $self->_h2_create_sse_receive($stream_id, $stream_state);
+        $send    = $self->_h2_create_sse_send($stream_id, $stream_state);
     } else {
         $scope   = $self->_h2_create_scope($stream_id, $stream_state);
         $receive = $self->_h2_create_receive($stream_id, $stream_state);
@@ -1051,6 +1072,250 @@ sub _h2_create_websocket_send {
             # Send close frame + END_STREAM
             $weak_self->{h2_session}->submit_data($stream_id, $frame->to_bytes, 1);
             $weak_self->_h2_write_pending;
+        }
+
+        return;
+    };
+}
+
+# =============================================================================
+# HTTP/2 SSE (Server-Sent Events over HTTP/2)
+# =============================================================================
+
+sub _h2_create_sse_scope {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    my $pseudo  = $stream_state->{pseudo};
+    my $headers = $stream_state->{headers};
+
+    my $full_path = $pseudo->{':path'} // '/';
+    my ($path, $query_string) = split(/\?/, $full_path, 2);
+    $query_string //= '';
+
+    # Match HTTP/1.1 pipeline: URI::Escape + UTF-8 decode with fallback
+    my $unescaped = uri_unescape($path);
+    my $decoded_path = eval { decode('UTF-8', $unescaped, Encode::FB_CROAK) }
+                       // $unescaped;
+
+    my $connection_state = PAGI::Server::ConnectionState->new(
+        connection => $self,
+    );
+
+    return {
+        type         => 'sse',
+        pagi         => {
+            version      => '0.2',
+            spec_version => '0.2',
+            features     => {},
+        },
+        http_version => '2',
+        method       => $pseudo->{':method'} // 'GET',
+        scheme       => $pseudo->{':scheme'} // $self->_get_scheme,
+        path         => $decoded_path,
+        raw_path     => $path,
+        query_string => $query_string,
+        root_path    => '',
+        headers      => $headers,
+        client       => [$self->{client_host}, $self->{client_port}],
+        server       => [$self->{server_host}, $self->{server_port}],
+        state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
+        extensions   => $self->_get_extensions_for_scope,
+        'pagi.connection' => $connection_state,
+    };
+}
+
+sub _h2_create_sse_receive {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    weaken(my $weak_self = $self);
+
+    my $sse_disconnect = sub {
+        return {
+            type   => 'sse.disconnect',
+            reason => 'client_closed',
+        };
+    };
+
+    return sub {
+        return Future->done($sse_disconnect->()) unless $weak_self;
+        return Future->done($sse_disconnect->()) if $weak_self->{closed};
+
+        my $ss = $weak_self->{h2_streams}{$stream_id};
+        return Future->done($sse_disconnect->()) unless $ss;
+
+        my $future = (async sub {
+            return $sse_disconnect->() unless $weak_self;
+
+            my $ss = $weak_self->{h2_streams}{$stream_id};
+            return $sse_disconnect->() unless $ss;
+
+            # Check queue first
+            if (@{$ss->{receive_queue}}) {
+                return shift @{$ss->{receive_queue}};
+            }
+
+            # First call returns sse.request with body
+            if (!$ss->{sse_request_sent}) {
+                $ss->{sse_request_sent} = 1;
+                return {
+                    type => 'sse.request',
+                    body => $ss->{body},
+                    more => 0,
+                };
+            }
+
+            # Wait for disconnect
+            while (1) {
+                if (@{$ss->{receive_queue}}) {
+                    return shift @{$ss->{receive_queue}};
+                }
+
+                return $sse_disconnect->()
+                    if $weak_self->{closed};
+
+                if (!$ss->{body_pending}) {
+                    $ss->{body_pending} = Future->new;
+                }
+                await $ss->{body_pending};
+
+                $ss = $weak_self->{h2_streams}{$stream_id};
+                return $sse_disconnect->() unless $ss;
+            }
+        })->();
+
+        return $future;
+    };
+}
+
+sub _h2_create_sse_send {
+    my ($self, $stream_id, $stream_state) = @_;
+
+    weaken(my $weak_self = $self);
+
+    # Streaming state for data provider pattern
+    my @data_queue;
+    my $streaming_started = 0;
+
+    my $data_callback = sub {
+        my ($cb_stream_id, $max_len) = @_;
+
+        if (@data_queue) {
+            my $chunk = shift @data_queue;
+            if (length($chunk) > $max_len) {
+                unshift @data_queue, substr($chunk, $max_len);
+                $chunk = substr($chunk, 0, $max_len);
+            }
+            return ($chunk, 0);  # SSE streams never EOF via data_callback
+        }
+
+        # Queue empty — defer
+        return undef;
+    };
+
+    return async sub {
+        my ($event) = @_;
+        return unless $weak_self;
+        return if $weak_self->{closed};
+
+        my $ss = $weak_self->{h2_streams}{$stream_id};
+        return unless $ss;
+
+        # Reset SSE idle timer on send activity
+        $weak_self->_reset_sse_idle_timer;
+
+        my $type = $event->{type} // '';
+
+        # Dev-mode event validation (PAGI spec compliance)
+        if ($weak_self->{validate_events}) {
+            require PAGI::Server::EventValidator;
+            PAGI::Server::EventValidator::validate_sse_send($event);
+        }
+
+        if ($type eq 'sse.start') {
+            return if $ss->{response_started};
+            $ss->{response_started} = 1;
+
+            my $status = $event->{status} // 200;
+            my $headers = $event->{headers} // [];
+
+            # Ensure Content-Type is text/event-stream
+            my $has_content_type = 0;
+            for my $h (@$headers) {
+                if (lc($h->[0]) eq 'content-type') {
+                    $has_content_type = 1;
+                    last;
+                }
+            }
+
+            my @final_headers;
+            for my $h (@$headers) {
+                push @final_headers, [_validate_header_name($h->[0]), _validate_header_value($h->[1])];
+            }
+            if (!$has_content_type) {
+                push @final_headers, ['content-type', 'text/event-stream'];
+            }
+            push @final_headers, ['cache-control', 'no-cache'];
+
+            $streaming_started = 1;
+            $weak_self->{h2_session}->submit_response_streaming(
+                $stream_id,
+                status        => $status,
+                headers       => \@final_headers,
+                data_callback => $data_callback,
+            );
+            $weak_self->_h2_write_pending;
+
+            # Set protocol-specific keepalive writer (HTTP/2 DATA frames)
+            $weak_self->{sse_keepalive_writer} = sub {
+                my ($text) = @_;
+                return unless $weak_self;
+                return if $weak_self->{closed};
+                return unless $weak_self->{h2_streams}{$stream_id};
+                push @data_queue, $text;
+                $weak_self->{h2_session}->resume_stream($stream_id);
+                $weak_self->_h2_write_pending;
+            };
+
+            # Start SSE idle timer if configured
+            $weak_self->_start_sse_idle_timer;
+        }
+        elsif ($type eq 'sse.send') {
+            return unless $ss->{response_started};
+
+            # Backpressure check
+            if ($weak_self->_get_write_buffer_size >= $weak_self->{write_high_watermark}) {
+                await $weak_self->_wait_for_drain;
+                return Future->done unless $weak_self;
+                return Future->done if $weak_self->{closed};
+                return unless $weak_self->{h2_streams}{$stream_id};
+            }
+
+            my $sse_data = _format_sse_event($event);
+            push @data_queue, $sse_data;
+            $weak_self->{h2_session}->resume_stream($stream_id);
+            $weak_self->_h2_write_pending;
+        }
+        elsif ($type eq 'sse.comment') {
+            return unless $ss->{response_started};
+
+            my $comment = _format_sse_comment($event);
+            push @data_queue, $comment;
+            $weak_self->{h2_session}->resume_stream($stream_id);
+            $weak_self->_h2_write_pending;
+        }
+        elsif ($type eq 'sse.keepalive') {
+            my $interval = $event->{interval} // 0;
+            my $comment = $event->{comment};
+
+            if ($interval > 0) {
+                $weak_self->_start_sse_keepalive($interval, $comment);
+            }
+            else {
+                $weak_self->_stop_sse_keepalive;
+            }
+        }
+        else {
+            _unrecognized_event_type($type, 'sse');
         }
 
         return;
@@ -2377,7 +2642,10 @@ sub _close {
     if ($self->{h2_streams}) {
         for my $stream (values %{$self->{h2_streams}}) {
             if ($stream->{body_pending} && !$stream->{body_pending}->is_ready) {
-                $stream->{body_pending}->done({ type => 'http.disconnect' });
+                my $event = $stream->{is_sse}
+                    ? { type => 'sse.disconnect', reason => 'client_closed' }
+                    : { type => 'http.disconnect' };
+                $stream->{body_pending}->done($event);
             }
         }
         delete $self->{h2_streams};
