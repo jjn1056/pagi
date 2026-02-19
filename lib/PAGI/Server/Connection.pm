@@ -2790,6 +2790,38 @@ sub _create_sse_receive {
     };
 }
 
+sub _format_sse_event {
+    my ($event) = @_;
+    my $sse_data = '';
+    if (defined $event->{event} && length $event->{event}) {
+        $sse_data .= "event: $event->{event}\n";
+    }
+    my $data = $event->{data} // '';
+    for my $line (split /\r?\n|\r/, $data, -1) {
+        $sse_data .= "data: $line\n";
+    }
+    if (defined $event->{id} && length $event->{id}) {
+        $sse_data .= "id: $event->{id}\n";
+    }
+    if (defined $event->{retry}) {
+        $sse_data .= "retry: $event->{retry}\n";
+    }
+    $sse_data .= "\n";
+    return $sse_data;
+}
+
+sub _format_sse_comment {
+    my ($event) = @_;
+    my $text = $event->{comment} // '';
+    my $formatted = '';
+    for my $line (split /\r?\n|\r/, $text, -1) {
+        $line = ":$line" unless $line =~ /^:/;
+        $formatted .= "$line\n";
+    }
+    $formatted .= "\n";
+    return $formatted;
+}
+
 sub _create_sse_send {
     my ($self, $request) = @_;
 
@@ -2857,51 +2889,16 @@ sub _create_sse_send {
             }
             # --- END BACKPRESSURE CHECK ---
 
-            # Format SSE event
-            my $sse_data = '';
-
-            # event: field (optional)
-            if (defined $event->{event} && length $event->{event}) {
-                $sse_data .= "event: $event->{event}\n";
-            }
-
-            # data: field (required) - handle multi-line data
-            # Split on CRLF, LF, or bare CR per SSE spec (WHATWG)
-            my $data = $event->{data} // '';
-            for my $line (split /\r?\n|\r/, $data, -1) {
-                $sse_data .= "data: $line\n";
-            }
-
-            # id: field (optional)
-            if (defined $event->{id} && length $event->{id}) {
-                $sse_data .= "id: $event->{id}\n";
-            }
-
-            # retry: field (optional)
-            if (defined $event->{retry}) {
-                $sse_data .= "retry: $event->{retry}\n";
-            }
-
-            # Empty line to end the event
-            $sse_data .= "\n";
+            my $sse_data = _format_sse_event($event);
 
             # Send as chunked data
             my $len = sprintf("%x", length($sse_data));
             $weak_self->{stream}->write("$len\r\n$sse_data\r\n");
         }
         elsif ($type eq 'sse.comment') {
-            # SSE comment - sent as-is without data: prefix
-            # Used for keepalives that shouldn't trigger onmessage
             return unless $weak_self->{sse_started};
 
-            my $comment_text = $event->{comment} // '';
-            # Split on CRLF, LF, or bare CR and prefix each line with :
-            my $comment = '';
-            for my $line (split /\r?\n|\r/, $comment_text, -1) {
-                $line = ":$line" unless $line =~ /^:/;
-                $comment .= "$line\n";
-            }
-            $comment .= "\n";
+            my $comment = _format_sse_comment($event);
 
             my $len = sprintf("%x", length($comment));
             $weak_self->{stream}->write("$len\r\n$comment\r\n");
