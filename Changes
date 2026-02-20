@@ -1,5 +1,49 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001019 - 2026-02-19
+  [New Features]
+  - Router: rewrite _compile_path() as tokenizer with proper regex escaping,
+    so literal path segments containing regex metacharacters (e.g., /foo.bar)
+    are matched literally instead of as patterns
+  - Router: inline constraint syntax {name:pattern} for path parameters
+    (e.g., /user/{id:\d+}) validated during dispatch
+  - Router: chainable constraints() method for applying regex constraints
+    to named path parameters after route definition
+  - Router: any() multi-method matcher supporting wildcard ('*') and
+    explicit method lists (e.g., any [qw(GET POST)] => '/path' => $handler)
+  - Router: named routes and uri_for() now support {name:pattern} syntax
+    and any() routes
+  - Router: group() for organizing routes under a common prefix, with three
+    forms: callback (sub), router-object, and string (auto-require). Supports
+    middleware, nesting, named route namespacing via as(), and conflict detection
+  - Router: mount() now accepts a string class name with auto-require and
+    to_app dispatch
+  - SSE over HTTP/2 with streaming DATA frames, keepalive comments, and
+    disconnect handling
+  - Add PAGI::Utils::Random module for cryptographically secure random bytes
+  - Rate limiter: periodic cleanup and safety valve for expired buckets
+  - CORS middleware: warn when configured with wildcard origins and credentials
+
+  [Security Fixes]
+  - Fix XSS in Debug middleware panel by escaping scope values in HTML output
+  - Add max_chunk_size limit (default 1MB) to HTTP/1.1 chunked transfer
+    parser to prevent denial-of-service via unbounded chunk sizes
+  - Use cryptographically secure random bytes (via /dev/urandom with
+    Crypt::URandom fallback) in RequestId, CSRF, and Session middleware
+    instead of rand()
+  - Default session cookie SameSite=Lax to prevent CSRF via cross-site requests
+  - Fix double URL-decoding in Static middleware that could allow path traversal
+
+  [Bug Fixes]
+  - Fix HTTP/2 path decoding to match HTTP/1.1 decoding pipeline
+  - Fix HTTP/2 WebSocket path decoding to match HTTP/1.1 pipeline
+  - Require Net::HTTP2::nghttp2 0.007+ for HTTP/2 support (was unversioned)
+
+  [Improvements]
+  - Extract _format_sse_event() and _format_sse_comment() helpers and
+    protocol-abstracted keepalive writer for consistent SSE formatting
+    across HTTP/1.1 and HTTP/2
+
 0.001018 - 2026-02-15
   [Bug Fixes]
   - Skip HTTP/2 subtests when Net::HTTP2::nghttp2 is not installed, fixing

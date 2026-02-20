@@ -3,7 +3,7 @@ package PAGI;
 use strict;
 use warnings;
 
-our $VERSION = '0.001018';
+our $VERSION = '0.001019';
 
 1;
 

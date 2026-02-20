@@ -48,4 +48,11 @@ Returns C<$length> cryptographically secure random bytes.
 Tries C</dev/urandom> first, then falls back to L<Crypt::URandom>.
 Dies if no secure source is available.
 
+=head1 PLATFORM NOTES
+
+On Unix, Linux, and macOS, C</dev/urandom> is used directly and no
+additional modules are needed. On systems without C</dev/urandom>
+(notably Windows), install L<Crypt::URandom> to provide a secure
+random source.
+
 =cut

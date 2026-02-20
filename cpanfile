@@ -35,6 +35,9 @@ requires 'JSON::MaybeXS', '1.004003';
 # Fast JSON (optional but recommended for performance)
 recommends 'Cpanel::JSON::XS', '4.19';
 
+# Secure random bytes (optional - only needed on systems without /dev/urandom)
+recommends 'Crypt::URandom', '0.36';
+
 # Utilities
 requires 'URI::Escape', '5.09';
 requires 'Cookie::Baker', '0.11';
