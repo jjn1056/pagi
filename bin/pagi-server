@@ -359,6 +359,29 @@ Increase/decrease worker count (multi-worker mode only).
 
 =back
 
+=head1 SERVER::STARTER
+
+PAGI::Server automatically detects C<$ENV{SERVER_STARTER_PORT}> for
+zero-downtime binary upgrades via L<Server::Starter>.
+
+    # Install Server::Starter
+    cpanm Server::Starter
+
+    # Start with zero-downtime support
+    start_server --port 5000 -- pagi-server ./app.pl
+
+    # Zero-downtime restart
+    kill -HUP $(cat /var/run/start_server.pid)
+
+    # With multi-worker
+    start_server --port 5000 -- pagi-server --workers 4 ./app.pl
+
+When C<SERVER_STARTER_PORT> is set, C<--host> and C<--port> cannot be used
+(the address comes from C<start_server>).
+
+See also: C<SERVER_STARTER_PORT>, C<SERVER_STARTER_GENERATION> environment
+variables.
+
 =head1 EXAMPLES
 
     # Development (auto-detected from TTY)
@@ -391,6 +414,15 @@ Default environment mode if C<-E> is not specified and no TTY detected.
 =item B<IO_ASYNC_LOOP>
 
 Preferred IO::Async loop backend.
+
+=item B<SERVER_STARTER_PORT>
+
+Set by C<start_server> for zero-downtime restarts. When detected, PAGI::Server
+reuses the inherited socket FD. See L</SERVER::STARTER>.
+
+=item B<SERVER_STARTER_GENERATION>
+
+Set by C<start_server> to track restart generation number.
 
 =back
 
