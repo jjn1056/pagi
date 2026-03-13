@@ -6,6 +6,8 @@ use Future::AsyncAwait;
 use Scalar::Util qw(blessed);
 use Carp qw(croak);
 
+=encoding UTF-8
+
 =head1 NAME
 
 PAGI::App::Router - Unified routing for HTTP, WebSocket, and SSE

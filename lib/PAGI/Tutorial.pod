@@ -197,7 +197,7 @@ Let's break down what's happening:
 
 =back
 
-=item 3. C<return unless $scope-E<gt>{type} eq 'http'> - The server calls your app for different event types (HTTP requests, WebSocket, lifespan). This check ensures we only handle HTTP requests.
+=item 3. C<die "Expected http scope" unless $scope-E<gt>{type} eq 'http'> - The server calls your app for different event types (HTTP requests, WebSocket, lifespan). Applications must throw an exception for unrecognized scope types to prevent silent protocol mismatches.
 
 =item 4. C<await $send-E<gt>({...})> - Sends events asynchronously, waiting for each to complete
 
