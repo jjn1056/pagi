@@ -102,7 +102,20 @@ sub _request {
     my @events;
     my $send = async sub {
         my ($event) = @_;
-        push @events, $event;
+        my %captured = %$event;
+
+        if (($captured{type} // '') eq 'http.response.body') {
+            if ($method eq 'HEAD') {
+                $captured{body} = '';
+                delete @captured{qw(fh file offset length)};
+            }
+            elsif (exists $captured{fh} || exists $captured{file}) {
+                $captured{body} = $self->_response_body_bytes(\%captured);
+                delete @captured{qw(fh file offset length)};
+            }
+        }
+
+        push @events, \%captured;
     };
 
     # Call app (with exception handling like real server)
@@ -187,16 +200,26 @@ sub _build_response {
     my $status = 200;
     my @headers;
     my $body = '';
+    my $response_started = 0;
+    my $body_complete = 0;
 
     for my $event (@$events) {
         my $type = $event->{type} // '';
 
         if ($type eq 'http.response.start') {
+            next if $response_started;
+            $response_started = 1;
             $status = $event->{status} // 200;
             @headers = @{$event->{headers} // []};
         }
         elsif ($type eq 'http.response.body') {
-            $body .= $event->{body} // '';
+            next unless $response_started;
+            next if $body_complete;
+
+            $body .= $self->_response_body_bytes($event);
+
+            my $more = $event->{more} // 0;
+            $body_complete = 1 unless $more;
         }
     }
 
@@ -214,6 +237,81 @@ sub _build_response {
         headers => \@headers,
         body    => $body,
     );
+}
+
+sub _response_body_bytes {
+    my ($self, $event) = @_;
+
+    return $event->{body} // '' if exists $event->{body};
+
+    if (exists $event->{file}) {
+        return _read_file_bytes(
+            $event->{file},
+            $event->{offset} // 0,
+            $event->{length},
+        );
+    }
+
+    if (exists $event->{fh}) {
+        return _read_fh_bytes(
+            $event->{fh},
+            $event->{offset} // 0,
+            $event->{length},
+        );
+    }
+
+    return '';
+}
+
+sub _read_file_bytes {
+    my ($path, $offset, $length) = @_;
+
+    open my $fh, '<:raw', $path
+        or croak "Cannot open file response '$path': $!";
+
+    seek($fh, $offset, 0)
+        or croak "Cannot seek file response '$path': $!"
+        if $offset;
+
+    my $content = _slurp_fh_bytes($fh, $length);
+    close $fh;
+
+    return $content;
+}
+
+sub _read_fh_bytes {
+    my ($fh, $offset, $length) = @_;
+
+    seek($fh, $offset, 0)
+        or croak "Cannot seek filehandle response: $!"
+        if $offset;
+
+    return _slurp_fh_bytes($fh, $length);
+}
+
+sub _slurp_fh_bytes {
+    my ($fh, $length) = @_;
+
+    my $content = '';
+    my $remaining = $length;
+
+    while (1) {
+        my $to_read = 65536;
+        if (defined $remaining) {
+            last if $remaining <= 0;
+            $to_read = $remaining if $remaining < $to_read;
+        }
+
+        my $bytes_read = read($fh, my $chunk, $to_read);
+        croak "Cannot read response body from filehandle: $!"
+            unless defined $bytes_read;
+        last if $bytes_read == 0;
+
+        $content .= $chunk;
+        $remaining -= $bytes_read if defined $remaining;
+    }
+
+    return $content;
 }
 
 sub websocket {
@@ -651,6 +749,12 @@ protocol messages ($scope, $receive, $send), making tests fast and simple.
 This is inspired by Starlette's TestClient but adapted for Perl and PAGI's
 specific features like first-class SSE support.
 
+B<This is a lightweight in-process test harness, not a transport simulator.>
+It is best suited for unit and integration tests of application logic, routing,
+cookies, and basic protocol flows. For behavior that depends on real socket I/O,
+HTTP framing, backpressure, or server lifecycle semantics, prefer testing
+against L<PAGI::Server>.
+
 =head1 CONSTRUCTOR
 
 =head2 new
@@ -803,6 +907,42 @@ Supports multiple formats:
 =item body => $bytes
 
 Raw request body bytes.
+
+=back
+
+=head1 LIMITATIONS
+
+=over 4
+
+=item *
+
+HTTP request bodies are delivered as a single C<http.request> event. This
+client does B<not> currently simulate multi-event request body streaming or
+disconnects mid-request-body.
+
+=item *
+
+HTTP response trailers (C<http.response.trailers>) are not exposed through
+L<PAGI::Test::Response>. If your application depends on trailer semantics,
+test it against L<PAGI::Server>.
+
+=item *
+
+This client invokes the app directly and does not simulate transport-level
+behavior such as chunked transfer framing, socket backpressure, kernel write
+ordering, TLS, or HTTP/2.
+
+=item *
+
+Lifespan support is intended for basic shared-state tests. It is lighter-weight
+than the real server lifecycle and should not be treated as a full compliance
+test for startup/shutdown behavior.
+
+=item *
+
+WebSocket and SSE testing is delegated to L<PAGI::Test::WebSocket> and
+L<PAGI::Test::SSE>, which intentionally provide simplified in-process models
+of those protocols.
 
 =back
 

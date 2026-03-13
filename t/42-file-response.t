@@ -6,10 +6,60 @@ use IO::Async::Loop;
 use Net::Async::HTTP;
 use File::Temp qw(tempdir);
 use Future::AsyncAwait;
+use Tie::Handle ();
 
 use PAGI::Server;
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
+
+{
+    package TestTiedHandle;
+
+    use parent 'Tie::Handle';
+    use Symbol qw(gensym);
+
+    sub new_handle {
+        my ($class, $content_ref) = @_;
+
+        open my $inner_fh, '<', $content_ref
+            or die "Cannot open scalar handle: $!";
+
+        my $fh = gensym();
+        tie *{$fh}, $class, $inner_fh;
+        return $fh;
+    }
+
+    sub TIEHANDLE {
+        my ($class, $inner_fh) = @_;
+        return bless { inner_fh => $inner_fh }, $class;
+    }
+
+    sub READ {
+        my ($self, undef, $length, $offset) = @_;
+        return read($self->{inner_fh}, $_[1], $length, $offset // 0);
+    }
+
+    sub SEEK {
+        my ($self, $position, $whence) = @_;
+        return seek($self->{inner_fh}, $position, $whence);
+    }
+
+    sub TELL {
+        my ($self) = @_;
+        return tell($self->{inner_fh});
+    }
+
+    sub FILENO {
+        return -1;
+    }
+
+    sub CLOSE {
+        my ($self) = @_;
+        return close($self->{inner_fh});
+    }
+}
+
+package main;
 
 # Create shared event loop and HTTP client
 my $loop = IO::Async::Loop->new;
@@ -230,6 +280,123 @@ subtest 'fh response sends from filehandle' => sub {
             my $response = $http->GET("http://127.0.0.1:$port/")->get;
             is($response->code, 200, 'got 200 response');
             is($response->content, $test_content, 'filehandle content matches');
+        }
+    );
+};
+
+subtest 'fh response without length reads to EOF' => sub {
+    with_server(
+        async sub  {
+        my ($scope, $receive, $send) = @_;
+            open my $fh, '<:raw', $test_file or die "Cannot open: $!";
+
+            await $send->({
+                type => 'http.response.start',
+                status => 200,
+                headers => [
+                    ['content-type', 'text/plain'],
+                    ['content-length', length($test_content)],
+                ],
+            });
+            await $send->({
+                type => 'http.response.body',
+                fh => $fh,
+            });
+
+            close $fh;
+        },
+        sub  {
+        my ($port, $server) = @_;
+            my $response = $http->GET("http://127.0.0.1:$port/")->get;
+            is($response->code, 200, 'got 200 response');
+            is($response->content, $test_content, 'filehandle content matches without explicit length');
+        }
+    );
+};
+
+subtest 'fh response without length streams chunked to EOF' => sub {
+    with_server(
+        async sub  {
+        my ($scope, $receive, $send) = @_;
+            open my $fh, '<:raw', $test_file or die "Cannot open: $!";
+
+            await $send->({
+                type => 'http.response.start',
+                status => 200,
+                headers => [
+                    ['content-type', 'text/plain'],
+                ],
+            });
+            await $send->({
+                type => 'http.response.body',
+                fh => $fh,
+            });
+
+            close $fh;
+        },
+        sub  {
+        my ($port, $server) = @_;
+            my $response = $http->GET("http://127.0.0.1:$port/")->get;
+            is($response->code, 200, 'got 200 response');
+            is($response->content, $test_content, 'chunked filehandle content matches without explicit length');
+        }
+    );
+};
+
+subtest 'scalar-reference fh response without length streams to EOF' => sub {
+    with_server(
+        async sub  {
+        my ($scope, $receive, $send) = @_;
+            open my $fh, '<', \$test_content or die "Cannot open scalar handle: $!";
+
+            await $send->({
+                type => 'http.response.start',
+                status => 200,
+                headers => [
+                    ['content-type', 'text/plain'],
+                ],
+            });
+            await $send->({
+                type => 'http.response.body',
+                fh => $fh,
+            });
+
+            close $fh;
+        },
+        sub  {
+        my ($port, $server) = @_;
+            my $response = $http->GET("http://127.0.0.1:$port/")->get;
+            is($response->code, 200, 'got 200 response');
+            is($response->content, $test_content, 'scalar-reference filehandle content matches');
+        }
+    );
+};
+
+subtest 'tied fh response without length streams to EOF' => sub {
+    with_server(
+        async sub  {
+        my ($scope, $receive, $send) = @_;
+            my $fh = TestTiedHandle->new_handle(\$test_content);
+
+            await $send->({
+                type => 'http.response.start',
+                status => 200,
+                headers => [
+                    ['content-type', 'text/plain'],
+                ],
+            });
+            await $send->({
+                type => 'http.response.body',
+                fh => $fh,
+            });
+
+            close $fh;
+        },
+        sub  {
+        my ($port, $server) = @_;
+            my $response = $http->GET("http://127.0.0.1:$port/")->get;
+            is($response->code, 200, 'got 200 response');
+            is($response->content, $test_content, 'tied filehandle content matches');
         }
     );
 };

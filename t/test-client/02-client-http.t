@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use Test2::V0;
 use Future::AsyncAwait;
+use File::Temp qw(tempfile);
 
 use lib 'lib';
 use PAGI::Test::Client;
@@ -31,6 +32,210 @@ subtest 'basic GET request' => sub {
     is $res->status, 200, 'status 200';
     is $res->text, 'Hello World', 'body';
     is $res->header('content-type'), 'text/plain', 'content-type';
+};
+
+subtest 'captures filehandle response bodies' => sub {
+    my $fh_app = async sub {
+        my ($scope, $receive, $send) = @_;
+        my $content = "Hello from filehandle";
+
+        open my $fh, '<', \$content or die "Cannot open scalar handle: $!";
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [
+                ['content-type', 'text/plain'],
+                ['content-length', length($content)],
+            ],
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            fh   => $fh,
+        });
+
+        close $fh;
+    };
+
+    my $client = PAGI::Test::Client->new(app => $fh_app);
+    my $res = $client->get('/');
+
+    is $res->status, 200, 'status 200';
+    is $res->content, 'Hello from filehandle', 'filehandle body captured';
+};
+
+subtest 'captures file response bodies' => sub {
+    my ($fh, $path) = tempfile();
+    print {$fh} 'Hello from file';
+    close $fh;
+
+    my $file_app = async sub {
+        my ($scope, $receive, $send) = @_;
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            file => $path,
+        });
+    };
+
+    my $client = PAGI::Test::Client->new(app => $file_app);
+    my $res = $client->get('/');
+
+    is $res->status, 200, 'status 200';
+    is $res->content, 'Hello from file', 'file body captured';
+};
+
+subtest 'captures filehandle response offset and length' => sub {
+    my $fh_app = async sub {
+        my ($scope, $receive, $send) = @_;
+        my $content = '0123456789';
+
+        open my $fh, '<', \$content or die "Cannot open scalar handle: $!";
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+
+        await $send->({
+            type   => 'http.response.body',
+            fh     => $fh,
+            offset => 2,
+            length => 4,
+        });
+
+        close $fh;
+    };
+
+    my $client = PAGI::Test::Client->new(app => $fh_app);
+    my $res = $client->get('/');
+
+    is $res->content, '2345', 'filehandle offset/length respected';
+};
+
+subtest 'captures file response offset and length' => sub {
+    my ($fh, $path) = tempfile();
+    print {$fh} 'abcdefghij';
+    close $fh;
+
+    my $file_app = async sub {
+        my ($scope, $receive, $send) = @_;
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+
+        await $send->({
+            type   => 'http.response.body',
+            file   => $path,
+            offset => 3,
+            length => 3,
+        });
+    };
+
+    my $client = PAGI::Test::Client->new(app => $file_app);
+    my $res = $client->get('/');
+
+    is $res->content, 'def', 'file offset/length respected';
+};
+
+subtest 'HEAD suppresses response body transport semantics' => sub {
+    my $head_app = async sub {
+        my ($scope, $receive, $send) = @_;
+        my $content = 'Body that HEAD must suppress';
+
+        open my $fh, '<', \$content or die "Cannot open scalar handle: $!";
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [
+                ['content-type', 'text/plain'],
+                ['content-length', length($content)],
+            ],
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            fh   => $fh,
+        });
+
+        close $fh;
+    };
+
+    my $client = PAGI::Test::Client->new(app => $head_app);
+
+    is $client->get('/')->content, 'Body that HEAD must suppress', 'GET still returns body';
+    is $client->head('/')->content, '', 'HEAD response body suppressed';
+};
+
+subtest 'ignores duplicate response.start events' => sub {
+    my $dup_start_app = async sub {
+        my ($scope, $receive, $send) = @_;
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 201,
+            headers => [['content-type', 'text/plain']],
+        });
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 500,
+            headers => [['content-type', 'application/json']],
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            body => 'first start wins',
+        });
+    };
+
+    my $client = PAGI::Test::Client->new(app => $dup_start_app);
+    my $res = $client->get('/');
+
+    is $res->status, 201, 'first status preserved';
+    is $res->header('content-type'), 'text/plain', 'first headers preserved';
+    is $res->content, 'first start wins', 'body still captured';
+};
+
+subtest 'ignores body events after response completion' => sub {
+    my $extra_body_app = async sub {
+        my ($scope, $receive, $send) = @_;
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            body => 'done',
+            more => 0,
+        });
+
+        await $send->({
+            type => 'http.response.body',
+            body => 'ignored',
+            more => 0,
+        });
+    };
+
+    my $client = PAGI::Test::Client->new(app => $extra_body_app);
+    my $res = $client->get('/');
+
+    is $res->content, 'done', 'body after completion ignored';
 };
 
 subtest 'GET with path' => sub {

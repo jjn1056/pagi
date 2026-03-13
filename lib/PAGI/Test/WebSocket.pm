@@ -275,6 +275,10 @@ real server.
 This module is typically used via L<PAGI::Test::Client>'s C<websocket>
 method rather than directly.
 
+B<This module is a simplified in-process model of a WebSocket connection.>
+It is useful for testing application-level message flow, but it does B<not>
+fully emulate transport timing, protocol validation, or network buffering.
+
 =head1 CONSTRUCTOR
 
 =head2 new
@@ -313,8 +317,11 @@ Encodes a Perl data structure as JSON and sends it as a text message.
     my $text = $ws->receive_text($timeout);  # custom timeout in seconds
 
 Waits for and returns the next text message from the server. Returns undef
-if the connection is closed. Throws an exception if timeout is reached
-(default: 5 seconds).
+if the connection is closed.
+
+B<Current limitation:> this method does not actually block or wait for the
+timeout duration. If no queued text message is immediately available, it
+throws an exception right away.
 
 Only returns text messages; binary messages are skipped.
 
@@ -324,8 +331,11 @@ Only returns text messages; binary messages are skipped.
     my $bytes = $ws->receive_bytes($timeout);
 
 Waits for and returns the next binary message from the server. Returns undef
-if the connection is closed. Throws an exception if timeout is reached
-(default: 5 seconds).
+if the connection is closed.
+
+B<Current limitation:> this method does not actually block or wait for the
+timeout duration. If no queued binary message is immediately available, it
+throws an exception right away.
 
 Only returns binary messages; text messages are skipped.
 
@@ -336,6 +346,27 @@ Only returns binary messages; text messages are skipped.
 
 Waits for a text message, decodes it as JSON, and returns the resulting
 Perl data structure. Dies if the message is not valid JSON.
+
+=head1 LIMITATIONS
+
+=over 4
+
+=item *
+
+This helper does not simulate real WebSocket framing, network buffering,
+backpressure, or wire-level timing behavior.
+
+=item *
+
+The receive timeout arguments are advisory only at present; receive methods
+check the current queue immediately rather than waiting asynchronously.
+
+=item *
+
+For protocol-compliance, keepalive timing, or transport-level edge cases,
+test against L<PAGI::Server> and a real WebSocket client.
+
+=back
 
 =head2 close
 

@@ -176,6 +176,10 @@ than directly.
 SSE is a unidirectional protocol where the server sends events to the client.
 Unlike WebSocket, the client cannot send messages back (except for disconnect).
 
+B<This module is a simplified in-process model of an SSE connection.> It is
+well-suited to application-level event testing, but it does B<not> emulate
+transport timing, buffering, or wire-format behavior.
+
 =head1 CONSTRUCTOR
 
 =head2 new
@@ -221,7 +225,11 @@ wait before reconnecting.
 =back
 
 Returns undef if the connection is closed. Throws an exception if timeout is
-reached (default: 5 seconds).
+reached.
+
+B<Current limitation:> this method does not actually block or wait for the
+timeout duration. If no queued SSE event is immediately available, it throws
+an exception right away.
 
 Example:
 
@@ -242,6 +250,27 @@ This is a convenience method equivalent to:
 
     my $event = $sse->receive_event;
     my $data = decode_json($event->{data});
+
+=head1 LIMITATIONS
+
+=over 4
+
+=item *
+
+This helper does not simulate real SSE wire formatting, chunking, buffering,
+or transport timing.
+
+=item *
+
+The receive timeout arguments are advisory only at present; receive methods
+check the current queue immediately rather than waiting asynchronously.
+
+=item *
+
+For keepalive behavior, disconnect timing, or full transport-level testing,
+test against L<PAGI::Server>.
+
+=back
 
 Example:
 
