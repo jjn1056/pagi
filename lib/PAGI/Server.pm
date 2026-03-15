@@ -2621,16 +2621,6 @@ sub _pause_accepting {
     $self->{_accept_pause_timer} = $timer_id;
 }
 
-sub _log_connection_stats {
-    my ($self) = @_;
-
-    my $current = $self->connection_count;
-    my $max = $self->effective_max_connections;
-    my $pct = int(($current / $max) * 100);
-
-    $self->_log(info => "Connections: $current/$max ($pct%)");
-}
-
 # Called when a request completes (for max_requests tracking)
 sub _on_request_complete {
     my ($self) = @_;
