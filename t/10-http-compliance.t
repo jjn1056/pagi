@@ -1473,4 +1473,19 @@ subtest 'Too many headers returns 431' => sub {
     })->()->get;
 };
 
+subtest 'rejects request with both Transfer-Encoding and Content-Length' => sub {
+    use PAGI::Server::Protocol::HTTP1;
+
+    my $proto = PAGI::Server::Protocol::HTTP1->new;
+
+    my $raw = "POST /test HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nContent-Length: 10\r\n\r\n";
+    my $buf = $raw;
+    my ($req, $consumed) = $proto->parse_request(\$buf);
+
+    ok defined $req, 'got a response';
+    is $req->{error}, 400, 'returns 400 for CL/TE conflict';
+    like $req->{message}, qr/Transfer-Encoding.*Content-Length|Content-Length.*Transfer-Encoding/i,
+        'error message mentions both headers';
+};
+
 done_testing;

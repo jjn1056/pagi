@@ -264,6 +264,12 @@ sub parse_request {
         $content_length = $cl_value + 0;
     }
 
+    # RFC 9112 Section 6.3.3: reject requests with both Transfer-Encoding
+    # and Content-Length to prevent request smuggling (CL/TE desync)
+    if ($chunked && defined $content_length) {
+        return ({ error => 400, message => 'Transfer-Encoding and Content-Length are mutually exclusive' }, $header_end + 4);
+    }
+
     # Determine HTTP version (optimized: substr instead of regex)
     my $http_version = '1.1';
     if ($env{SERVER_PROTOCOL} && index($env{SERVER_PROTOCOL}, 'HTTP/') == 0) {
