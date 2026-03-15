@@ -1697,7 +1697,8 @@ sub _build_ssl_config {
     $ssl_params{SSL_server}      = 1;
     $ssl_params{SSL_cert_file}   = $ssl->{cert_file} if $ssl->{cert_file};
     $ssl_params{SSL_key_file}    = $ssl->{key_file}  if $ssl->{key_file};
-    $ssl_params{SSL_version}     = $ssl->{min_version} // 'TLSv1_2';
+    # Trailing colon means "this version or higher" — allows TLS 1.3 negotiation
+    $ssl_params{SSL_version}     = ($ssl->{min_version} // 'TLSv1_2') . ':';
     $ssl_params{SSL_cipher_list} = $ssl->{cipher_list}
         // 'ECDHE+AESGCM:DHE+AESGCM:ECDHE+CHACHA20:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK:!aECDH:!EDH-DSS-DES-CBC3-SHA:!KRB5-DES-CBC3-SHA';
 
