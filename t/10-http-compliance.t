@@ -1488,6 +1488,42 @@ subtest 'rejects request with both Transfer-Encoding and Content-Length' => sub 
         'error message mentions both headers';
 };
 
+subtest 'Transfer-Encoding validation' => sub {
+    my $proto = PAGI::Server::Protocol::HTTP1->new;
+
+    subtest 'chunked as final encoding is accepted' => sub {
+        my $raw = "POST /test HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: gzip, chunked\r\n\r\n";
+        my $buf = $raw;
+        my ($req, $consumed) = $proto->parse_request(\$buf);
+        ok $req && !$req->{error}, 'request accepted';
+        ok $req->{chunked}, 'chunked flag set';
+    };
+
+    subtest 'chunked not final is rejected' => sub {
+        my $raw = "POST /test HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked, gzip\r\n\r\n";
+        my $buf = $raw;
+        my ($req, $consumed) = $proto->parse_request(\$buf);
+        ok $req, 'got response';
+        is $req->{error}, 400, 'returns 400 when chunked is not final encoding';
+    };
+
+    subtest 'unknown transfer encoding without chunked is rejected' => sub {
+        my $raw = "POST /test HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: gzip\r\n\r\n";
+        my $buf = $raw;
+        my ($req, $consumed) = $proto->parse_request(\$buf);
+        ok $req, 'got response';
+        is $req->{error}, 501, 'returns 501 for unsupported transfer encoding';
+    };
+
+    subtest 'chunked alone is accepted' => sub {
+        my $raw = "POST /test HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n";
+        my $buf = $raw;
+        my ($req, $consumed) = $proto->parse_request(\$buf);
+        ok $req && !$req->{error}, 'request accepted';
+        ok $req->{chunked}, 'chunked flag set';
+    };
+};
+
 subtest 'rejects invalid loop_type values' => sub {
     like(
         dies {

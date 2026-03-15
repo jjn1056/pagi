@@ -201,6 +201,8 @@ sub parse_request {
     my @headers;
     my $content_length;
     my $chunked = 0;
+    my $te_bad_order = 0;
+    my $te_unsupported = 0;
     my $expect_continue = 0;
     my @cookie_values;
 
@@ -217,9 +219,17 @@ sub parse_request {
                 next;
             }
 
-            # Check for Transfer-Encoding: chunked
-            if ($header_name eq 'transfer-encoding' && $value =~ /chunked/i) {
-                $chunked = 1;
+            # RFC 9112 Section 6.1: chunked must be the final transfer coding
+            if ($header_name eq 'transfer-encoding') {
+                my @codings = map { s/^\s+|\s+$//gr } split /,/, lc($value);
+                if (@codings && $codings[-1] eq 'chunked') {
+                    $chunked = 1;
+                } elsif (grep { $_ eq 'chunked' } @codings) {
+                    # chunked present but not final — protocol error
+                    $te_bad_order = 1;
+                } else {
+                    $te_unsupported = 1;
+                }
             }
 
             # Check for Expect: 100-continue
@@ -262,6 +272,14 @@ sub parse_request {
 
         push @headers, ['content-length', $cl_value];
         $content_length = $cl_value + 0;
+    }
+
+    # Reject unsupported Transfer-Encoding before checking CL/TE conflict
+    if ($te_bad_order) {
+        return ({ error => 400, message => 'chunked must be the final Transfer-Encoding' }, $header_end + 4);
+    }
+    if ($te_unsupported) {
+        return ({ error => 501, message => 'Unsupported Transfer-Encoding' }, $header_end + 4);
     }
 
     # RFC 9112 Section 6.3.3: reject requests with both Transfer-Encoding
