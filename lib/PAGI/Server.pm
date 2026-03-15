@@ -2606,14 +2606,15 @@ sub _pause_accepting {
     }
 
     # Re-enable after duration
+    weaken(my $weak_self = $self);
     my $timer_id = $self->loop->watch_time(after => $duration, code => sub {
-        return unless $self->{running};
-        $self->{_accept_paused} = 0;
-        delete $self->{_accept_pause_timer};
-        if ($self->{listener} && $self->{listener}->read_handle) {
-            $self->{listener}->want_readready(1);
+        return unless $weak_self && $weak_self->{running};
+        $weak_self->{_accept_paused} = 0;
+        delete $weak_self->{_accept_pause_timer};
+        if ($weak_self->{listener} && $weak_self->{listener}->read_handle) {
+            $weak_self->{listener}->want_readready(1);
         }
-        $self->_log(debug => "Accept resumed after FD exhaustion pause");
+        $weak_self->_log(debug => "Accept resumed after FD exhaustion pause");
     });
 
     # Store the timer ID for cleanup
