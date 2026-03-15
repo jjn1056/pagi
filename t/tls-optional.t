@@ -45,11 +45,9 @@ subtest 'has_tls class method exists' => sub {
 };
 
 subtest 'disable_tls prevents TLS even with ssl config' => sub {
-    # With disable_tls, construction should fail with "TLS is disabled" message
-    # not with "file not found" or "TLS modules not installed"
-    my $error;
-    eval {
-        my $server = PAGI::Server->new(
+    # With disable_tls, construction should succeed — ssl config is stored but not applied
+    my $server = eval {
+        PAGI::Server->new(
             app         => $app,
             host        => '127.0.0.1',
             port        => 0,
@@ -61,9 +59,9 @@ subtest 'disable_tls prevents TLS even with ssl config' => sub {
             },
         );
     };
-    $error = $@;
 
-    like($error, qr/TLS is disabled/, 'disable_tls prevents TLS activation');
+    ok !$@, 'disable_tls with ssl does not die' or diag $@;
+    ok defined $server, 'server object created with disable_tls + ssl';
 };
 
 subtest 'server without TLS starts normally' => sub {

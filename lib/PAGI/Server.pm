@@ -1419,19 +1419,21 @@ sub _init {
     # Skip validation if TLS is explicitly disabled
     if (my $ssl = $self->{ssl}) {
         if ($self->{disable_tls}) {
-            die "TLS is disabled via disable_tls option\n";
-        }
-        if (my $cert = $ssl->{cert_file}) {
-            die "SSL certificate file not found: $cert\n" unless -e $cert;
-            die "SSL certificate file not readable: $cert\n" unless -r $cert;
-        }
-        if (my $key = $ssl->{key_file}) {
-            die "SSL key file not found: $key\n" unless -e $key;
-            die "SSL key file not readable: $key\n" unless -r $key;
-        }
-        if (my $ca = $ssl->{ca_file}) {
-            die "SSL CA file not found: $ca\n" unless -e $ca;
-            die "SSL CA file not readable: $ca\n" unless -r $ca;
+            # Skip TLS setup and cert validation — ssl config is stored but not applied
+            warn "PAGI::Server: TLS disabled via disable_tls option, ssl config ignored\n";
+        } else {
+            if (my $cert = $ssl->{cert_file}) {
+                die "SSL certificate file not found: $cert\n" unless -e $cert;
+                die "SSL certificate file not readable: $cert\n" unless -r $cert;
+            }
+            if (my $key = $ssl->{key_file}) {
+                die "SSL key file not found: $key\n" unless -e $key;
+                die "SSL key file not readable: $key\n" unless -r $key;
+            }
+            if (my $ca = $ssl->{ca_file}) {
+                die "SSL CA file not found: $ca\n" unless -e $ca;
+                die "SSL CA file not readable: $ca\n" unless -r $ca;
+            }
         }
     }
 
@@ -1663,9 +1665,9 @@ sub _future_xs_status_string {
 sub _check_tls_available {
     my ($self) = @_;
 
-    # Allow forcing TLS off for testing
+    # Allow forcing TLS off for testing — return false to skip TLS setup
     if ($self->{disable_tls}) {
-        die "TLS is disabled via disable_tls option\n";
+        return 0;
     }
 
     return 1 if $TLS_AVAILABLE;
@@ -1691,7 +1693,7 @@ sub _build_ssl_config {
     my ($self) = @_;
     my $ssl = $self->{ssl} or return;
 
-    $self->_check_tls_available;
+    return unless $self->_check_tls_available;
 
     my %ssl_params;
     $ssl_params{SSL_server}      = 1;

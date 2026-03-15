@@ -1548,4 +1548,19 @@ subtest 'rejects invalid loop_type values' => sub {
     );
 };
 
+subtest 'disable_tls with ssl config starts without dying' => sub {
+    # Should NOT die — should skip TLS setup
+    my $server = eval {
+        PAGI::Server->new(
+            app         => async sub { },
+            ssl         => { cert_file => '/nonexistent.pem', key_file => '/nonexistent.key' },
+            disable_tls => 1,
+        );
+    };
+
+    # With disable_tls, cert validation AND TLS setup should be skipped
+    ok !$@, 'does not die with disable_tls + ssl' or diag $@;
+    ok defined $server, 'server object created';
+};
+
 done_testing;
