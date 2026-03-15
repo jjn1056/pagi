@@ -1559,6 +1559,12 @@ sub configure {
     if (exists $params{access_log}) {
         $self->{access_log} = delete $params{access_log};
     }
+    if (exists $params{access_log_format}) {
+        $self->{access_log_format} = delete $params{access_log_format};
+        $self->{_access_log_formatter} = $self->_compile_access_log_format(
+            $self->{access_log_format}
+        );
+    }
     if (exists $params{quiet}) {
         $self->{quiet} = delete $params{quiet};
     }

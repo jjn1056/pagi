@@ -1563,4 +1563,21 @@ subtest 'disable_tls with ssl config starts without dying' => sub {
     ok defined $server, 'server object created';
 };
 
+subtest 'configure() recompiles access log formatter' => sub {
+    my $server = PAGI::Server->new(
+        app               => async sub { },
+        access_log_format => 'common',
+    );
+
+    my $formatter1 = $server->{_access_log_formatter};
+    ok defined $formatter1, 'initial formatter compiled';
+
+    # Reconfigure with different format
+    $server->configure(access_log_format => 'combined');
+
+    my $formatter2 = $server->{_access_log_formatter};
+    ok defined $formatter2, 'formatter still defined after reconfigure';
+    isnt $formatter2, $formatter1, 'formatter was recompiled (different reference)';
+};
+
 done_testing;
