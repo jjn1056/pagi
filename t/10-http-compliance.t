@@ -1488,4 +1488,28 @@ subtest 'rejects request with both Transfer-Encoding and Content-Length' => sub 
         'error message mentions both headers';
 };
 
+subtest 'rejects invalid loop_type values' => sub {
+    like(
+        dies {
+            PAGI::Server->new(
+                app       => async sub { },
+                loop_type => 'EPoll; system("echo pwned")',
+            )
+        },
+        qr/Invalid loop_type/,
+        'loop_type with semicolon is rejected'
+    );
+
+    like(
+        dies {
+            PAGI::Server->new(
+                app       => async sub { },
+                loop_type => 'Foo"bar',
+            )
+        },
+        qr/Invalid loop_type/,
+        'loop_type with quote is rejected'
+    );
+};
+
 done_testing;

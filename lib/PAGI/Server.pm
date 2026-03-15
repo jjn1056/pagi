@@ -1469,6 +1469,10 @@ sub _init {
     $self->{write_high_watermark} = delete $params->{write_high_watermark} // 65536;   # 64KB - pause sending above this
     $self->{write_low_watermark}  = delete $params->{write_low_watermark}  // 16384;   # 16KB - resume sending below this
     $self->{loop_type}           = delete $params->{loop_type};  # Optional loop backend (EPoll, EV, Poll, etc.)
+    if (my $lt = $self->{loop_type}) {
+        die "Invalid loop_type '$lt': must contain only letters, digits, and ::\n"
+            unless $lt =~ /\A[A-Za-z][A-Za-z0-9_]*(?:::[A-Za-z][A-Za-z0-9_]*)*\z/;
+    }
     # Dev-mode event validation: explicit flag, or auto-enable in development mode
     $self->{validate_events}     = delete $params->{validate_events}
         // (($ENV{PAGI_ENV} // '') eq 'development' ? 1 : 0);
@@ -1792,8 +1796,11 @@ sub _create_loop {
     my ($self) = @_;
 
     if (my $loop_type = $self->{loop_type}) {
+        die "Invalid loop_type '$loop_type': must contain only letters, digits, and ::\n"
+            unless $loop_type =~ /\A[A-Za-z][A-Za-z0-9_]*(?:::[A-Za-z][A-Za-z0-9_]*)*\z/;
         my $loop_class = "IO::Async::Loop::$loop_type";
-        eval "require $loop_class"
+        (my $loop_file = "$loop_class.pm") =~ s{::}{/}g;
+        eval { require $loop_file }
             or die "Cannot load loop backend '$loop_type': $@\n" .
                    "Install it with: cpanm $loop_class\n";
         return $loop_class->new;
