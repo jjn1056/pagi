@@ -3065,19 +3065,30 @@ sub _create_sse_receive {
 sub _format_sse_event {
     my ($event) = @_;
     my $sse_data = '';
+
     if (defined $event->{event} && length $event->{event}) {
+        die "Invalid SSE event name: contains newline\n"
+            if $event->{event} =~ /[\r\n]/;
         $sse_data .= "event: $event->{event}\n";
     }
+
     my $data = $event->{data} // '';
     for my $line (split /\r?\n|\r/, $data, -1) {
         $sse_data .= "data: $line\n";
     }
+
     if (defined $event->{id} && length $event->{id}) {
+        die "Invalid SSE id: contains newline\n"
+            if $event->{id} =~ /[\r\n]/;
         $sse_data .= "id: $event->{id}\n";
     }
+
     if (defined $event->{retry}) {
+        die "Invalid SSE retry: must be a non-negative integer\n"
+            unless $event->{retry} =~ /\A[0-9]+\z/;
         $sse_data .= "retry: $event->{retry}\n";
     }
+
     $sse_data .= "\n";
     return $sse_data;
 }

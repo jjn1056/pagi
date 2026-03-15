@@ -11,6 +11,7 @@ use FindBin;
 
 use lib "$FindBin::Bin/../../lib";
 use PAGI::Server;
+use PAGI::Server::Connection;
 
 plan skip_all => "Server integration tests not supported on Windows"
     if $^O eq 'MSWin32';
@@ -311,6 +312,69 @@ subtest 'Multi-line comment with CRLF line endings' => sub {
 
     $server->shutdown->get;
     $loop->remove($server);
+};
+
+subtest 'SSE event name with newline is rejected' => sub {
+    like(
+        dies {
+            PAGI::Server::Connection::_format_sse_event({
+                event => "click\ndata: injected",
+                data  => 'payload',
+            })
+        },
+        qr/Invalid SSE event.*newline/i,
+        'newline in event name dies'
+    );
+};
+
+subtest 'SSE id with newline is rejected' => sub {
+    like(
+        dies {
+            PAGI::Server::Connection::_format_sse_event({
+                data => 'payload',
+                id   => "123\ndata: injected",
+            })
+        },
+        qr/Invalid SSE id.*newline/i,
+        'newline in id dies'
+    );
+};
+
+subtest 'SSE retry must be non-negative integer' => sub {
+    like(
+        dies {
+            PAGI::Server::Connection::_format_sse_event({
+                data  => 'payload',
+                retry => "5000\ndata: injected",
+            })
+        },
+        qr/Invalid SSE retry/i,
+        'newline in retry dies'
+    );
+
+    like(
+        dies {
+            PAGI::Server::Connection::_format_sse_event({
+                data  => 'payload',
+                retry => 'abc',
+            })
+        },
+        qr/Invalid SSE retry/i,
+        'non-numeric retry dies'
+    );
+};
+
+subtest 'SSE valid event/id/retry fields pass through' => sub {
+    my $formatted = PAGI::Server::Connection::_format_sse_event({
+        event => 'click',
+        data  => 'payload',
+        id    => '42',
+        retry => 3000,
+    });
+    like $formatted, qr/^event: click\n/, 'event field present';
+    like $formatted, qr/^id: 42\n/m, 'id field present';
+    like $formatted, qr/^retry: 3000\n/m, 'retry field present';
+    like $formatted, qr/^data: payload\n/m, 'data field present';
 };
 
 done_testing;
