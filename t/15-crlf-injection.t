@@ -502,4 +502,27 @@ subtest 'Various CRLF encoding attacks' => sub {
     }
 };
 
+subtest 'trailer header injection is blocked' => sub {
+    my $proto = PAGI::Server::Protocol::HTTP1->new;
+
+    # serialize_trailers should reject CRLF in trailer values
+    like(
+        dies { $proto->serialize_trailers([['x-checksum', "abc\r\nInjected: header"]]) },
+        qr/Invalid header value/,
+        'CRLF in trailer value is rejected'
+    );
+
+    like(
+        dies { $proto->serialize_trailers([["bad\r\nname", 'value']]) },
+        qr/Invalid header name/,
+        'CRLF in trailer name is rejected'
+    );
+
+    like(
+        dies { $proto->serialize_trailers([["good-name", "has\0null"]]) },
+        qr/Invalid header value/,
+        'null byte in trailer value is rejected'
+    );
+};
+
 done_testing;

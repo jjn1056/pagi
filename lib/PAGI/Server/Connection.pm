@@ -2451,6 +2451,8 @@ sub _create_send {
             my $trailers = "0\r\n";
             for my $header (@$trailer_headers) {
                 my ($name, $value) = @$header;
+                $name  = _validate_header_name($name);
+                $value = _validate_header_value($value);
                 $trailers .= "$name: $value\r\n";
             }
             $trailers .= "\r\n";
