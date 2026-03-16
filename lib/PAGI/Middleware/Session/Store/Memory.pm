@@ -59,7 +59,8 @@ sub get {
     my $future = $store->set($id, $data);
 
 Stores the session data hashref under the given ID. Returns a Future
-resolving to 1.
+resolving to the transport value (the session ID for server-side stores,
+or encoded data for cookie stores).
 
 =cut
 
@@ -67,7 +68,7 @@ sub set {
     my ($self, $id, $data) = @_;
 
     $sessions{$id} = $data;
-    return Future->done(1);
+    return Future->done($id);
 }
 
 =head2 delete

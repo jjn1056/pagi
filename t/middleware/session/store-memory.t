@@ -58,7 +58,7 @@ subtest 'Store::Memory - set and get round-trip' => sub {
         async sub {
             my $data = { user_id => 42, name => 'Alice' };
             my $set_result = await $store->set('sess1', $data);
-            is $set_result, 1, 'set returns 1';
+            is $set_result, 'sess1', 'set returns transport value (session ID)';
 
             my $got = await $store->get('sess1');
             is $got, { user_id => 42, name => 'Alice' }, 'get returns stored data';

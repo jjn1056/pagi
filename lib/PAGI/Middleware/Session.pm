@@ -309,13 +309,14 @@ sub wrap {
         my $wrapped_send = async sub  {
         my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
-                # Save session
-                await $self->_save_session($session_id, $session);
+                # Save session — store returns transport value
+                # (session ID for server-side stores, encoded blob for cookie stores)
+                my $transport_value = await $self->_save_session($session_id, $session);
 
-                # Inject session ID into response if new or regenerated
+                # Inject transport value into response if new or regenerated
                 if ($is_new || $session->{_regenerated}) {
                     my @headers = @{$event->{headers} // []};
-                    $self->{state}->inject(\@headers, $session_id, {});
+                    $self->{state}->inject(\@headers, $transport_value, {});
                     await $send->({
                         %$event,
                         headers => \@headers,
@@ -333,8 +334,10 @@ sub wrap {
 async sub _load_or_create_session {
     my ($self, $session_id) = @_;
 
-    # Validate session ID format and load existing session
-    if ($session_id && $self->_valid_session_id($session_id)) {
+    # Try to load existing session. The store handles validation —
+    # server-side stores return undef for unknown IDs, cookie stores
+    # return undef if decoding/verification fails.
+    if (defined $session_id && length $session_id) {
         my $session = await $self->_get_session($session_id);
         if ($session && !$self->_is_expired($session)) {
             $session->{_last_access} = time();
@@ -360,12 +363,6 @@ sub _generate_session_id {
     my $random = unpack('H*', secure_random_bytes(16));
     my $time = time();
     return sha256_hex("$random-$time-$self->{secret}");
-}
-
-sub _valid_session_id {
-    my ($self, $id) = @_;
-
-    return $id =~ /^[a-f0-9]{64}$/;
 }
 
 async sub _get_session {
