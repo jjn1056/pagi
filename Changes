@@ -1,5 +1,37 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001020 - 2026-03-16
+  [Security Hardening]
+  - Reject requests with both Transfer-Encoding and Content-Length (RFC 9112)
+  - Validate Transfer-Encoding per RFC 9112 Section 6.1 (chunked must be final)
+  - Validate trailer headers for CRLF injection
+  - Validate SSE event/id/retry fields against newline injection
+  - Prevent code injection via loop_type parameter (block eval, not string eval)
+  - Fix TLS config to allow TLS 1.3 negotiation (SSL_version trailing colon)
+
+  [Session Middleware Refactor]
+  - Pluggable State/Store architecture for PAGI::Middleware::Session
+  - State classes: Cookie (default), Header, Bearer, Callback
+  - Store classes: Memory (default, dev/test), with async Future-based interface
+  - PAGI::Session standalone helper with strict get() (dies on missing key)
+  - PAGI::Session accepts raw data, scope hashref, or object with ->scope
+  - Bulk operations: set(k1 => v1, k2 => v2), delete(@keys), slice(@keys), clear()
+  - Session destroy lifecycle: deletes from store, clears cookie via State::clear()
+  - Session regenerate lifecycle: generates new ID, deletes old, preserves data
+  - Idempotency: middleware skips if pagi.session already in scope
+  - Reserved keys (_destroyed, _regenerated) documented as middleware-consumed flags
+  - Store::Cookie extracted to separate CPAN dist (PAGI-Middleware-Session-Store-Cookie)
+
+  [Bug Fixes]
+  - disable_tls skips TLS setup instead of dying
+  - Recompile access log formatter on configure() changes
+  - Weaken $self in _pause_accepting timer closure (reference cycle fix)
+  - Replace Future::IO->load_impl('IOAsync') with use Future::IO::Impl::IOAsync
+    (fixes compatibility with Future::IO 0.22+)
+
+  [Cleanup]
+  - Remove unused _log_connection_stats method
+
 0.001019 - 2026-02-19
   [New Features]
   - Router: rewrite _compile_path() as tokenizer with proper regex escaping,

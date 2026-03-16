@@ -10,7 +10,7 @@ requires 'Future', '0.50';
 requires 'Future::AsyncAwait', '0.66';
 
 # Loop-agnostic async I/O (for apps - optional but recommended)
-recommends 'Future::IO', '0.16';  # Provides sleep, read, write without loop coupling
+recommends 'Future::IO', '0.23';  # Provides sleep, read, write without loop coupling
 
 # HTTP parsing
 requires 'HTTP::Parser::XS', '0.17';
