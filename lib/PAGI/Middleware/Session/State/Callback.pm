@@ -46,6 +46,12 @@ A coderef that receives C<($scope)> and returns the session ID or undef.
 A coderef that receives C<(\@headers, $id, \%options)> and modifies the
 response headers. Defaults to a no-op if not provided.
 
+=item * clear (optional)
+
+A coderef that receives C<(\@headers)> and clears the client-side
+session state. Called when a session is destroyed. Defaults to a
+no-op if not provided.
+
 =back
 
 =cut
@@ -90,6 +96,25 @@ sub inject {
 
     if ($self->{inject}) {
         $self->{inject}->($headers, $id, $options);
+    }
+
+    return;
+}
+
+=head2 clear
+
+    $state->clear(\@headers);
+
+Calls the configured C<clear> coderef with C<(\@headers)> if one was
+provided. Otherwise does nothing.
+
+=cut
+
+sub clear {
+    my ($self, $headers) = @_;
+
+    if ($self->{clear}) {
+        return $self->{clear}->($headers);
     }
 
     return;

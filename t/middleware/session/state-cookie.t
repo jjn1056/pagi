@@ -150,4 +150,68 @@ subtest 'State::Cookie - inject pushes onto existing headers' => sub {
     is $headers[1][0], 'Set-Cookie', 'Set-Cookie appended';
 };
 
+# ===================
+# State::Cookie - clear
+# ===================
+
+subtest 'State::Cookie - clear produces Set-Cookie with Max-Age=0' => sub {
+    my $state = PAGI::Middleware::Session::State::Cookie->new();
+    my @headers;
+    $state->clear(\@headers);
+
+    is scalar(@headers), 1, 'one header added';
+    is $headers[0][0], 'Set-Cookie', 'header name is Set-Cookie';
+    like $headers[0][1], qr/pagi_session=/, 'contains cookie name';
+    like $headers[0][1], qr/Max-Age=0/, 'Max-Age is 0';
+    like $headers[0][1], qr/Path=\//, 'contains Path';
+};
+
+subtest 'State::Cookie - clear includes HttpOnly if configured' => sub {
+    my $state = PAGI::Middleware::Session::State::Cookie->new(
+        cookie_options => {
+            httponly => 1,
+            path     => '/app',
+        },
+    );
+    my @headers;
+    $state->clear(\@headers);
+
+    like $headers[0][1], qr/HttpOnly/, 'contains HttpOnly';
+    like $headers[0][1], qr{Path=/app}, 'uses configured path';
+};
+
+subtest 'State::Cookie - clear omits HttpOnly when not configured' => sub {
+    my $state = PAGI::Middleware::Session::State::Cookie->new(
+        cookie_options => {
+            path => '/',
+        },
+    );
+    my @headers;
+    $state->clear(\@headers);
+
+    unlike $headers[0][1], qr/HttpOnly/, 'no HttpOnly when not configured';
+};
+
+subtest 'State::Cookie - clear uses correct cookie name' => sub {
+    my $state = PAGI::Middleware::Session::State::Cookie->new(
+        cookie_name => 'my_custom_session',
+    );
+    my @headers;
+    $state->clear(\@headers);
+
+    like $headers[0][1], qr/my_custom_session=/, 'uses custom cookie name';
+    like $headers[0][1], qr/Max-Age=0/, 'Max-Age is 0';
+};
+
+# ===================
+# State base class - clear is no-op
+# ===================
+
+subtest 'State base class - clear is no-op' => sub {
+    my $state = PAGI::Middleware::Session::State->new();
+    my @headers;
+    $state->clear(\@headers);
+    is scalar(@headers), 0, 'no headers added by base clear()';
+};
+
 done_testing;

@@ -74,6 +74,23 @@ sub inject {
     die ref($self) . " must implement inject()";
 }
 
+=head2 clear
+
+    $state->clear(\@headers);
+
+Clear the client-side session state (e.g., expire a cookie). Called
+when a session is destroyed. The default implementation is a no-op,
+suitable for state handlers where the client manages transport
+(Header, Bearer). Cookie-based state handlers should override this
+to emit an expired Set-Cookie header.
+
+=cut
+
+sub clear {
+    my ($self, $headers) = @_;
+    # Default: no-op (Header/Bearer don't need to clear anything)
+}
+
 1;
 
 __END__

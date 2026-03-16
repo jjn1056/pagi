@@ -100,6 +100,22 @@ sub inject {
     push @$headers, ['Set-Cookie', $cookie];
 }
 
+=head2 clear
+
+    $state->clear(\@headers);
+
+Expire the session cookie by pushing a Set-Cookie header with
+C<Max-Age=0>. Called when a session is destroyed.
+
+=cut
+
+sub clear {
+    my ($self, $headers) = @_;
+    my $cookie = "$self->{cookie_name}=; Path=" . ($self->{cookie_options}{path} // '/') . "; Max-Age=0";
+    $cookie .= "; HttpOnly" if $self->{cookie_options}{httponly};
+    push @$headers, ['Set-Cookie', $cookie];
+}
+
 sub _get_header {
     my ($self, $scope, $name) = @_;
 

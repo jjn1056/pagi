@@ -220,4 +220,115 @@ subtest 'idempotency: normal behavior when no pre-existing session' => sub {
     ok scalar(@set_cookies), 'Set-Cookie header added for new session';
 };
 
+# ===================
+# Integration: destroy deletes session and clears cookie
+# ===================
+
+subtest 'destroy deletes session and clears cookie' => sub {
+    PAGI::Middleware::Session::Store::Memory->clear_all;
+    my $session_mw = PAGI::Middleware::Session->new(secret => 'test-secret');
+
+    # Create a session first
+    my $session_id;
+    my $app1 = async sub {
+        my ($scope, $receive, $send) = @_;
+        $session_id = $scope->{'pagi.session_id'};
+        $scope->{'pagi.session'}{user_id} = 42;
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+    run_async { $session_mw->wrap($app1)->(make_scope(), async sub { {} }, async sub { }) };
+
+    # Now destroy it
+    my $app2 = async sub {
+        my ($scope, $receive, $send) = @_;
+        $scope->{'pagi.session'}{_destroyed} = 1;
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my @events;
+    my $scope2 = make_scope(headers => [['Cookie', "pagi_session=$session_id"]]);
+    run_async {
+        $session_mw->wrap($app2)->($scope2, async sub { {} }, async sub { push @events, $_[0] })
+    };
+
+    # Should have a Set-Cookie with Max-Age=0
+    my @cookies = map { $_->[1] } grep { lc($_->[0]) eq 'set-cookie' } @{$events[0]{headers}};
+    ok(scalar @cookies, 'has Set-Cookie header');
+    like($cookies[0], qr/Max-Age=0/, 'cookie expired');
+
+    # Session should be gone from store
+    my $app3 = async sub {
+        my ($scope, $receive, $send) = @_;
+        # Session should NOT be restored — it was destroyed
+        ok(!exists $scope->{'pagi.session'}{user_id}, 'session data gone after destroy');
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+    my $scope3 = make_scope(headers => [['Cookie', "pagi_session=$session_id"]]);
+    run_async { $session_mw->wrap($app3)->($scope3, async sub { {} }, async sub { }) };
+};
+
+# ===================
+# Integration: regenerate creates new session ID and deletes old
+# ===================
+
+subtest 'regenerate creates new session ID and deletes old' => sub {
+    PAGI::Middleware::Session::Store::Memory->clear_all;
+    my $session_mw = PAGI::Middleware::Session->new(secret => 'test-secret');
+
+    # Create a session
+    my $old_id;
+    my $app1 = async sub {
+        my ($scope, $receive, $send) = @_;
+        $old_id = $scope->{'pagi.session_id'};
+        $scope->{'pagi.session'}{user_id} = 42;
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+    run_async { $session_mw->wrap($app1)->(make_scope(), async sub { {} }, async sub { }) };
+
+    # Regenerate the session ID (simulates post-login)
+    my $new_id;
+    my $app2 = async sub {
+        my ($scope, $receive, $send) = @_;
+        $scope->{'pagi.session'}{_regenerated} = 1;
+        $scope->{'pagi.session'}{logged_in} = 1;
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my @events;
+    my $scope2 = make_scope(headers => [['Cookie', "pagi_session=$old_id"]]);
+    run_async {
+        $session_mw->wrap($app2)->($scope2, async sub { {} }, async sub { push @events, $_[0] })
+    };
+
+    # Extract new session ID from Set-Cookie
+    my @cookies = map { $_->[1] } grep { lc($_->[0]) eq 'set-cookie' } @{$events[0]{headers}};
+    ok(scalar @cookies, 'has Set-Cookie header after regenerate');
+    ($new_id) = $cookies[0] =~ /pagi_session=([a-f0-9]+)/;
+    ok($new_id, 'new session ID in cookie');
+    isnt($new_id, $old_id, 'new ID differs from old ID');
+
+    # Old session ID should not load data
+    my $captured_session;
+    my $app3 = async sub {
+        my ($scope, $receive, $send) = @_;
+        $captured_session = $scope->{'pagi.session'};
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+    my $scope3 = make_scope(headers => [['Cookie', "pagi_session=$old_id"]]);
+    run_async { $session_mw->wrap($app3)->($scope3, async sub { {} }, async sub { }) };
+    ok(!$captured_session->{user_id}, 'old session ID returns no data');
+
+    # New session ID should have the data
+    my $scope4 = make_scope(headers => [['Cookie', "pagi_session=$new_id"]]);
+    run_async { $session_mw->wrap($app3)->($scope4, async sub { {} }, async sub { }) };
+    is($captured_session->{user_id}, 42, 'data preserved under new ID');
+    is($captured_session->{logged_in}, 1, 'new data also present');
+};
+
 done_testing;

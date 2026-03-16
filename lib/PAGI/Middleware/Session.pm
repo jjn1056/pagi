@@ -306,23 +306,36 @@ sub wrap {
         };
 
         # Wrap send to save session and inject state
-        my $wrapped_send = async sub  {
-        my ($event) = @_;
+        my $wrapped_send = async sub {
+            my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
-                # Save session — store returns transport value
-                # (session ID for server-side stores, encoded blob for cookie stores)
-                my $transport_value = await $self->_save_session($session_id, $session);
+                my @headers = @{$event->{headers} // []};
 
-                # Inject transport value into response if new or regenerated
-                if ($is_new || $session->{_regenerated}) {
-                    my @headers = @{$event->{headers} // []};
-                    $self->{state}->inject(\@headers, $transport_value, {});
-                    await $send->({
-                        %$event,
-                        headers => \@headers,
-                    });
-                    return;
+                if ($session->{_destroyed}) {
+                    # Destroy: delete from store, clear client state
+                    await $self->{store}->delete($session_id);
+                    $self->{state}->clear(\@headers);
                 }
+                elsif ($session->{_regenerated}) {
+                    # Regenerate: new ID, delete old, save under new
+                    my $old_id = $session_id;
+                    $session_id = $self->_generate_session_id();
+                    $session->{_id} = $session_id;
+                    delete $session->{_regenerated};
+                    await $self->{store}->delete($old_id);
+                    my $transport = await $self->_save_session($session_id, $session);
+                    $self->{state}->inject(\@headers, $transport, {});
+                }
+                else {
+                    # Normal: save and inject if new
+                    my $transport = await $self->_save_session($session_id, $session);
+                    if ($is_new) {
+                        $self->{state}->inject(\@headers, $transport, {});
+                    }
+                }
+
+                await $send->({ %$event, headers => \@headers });
+                return;
             }
             await $send->($event);
         };
@@ -412,19 +425,36 @@ The session ID string.
 
 =head1 SESSION DATA
 
-Special session keys (reserved, prefixed with C<_>):
+Keys starting with C<_> are B<reserved> for internal use by the session
+middleware. Do not use underscore-prefixed keys for application data.
+
+=head2 Reserved keys (read-only metadata)
 
 =over 4
 
-=item * _id - Session ID
+=item * C<_id> - Session ID
 
-=item * _created - Unix timestamp when session was created
+=item * C<_created> - Unix timestamp when session was created
 
-=item * _last_access - Unix timestamp of last access
+=item * C<_last_access> - Unix timestamp of last access (updated each request)
 
-=item * _regenerated - Set to 1 to trigger session ID regeneration on response
+=back
 
-=item * _destroyed - Set to 1 to mark session for deletion
+=head2 Reserved keys (middleware-consumed flags)
+
+These flags are set by the application and consumed by the middleware
+during response handling. They are deleted after processing.
+
+=over 4
+
+=item * C<_regenerated> - Set to 1 to regenerate the session ID on this
+response. The old session is deleted from the store and a new ID is
+issued. B<Always do this after authentication> to prevent session
+fixation attacks.
+
+=item * C<_destroyed> - Set to 1 to destroy the session entirely. The
+session data is deleted from the store and the client-side state
+(cookie) is cleared. Use this for logout.
 
 =back
 
