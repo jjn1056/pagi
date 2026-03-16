@@ -63,11 +63,18 @@ plain HTTP.
 
 Session expiration time in seconds.
 
-=item * store (default: in-memory hash)
+=item * state (optional)
 
-Session store object for production use. Must implement C<get($id)>,
-C<set($id, $data)>, C<delete($id)>. See warning above about the default
-in-memory store.
+A session state object that implements C<extract($scope)> and
+C<inject(\@headers, $id, \%options)>. If not provided, a
+L<PAGI::Middleware::Session::State::Cookie> instance is created
+using C<cookie_name>, C<cookie_options>, and C<expire>.
+
+=item * store (optional)
+
+A session store object that implements async C<get($id)>,
+C<set($id, $data)>, C<delete($id)>. If not provided, a
+L<PAGI::Middleware::Session::Store::Memory> instance is created.
 
 =back
 
@@ -119,21 +126,36 @@ Then use it:
 
 =cut
 
-my %sessions;  # In-memory session store
-
 sub _init {
     my ($self, $config) = @_;
 
     $self->{secret} = $config->{secret}
         // die "Session middleware requires 'secret' option";
-    $self->{cookie_name} = $config->{cookie_name} // 'pagi_session';
-    $self->{cookie_options} = $config->{cookie_options} // {
-        httponly => 1,
-        path     => '/',
-        samesite => 'Lax',
-    };
     $self->{expire} = $config->{expire} // 3600;
-    $self->{store} = $config->{store};
+
+    # State: pluggable session ID transport
+    if ($config->{state}) {
+        $self->{state} = $config->{state};
+    } else {
+        require PAGI::Middleware::Session::State::Cookie;
+        $self->{state} = PAGI::Middleware::Session::State::Cookie->new(
+            cookie_name    => $config->{cookie_name} // 'pagi_session',
+            cookie_options => $config->{cookie_options} // {
+                httponly => 1,
+                path     => '/',
+                samesite => 'Lax',
+            },
+            expire => $self->{expire},
+        );
+    }
+
+    # Store: pluggable async session storage
+    if ($config->{store}) {
+        $self->{store} = $config->{store};
+    } else {
+        require PAGI::Middleware::Session::Store::Memory;
+        $self->{store} = PAGI::Middleware::Session::Store::Memory->new();
+    }
 }
 
 sub wrap {
@@ -146,13 +168,19 @@ sub wrap {
             return;
         }
 
-        # Parse cookies to get session ID
-        my $cookie_header = $self->_get_header($scope, 'cookie') // '';
-        my $cookies = $self->_parse_cookies($cookie_header);
-        my $session_id = $cookies->{$self->{cookie_name}};
+        # Idempotency: skip if session already exists in scope
+        if (exists $scope->{'pagi.session'}) {
+            warn "Session middleware: pagi.session already in scope, skipping\n"
+                if $ENV{PAGI_DEBUG};
+            await $app->($scope, $receive, $send);
+            return;
+        }
+
+        # Extract session ID via state handler
+        my $session_id = $self->{state}->extract($scope);
 
         # Validate and load session
-        my ($session, $is_new) = $self->_load_or_create_session($session_id);
+        my ($session, $is_new) = await $self->_load_or_create_session($session_id);
         $session_id = $session->{_id};
 
         # Add session to scope
@@ -162,21 +190,17 @@ sub wrap {
             'pagi.session_id' => $session_id,
         };
 
-        # Track if session was modified
-        my $original_session = { %$session };
-
-        # Wrap send to set session cookie
+        # Wrap send to save session and inject state
         my $wrapped_send = async sub  {
         my ($event) = @_;
             if ($event->{type} eq 'http.response.start') {
-                # Save session if modified
-                $self->_save_session($session_id, $session);
+                # Save session
+                await $self->_save_session($session_id, $session);
 
-                # Set session cookie if new or regenerated
+                # Inject session ID into response if new or regenerated
                 if ($is_new || $session->{_regenerated}) {
                     my @headers = @{$event->{headers} // []};
-                    my $cookie = $self->_format_cookie($session_id);
-                    push @headers, ['Set-Cookie', $cookie];
+                    $self->{state}->inject(\@headers, $session_id, {});
                     await $send->({
                         %$event,
                         headers => \@headers,
@@ -191,14 +215,12 @@ sub wrap {
     };
 }
 
-sub _load_or_create_session {
+async sub _load_or_create_session {
     my ($self, $session_id) = @_;
-
-    my $is_new = 0;
 
     # Validate session ID format and load existing session
     if ($session_id && $self->_valid_session_id($session_id)) {
-        my $session = $self->_get_session($session_id);
+        my $session = await $self->_get_session($session_id);
         if ($session && !$self->_is_expired($session)) {
             $session->{_last_access} = time();
             return ($session, 0);
@@ -231,22 +253,14 @@ sub _valid_session_id {
     return $id =~ /^[a-f0-9]{64}$/;
 }
 
-sub _get_session {
+async sub _get_session {
     my ($self, $id) = @_;
-
-    if ($self->{store}) {
-        return $self->{store}->get($id);
-    }
-    return $sessions{$id};
+    return await $self->{store}->get($id);
 }
 
-sub _save_session {
+async sub _save_session {
     my ($self, $id, $session) = @_;
-
-    if ($self->{store}) {
-        return $self->{store}->set($id, $session);
-    }
-    $sessions{$id} = $session;
+    return await $self->{store}->set($id, $session);
 }
 
 sub _is_expired {
@@ -256,51 +270,10 @@ sub _is_expired {
     return (time() - $last_access) > $self->{expire};
 }
 
-sub _format_cookie {
-    my ($self, $session_id) = @_;
-
-    my $cookie = "$self->{cookie_name}=$session_id";
-    my $opts = $self->{cookie_options};
-
-    $cookie .= "; Path=" . ($opts->{path} // '/');
-    $cookie .= "; HttpOnly" if $opts->{httponly};
-    $cookie .= "; Secure" if $opts->{secure};
-    $cookie .= "; SameSite=$opts->{samesite}" if $opts->{samesite};
-    $cookie .= "; Max-Age=$self->{expire}" if $self->{expire};
-
-    return $cookie;
-}
-
-sub _parse_cookies {
-    my ($self, $header) = @_;
-
-    my %cookies;
-    for my $pair (split /\s*;\s*/, $header) {
-        my ($name, $value) = split /=/, $pair, 2;
-        next unless defined $name && $name ne '';
-        $name =~ s/^\s+//;
-        $name =~ s/\s+$//;
-        $value //= '';
-        $value =~ s/^\s+//;
-        $value =~ s/\s+$//;
-        $cookies{$name} = $value;
-    }
-    return \%cookies;
-}
-
-sub _get_header {
-    my ($self, $scope, $name) = @_;
-
-    $name = lc($name);
-    for my $h (@{$scope->{headers} // []}) {
-        return $h->[1] if lc($h->[0]) eq $name;
-    }
-    return;
-}
-
 # Class method to clear all sessions (useful for testing)
 sub clear_sessions {
-    %sessions = ();
+    require PAGI::Middleware::Session::Store::Memory;
+    PAGI::Middleware::Session::Store::Memory::clear_all();
 }
 
 1;
