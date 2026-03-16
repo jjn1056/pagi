@@ -179,6 +179,88 @@ subtest 'construct from scope data' => sub {
 };
 
 # ===================
+# Bulk set
+# ===================
+
+subtest 'set multiple keys at once' => sub {
+    my $data = { _id => 'bulk' };
+    my $session = PAGI::Session->new($data);
+    $session->set(user_id => 42, role => 'admin', email => 'john@test.com');
+    is($data->{user_id}, 42, 'user_id set');
+    is($data->{role}, 'admin', 'role set');
+    is($data->{email}, 'john@test.com', 'email set');
+};
+
+subtest 'set dies on odd args greater than one' => sub {
+    my $session = PAGI::Session->new({ _id => 'x' });
+    ok(dies { $session->set('a', 'b', 'c') }, 'dies on 3 args');
+};
+
+# ===================
+# Bulk delete
+# ===================
+
+subtest 'delete multiple keys at once' => sub {
+    my $data = { _id => 'del', a => 1, b => 2, c => 3, d => 4 };
+    my $session = PAGI::Session->new($data);
+    $session->delete('a', 'c');
+    ok(!exists $data->{a}, 'a deleted');
+    is($data->{b}, 2, 'b preserved');
+    ok(!exists $data->{c}, 'c deleted');
+    is($data->{d}, 4, 'd preserved');
+};
+
+# ===================
+# Slice
+# ===================
+
+subtest 'slice returns hash of existing keys' => sub {
+    my $data = { _id => 'sl', user_id => 42, role => 'admin', email => 'j@t.com' };
+    my $session = PAGI::Session->new($data);
+    my %result = $session->slice('user_id', 'role');
+    is(\%result, { user_id => 42, role => 'admin' }, 'got requested keys');
+};
+
+subtest 'slice skips missing keys silently' => sub {
+    my $data = { _id => 'sl', user_id => 42 };
+    my $session = PAGI::Session->new($data);
+    my %result = $session->slice('user_id', 'role', 'missing');
+    is(\%result, { user_id => 42 }, 'only existing keys returned');
+};
+
+subtest 'slice returns empty hash when no keys match' => sub {
+    my $data = { _id => 'sl' };
+    my $session = PAGI::Session->new($data);
+    my %result = $session->slice('nope', 'nada');
+    is(\%result, {}, 'empty hash');
+};
+
+# ===================
+# Clear
+# ===================
+
+subtest 'clear removes user keys, preserves internal' => sub {
+    my $data = { _id => 'cl', _created => 100, _last_access => 200,
+                 user_id => 42, role => 'admin', cart => [1,2,3] };
+    my $session = PAGI::Session->new($data);
+    $session->clear;
+
+    is($data->{_id}, 'cl', '_id preserved');
+    is($data->{_created}, 100, '_created preserved');
+    is($data->{_last_access}, 200, '_last_access preserved');
+    ok(!exists $data->{user_id}, 'user_id cleared');
+    ok(!exists $data->{role}, 'role cleared');
+    ok(!exists $data->{cart}, 'cart cleared');
+};
+
+subtest 'clear on empty session is harmless' => sub {
+    my $data = { _id => 'empty' };
+    my $session = PAGI::Session->new($data);
+    $session->clear;  # should not die
+    is($data->{_id}, 'empty', '_id still there');
+};
+
+# ===================
 # Constructor flexibility
 # ===================
 

@@ -123,14 +123,24 @@ sub get {
 =head2 set
 
     $session->set('key', $value);
+    $session->set(user_id => 42, role => 'admin', email => 'john@example.com');
 
-Sets a key in the session data.
+Sets one or more keys in the session data. With two arguments, sets a
+single key. With more arguments, treats them as key-value pairs.
+Dies if given an odd number of arguments greater than one.
 
 =cut
 
 sub set {
-    my ($self, $key, $value) = @_;
-    $self->{_data}{$key} = $value;
+    my ($self, @args) = @_;
+    die "set() requires key => value pairs\n" if @args > 2 && @args % 2;
+    if (@args == 2) {
+        $self->{_data}{$args[0]} = $args[1];
+    }
+    else {
+        my %pairs = @args;
+        $self->{_data}{$_} = $pairs{$_} for CORE::keys %pairs;
+    }
 }
 
 =head2 exists
@@ -149,14 +159,15 @@ sub exists {
 =head2 delete
 
     $session->delete('key');
+    $session->delete('k1', 'k2', 'k3');
 
-Removes a key from the session data.
+Removes one or more keys from the session data.
 
 =cut
 
 sub delete {
-    my ($self, $key) = @_;
-    delete $self->{_data}{$key};
+    my ($self, @keys) = @_;
+    delete $self->{_data}{$_} for @keys;
 }
 
 =head2 keys
@@ -171,6 +182,39 @@ with an underscore (e.g. C<_id>, C<_created>, C<_last_access>).
 sub keys {
     my ($self) = @_;
     return grep { !/^_/ } keys %{$self->{_data}};
+}
+
+=head2 slice
+
+    my %data = $session->slice('user_id', 'role', 'email');
+
+Returns a hash of key-value pairs for the requested keys. Keys that
+do not exist in the session are silently skipped (unlike C<get()>,
+which dies on missing keys).
+
+=cut
+
+sub slice {
+    my ($self, @keys) = @_;
+    return map { CORE::exists($self->{_data}{$_}) ? ($_ => $self->{_data}{$_}) : () } @keys;
+}
+
+=head2 clear
+
+    $session->clear;
+
+Removes all user keys from the session, preserving internal
+C<_>-prefixed keys (C<_id>, C<_created>, C<_last_access>, etc.).
+Use this for a "soft logout" that keeps the session ID but wipes
+application data.
+
+=cut
+
+sub clear {
+    my ($self) = @_;
+    for my $key ($self->keys) {
+        delete $self->{_data}{$key};
+    }
 }
 
 =head2 regenerate
