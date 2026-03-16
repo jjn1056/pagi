@@ -153,8 +153,12 @@ sub keys {
 
     $session->regenerate;
 
-Requests session ID regeneration by setting C<< $data->{_regenerated} = 1 >>.
-The session middleware will assign a new ID on the next response.
+Requests session ID regeneration. The middleware will generate a new
+session ID, delete the old session from the store, save session data
+under the new ID, and update the client cookie/header.
+
+B<Security:> Always call this after authentication (login) to prevent
+session fixation attacks.
 
 =cut
 
@@ -167,8 +171,9 @@ sub regenerate {
 
     $session->destroy;
 
-Marks the session for destruction by setting C<< $data->{_destroyed} = 1 >>.
-The session middleware will delete the session data on the next response.
+Marks the session for destruction. The middleware will delete the
+session data from the store and clear the client-side state (e.g.,
+expire the cookie). Use this for logout.
 
 =cut
 
