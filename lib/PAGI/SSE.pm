@@ -547,8 +547,7 @@ async sub every {
     # Future::IO must be configured with a backend
     no warnings 'once';
     croak "Future::IO backend not configured. Add to your app.pl:\n"
-        . "  use Future::IO;\n"
-        . "  Future::IO->load_impl('IOAsync');\n"
+        . "  use Future::IO::Impl::IOAsync;\n"
         unless $Future::IO::IMPL;
 
     await $self->start unless $self->is_started;
@@ -950,24 +949,17 @@ using C<every()>.
 B<For apps running under PAGI::Server> (using C<pagi-server>):
 
     # app.pl
-    use Future::IO;
-    Future::IO->load_impl('IOAsync');
+    use Future::IO::Impl::IOAsync;
 
     # ... rest of your app
 
 B<For apps running under other event loops>:
 
-    # If using IO::Async directly (true if you are using PAGI::Server).
-    use Future::IO;
-    Future::IO->load_impl('IOAsync');
+    # If using IO::Async (PAGI::Server)
+    use Future::IO::Impl::IOAsync;
 
     # If using UV
-    use Future::IO;
-    Future::IO->load_impl('UV');
-
-    # Or let Future::IO choose the best available
-    use Future::IO;
-    Future::IO->load_best_impl;
+    use Future::IO::Impl::UV;
 
 Parameters:
 

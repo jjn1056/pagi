@@ -86,9 +86,8 @@ PAGI::Server - PAGI Reference Server Implementation
     use PAGI::Server;
 
     # If using Future::IO libraries (Async::Redis, SSE->every, etc.)
-    # configure Future::IO BEFORE loading them:
-    use Future::IO;
-    Future::IO->load_impl('IOAsync');
+    # load the IO::Async implementation BEFORE loading them:
+    use Future::IO::Impl::IOAsync;
 
     my $loop = IO::Async::Loop->new;
 
@@ -3300,8 +3299,7 @@ yourself before loading any Future::IO-based libraries:
     use PAGI::Server;
 
     # Configure Future::IO BEFORE loading Future::IO-based libraries
-    use Future::IO;
-    Future::IO->load_impl('IOAsync');
+    use Future::IO::Impl::IOAsync;
 
     # Now Future::IO libraries work correctly
     use Async::Redis;

@@ -8,9 +8,8 @@ use FindBin;
 use lib "$FindBin::Bin/../lib";
 
 # Configure Future::IO for tests that use Future::IO->sleep()
-eval { require Future::IO; 1 }
-    or plan skip_all => 'Future::IO required for SSE tests';
-Future::IO->load_impl('IOAsync');
+eval { require Future::IO::Impl::IOAsync; 1 }
+    or plan skip_all => 'Future::IO::Impl::IOAsync required for SSE tests';
 
 use PAGI::Server;
 
