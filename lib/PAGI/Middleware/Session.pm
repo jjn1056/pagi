@@ -9,16 +9,29 @@ use PAGI::Utils::Random qw(secure_random_bytes);
 
 =head1 NAME
 
-PAGI::Middleware::Session - Session management middleware
+PAGI::Middleware::Session - Session management middleware with pluggable State/Store
 
 =head1 SYNOPSIS
 
     use PAGI::Middleware::Builder;
 
+    # Default (cookie-based, in-memory store)
+    my $app = builder {
+        enable 'Session', secret => 'your-secret-key';
+        $my_app;
+    };
+
+    # Explicit state and store
+    use PAGI::Middleware::Session::State::Header;
+    use PAGI::Middleware::Session::Store::Memory;
+
     my $app = builder {
         enable 'Session',
             secret => 'your-secret-key',
-            cookie_name => 'session_id';
+            state  => PAGI::Middleware::Session::State::Header->new(
+                header_name => 'X-Session-ID',
+            ),
+            store  => PAGI::Middleware::Session::Store::Memory->new;
         $my_app;
     };
 
@@ -26,15 +39,28 @@ PAGI::Middleware::Session - Session management middleware
     async sub app {
         my ($scope, $receive, $send) = @_;
 
+        # Raw hashref access
         my $session = $scope->{'pagi.session'};
         $session->{user_id} = 123;
-        $session->{logged_in} = 1;
+
+        # Or use the PAGI::Session helper
+        use PAGI::Session;
+        my $s = PAGI::Session->new($scope->{'pagi.session'});
+        $s->set('user_id', 123);
+        my $uid = $s->get('user_id');  # dies if key missing
     }
 
 =head1 DESCRIPTION
 
-PAGI::Middleware::Session provides server-side session management with
-cookie-based session IDs. Sessions are stored in memory by default.
+PAGI::Middleware::Session provides server-side session management with a
+pluggable architecture for session ID transport (State) and session data
+storage (Store).
+
+The B<State> layer controls how the session ID travels between client and
+server (cookies, headers, bearer tokens, or custom logic). The B<Store>
+layer controls where session data is persisted (memory, Redis, database).
+
+By default, sessions use cookie-based IDs and in-memory storage.
 
 B<Warning:> The default in-memory store is suitable for development and
 single-process deployments only. Sessions are not shared between workers
@@ -47,17 +73,7 @@ a C<store> object backed by Redis, a database, or another shared storage.
 
 =item * secret (required)
 
-Secret key for session ID generation and validation.
-
-=item * cookie_name (default: 'pagi_session')
-
-Name of the session cookie.
-
-=item * cookie_options (default: { httponly => 1, path => '/', samesite => 'Lax' })
-
-Options for the session cookie. For production HTTPS deployments,
-add C<< secure => 1 >> to prevent the cookie from being sent over
-plain HTTP.
+Secret key used for session ID generation.
 
 =item * expire (default: 3600)
 
@@ -65,63 +81,162 @@ Session expiration time in seconds.
 
 =item * state (optional)
 
-A session state object that implements C<extract($scope)> and
-C<inject(\@headers, $id, \%options)>. If not provided, a
-L<PAGI::Middleware::Session::State::Cookie> instance is created
-using C<cookie_name>, C<cookie_options>, and C<expire>.
+A L<PAGI::Middleware::Session::State> object that implements C<extract($scope)>
+and C<inject(\@headers, $id, \%options)>. If not provided, a
+L<PAGI::Middleware::Session::State::Cookie> instance is created using
+C<cookie_name>, C<cookie_options>, and C<expire>.
 
 =item * store (optional)
 
-A session store object that implements async C<get($id)>,
-C<set($id, $data)>, C<delete($id)>. If not provided, a
+A L<PAGI::Middleware::Session::Store> object that implements async C<get($id)>,
+C<set($id, $data)>, and C<delete($id)>. If not provided, a
 L<PAGI::Middleware::Session::Store::Memory> instance is created.
+
+=item * cookie_name (default: 'pagi_session')
+
+Name of the session cookie. Only used when C<state> defaults to
+L<PAGI::Middleware::Session::State::Cookie>.
+
+=item * cookie_options (default: { httponly => 1, path => '/', samesite => 'Lax' })
+
+Options for the session cookie. Only used when C<state> defaults to
+L<PAGI::Middleware::Session::State::Cookie>. For production HTTPS
+deployments, add C<< secure => 1 >>.
 
 =back
 
-=head1 CUSTOM STORES
+=head1 STATE CLASSES
 
-For production multi-worker deployments, implement a store class with three
-methods. Here's a Redis example:
+State classes control how the session ID is extracted from requests and
+injected into responses. All implement the L<PAGI::Middleware::Session::State>
+interface.
 
-    package MyApp::Session::Redis;
-    use Redis;
-    use JSON::MaybeXS qw(encode_json decode_json);
+=over 4
 
-    sub new {
-        my ($class, %opts) = @_;
-        return bless {
-            redis  => Redis->new(server => $opts{server} // '127.0.0.1:6379'),
-            prefix => $opts{prefix} // 'session:',
-            expire => $opts{expire} // 3600,
-        }, $class;
-    }
+=item L<PAGI::Middleware::Session::State::Cookie>
 
-    sub get {
-        my ($self, $id) = @_;
-        my $data = $self->{redis}->get($self->{prefix} . $id);
-        return $data ? decode_json($data) : undef;
-    }
+Default. Reads the session ID from a request cookie and sets it via
+C<Set-Cookie> on the response. Suitable for browser-based web applications.
 
-    sub set {
-        my ($self, $id, $session) = @_;
-        my $key = $self->{prefix} . $id;
-        $self->{redis}->setex($key, $self->{expire}, encode_json($session));
-    }
+=item L<PAGI::Middleware::Session::State::Header>
 
-    sub delete {
-        my ($self, $id) = @_;
-        $self->{redis}->del($self->{prefix} . $id);
-    }
+Reads the session ID from a custom HTTP header. Requires C<header_name>;
+accepts an optional C<pattern> regex with a capture group. Injection is a
+no-op (the client manages header-based transport).
 
-    1;
+    PAGI::Middleware::Session::State::Header->new(
+        header_name => 'X-Session-ID',
+    );
 
-Then use it:
+=item L<PAGI::Middleware::Session::State::Bearer>
+
+Convenience subclass of State::Header that reads an opaque bearer token from
+the C<Authorization: Bearer E<lt>tokenE<gt>> header. Intended for opaque
+session tokens, B<not> JWTs. For JWT authentication, use
+L<PAGI::Middleware::Auth::Bearer> instead.
+
+    PAGI::Middleware::Session::State::Bearer->new();
+
+=item L<PAGI::Middleware::Session::State::Callback>
+
+Custom session ID transport using coderefs. Requires an C<extract> coderef;
+accepts an optional C<inject> coderef (defaults to no-op).
+
+    PAGI::Middleware::Session::State::Callback->new(
+        extract => sub { my ($scope) = @_; ... },
+        inject  => sub { my ($headers, $id, $options) = @_; ... },
+    );
+
+=back
+
+=head1 STORE CLASSES
+
+Store classes control where session data is persisted. All implement the
+L<PAGI::Middleware::Session::Store> interface; methods return L<Future>
+objects for async compatibility.
+
+=over 4
+
+=item L<PAGI::Middleware::Session::Store::Memory>
+
+Default. In-memory hash storage. Not shared across workers or restarts.
+Suitable for development and testing only.
+
+=item External stores
+
+Redis, database, and other shared stores are available as separate CPAN
+distributions. Any object implementing C<get($id)>, C<set($id, $data)>,
+and C<delete($id)> (returning Futures) can be used.
+
+=back
+
+=head1 PAGI::Session HELPER
+
+L<PAGI::Session> is a standalone helper object that wraps the raw session
+data hashref with a clean accessor interface.
+
+    use PAGI::Session;
+    my $session = PAGI::Session->new($scope->{'pagi.session'});
+
+Key methods:
+
+=over 4
+
+=item * C<get($key)> - Dies if the key does not exist (catches typos).
+
+=item * C<get($key, $default)> - Returns C<$default> for missing keys.
+
+=item * C<set($key, $value)> - Sets a session value.
+
+=item * C<exists($key)> - Checks key existence.
+
+=item * C<delete($key)> - Removes a key.
+
+=item * C<keys> - Lists user keys (excludes internal C<_>-prefixed keys).
+
+=item * C<id> - Returns the session ID.
+
+=item * C<regenerate> - Requests session ID regeneration on next response.
+
+=item * C<destroy> - Marks the session for deletion.
+
+=back
+
+The helper stores a reference to the underlying hash, so mutations are
+visible to the middleware.
+
+=head1 IDEMPOTENCY
+
+The middleware skips processing if C<< $scope-E<gt>{'pagi.session'} >>
+already exists. This prevents double-initialization when the middleware
+appears more than once in a stack.
+
+For mixed auth patterns (e.g. web cookies for browsers, bearer tokens for
+APIs), use L<PAGI::Middleware::Session::State::Callback> with fallback
+logic instead of stacking multiple Session middleware instances:
+
+    use PAGI::Middleware::Session::State::Callback;
+    use PAGI::Middleware::Session::State::Cookie;
+    use PAGI::Middleware::Session::State::Bearer;
+
+    my $cookie_state = PAGI::Middleware::Session::State::Cookie->new(
+        cookie_name => 'pagi_session',
+        expire      => 3600,
+    );
+    my $bearer_state = PAGI::Middleware::Session::State::Bearer->new();
 
     enable 'Session',
         secret => $ENV{SESSION_SECRET},
-        store  => MyApp::Session::Redis->new(
-            server => 'redis.example.com:6379',
-            expire => 7200,
+        state  => PAGI::Middleware::Session::State::Callback->new(
+            extract => sub {
+                my ($scope) = @_;
+                return $bearer_state->extract($scope)
+                    // $cookie_state->extract($scope);
+            },
+            inject => sub {
+                my ($headers, $id, $options) = @_;
+                $cookie_state->inject($headers, $id, $options);
+            },
         );
 
 =cut
@@ -282,13 +397,14 @@ __END__
 
 =head1 SCOPE EXTENSIONS
 
-This middleware adds the following to $scope:
+This middleware adds the following to C<$scope>:
 
 =over 4
 
 =item * pagi.session
 
-Hashref of session data. Modify this directly to update the session.
+Hashref of session data. Modify this directly to update the session,
+or wrap it with L<PAGI::Session> for strict accessor methods.
 Keys starting with C<_> are reserved for internal use.
 
 =item * pagi.session_id
@@ -299,21 +415,29 @@ The session ID string.
 
 =head1 SESSION DATA
 
-Special session keys:
+Special session keys (reserved, prefixed with C<_>):
 
 =over 4
 
-=item * _id - Session ID (read-only)
+=item * _id - Session ID
 
 =item * _created - Unix timestamp when session was created
 
 =item * _last_access - Unix timestamp of last access
 
-=item * _regenerated - Set to 1 to regenerate session ID
+=item * _regenerated - Set to 1 to trigger session ID regeneration on response
+
+=item * _destroyed - Set to 1 to mark session for deletion
 
 =back
 
 =head1 SEE ALSO
+
+L<PAGI::Session> - Standalone session helper object
+
+L<PAGI::Middleware::Session::State> - Base class for session ID transport
+
+L<PAGI::Middleware::Session::Store> - Base class for session storage
 
 L<PAGI::Middleware> - Base class for middleware
 
