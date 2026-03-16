@@ -178,4 +178,49 @@ subtest 'construct from scope data' => sub {
     is \@keys, [qw(role username)], 'keys from scope session filters internals';
 };
 
+# ===================
+# Constructor flexibility
+# ===================
+
+subtest 'construct from scope hashref' => sub {
+    my $scope = {
+        type => 'http',
+        'pagi.session' => { _id => 'from-scope', counter => 7 },
+    };
+    my $session = PAGI::Session->new($scope);
+    is($session->id, 'from-scope', 'id from scope');
+    is($session->get('counter'), 7, 'data from scope');
+
+    # Mutations visible in original scope
+    $session->set('added', 1);
+    is($scope->{'pagi.session'}{added}, 1, 'mutation visible in scope');
+};
+
+subtest 'construct from object with ->scope (duck typing)' => sub {
+    # Simulate a PAGI::Request-like object
+    my $fake_req = bless {
+        _scope => {
+            type => 'http',
+            'pagi.session' => { _id => 'from-req', user_id => 42 },
+        },
+    }, 'FakeRequest';
+
+    my $session = PAGI::Session->new($fake_req);
+    is($session->id, 'from-req', 'id from request-like object');
+    is($session->get('user_id'), 42, 'data from request-like object');
+};
+
+subtest 'dies on invalid argument' => sub {
+    ok(dies { PAGI::Session->new("string") }, 'dies on string');
+    ok(dies { PAGI::Session->new(undef) }, 'dies on undef');
+    ok(dies { PAGI::Session->new(42) }, 'dies on number');
+    like(dies { PAGI::Session->new("bad") }, qr/requires session data/, 'error message');
+};
+
+# Fake request class for duck-typing test
+package FakeRequest;
+sub scope { shift->{_scope} }
+
+package main;
+
 done_testing;

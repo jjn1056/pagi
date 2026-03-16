@@ -2,6 +2,7 @@ package PAGI::Session;
 
 use strict;
 use warnings;
+use Scalar::Util 'blessed';
 
 =head1 NAME
 
@@ -11,8 +12,10 @@ PAGI::Session - Standalone helper object for session data access
 
     use PAGI::Session;
 
-    # Construct from scope session data
+    # Construct from raw session data, scope, or request object
     my $session = PAGI::Session->new($scope->{'pagi.session'});
+    my $session = PAGI::Session->new($scope);
+    my $session = PAGI::Session->new($req);  # any object with ->scope
 
     # Strict get - dies if key doesn't exist (catches typos)
     my $user_id = $session->get('user_id');
@@ -47,15 +50,36 @@ for keys that may or may not be present.
 =head2 new
 
     my $session = PAGI::Session->new($data_hashref);
+    my $session = PAGI::Session->new($scope);
+    my $session = PAGI::Session->new($request);
 
-Creates a new session helper wrapping the given data hashref. The
-helper stores a reference to the hash, so mutations via C<set()>
-and C<delete()> are visible to the session middleware.
+Accepts raw session data (hashref), a PAGI scope (hashref with
+C<pagi.session> key), or any object with a C<scope()> method
+(e.g., L<PAGI::Request>). The helper stores a reference to the
+underlying hash, so mutations via C<set()> and C<delete()> are
+visible to the session middleware.
 
 =cut
 
 sub new {
-    my ($class, $data) = @_;
+    my ($class, $arg) = @_;
+
+    my $data;
+    if (blessed($arg) && $arg->can('scope')) {
+        # Duck-typed object with scope method (e.g., PAGI::Request, PAGI::SSE)
+        $data = $arg->scope->{'pagi.session'};
+    }
+    elsif (ref $arg eq 'HASH' && exists $arg->{'pagi.session'}) {
+        # Scope hashref
+        $data = $arg->{'pagi.session'};
+    }
+    elsif (ref $arg eq 'HASH') {
+        # Raw session data hashref
+        $data = $arg;
+    }
+
+    die "PAGI::Session requires session data (hashref, scope, or object with ->scope)\n"
+        unless ref $data eq 'HASH';
 
     return bless { _data => $data }, $class;
 }
