@@ -7,6 +7,7 @@ use Future::AsyncAwait;
 use FindBin;
 use lib "$FindBin::Bin/../../lib";
 use Socket qw(AF_UNIX SOCK_STREAM);
+use Time::HiRes ();
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
 BEGIN {
@@ -169,14 +170,25 @@ subtest 'keepalive comments arrive over HTTP/2' => sub {
     );
     $client_sock->syswrite($client->mem_send);
 
-    exchange_frames($client, $client_sock, 30);
+    # Exchange frames until 'end' event arrives or wall-clock timeout
+    my $timed_out = 1;
+    my $deadline = Time::HiRes::time() + 5;
+    while (Time::HiRes::time() < $deadline) {
+        if ($response_body =~ /data: end\n/) {
+            $timed_out = 0;
+            last;
+        }
+        exchange_frames($client, $client_sock, 5);
+    }
+    ok(!$timed_out, 'end event arrived before 5s deadline')
+        or diag "response_body so far: $response_body";
 
     # Verify keepalive comments arrived
     like($response_body, qr/:ping\n/, 'Keepalive comment present in DATA frames');
 
-    # Count keepalive comments
+    # Count keepalive comments (0.7s delay / 0.2s interval = ~3 expected)
     my @pings = ($response_body =~ /(:ping\n)/g);
-    ok(scalar @pings >= 1, 'At least 1 keepalive comment received (got ' . scalar(@pings) . ')');
+    ok(scalar @pings >= 2, 'At least 2 keepalive comments received (got ' . scalar(@pings) . ')');
 
     # Verify data events also present
     like($response_body, qr/data: start\n/, 'Start event present');
