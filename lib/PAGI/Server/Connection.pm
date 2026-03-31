@@ -182,6 +182,9 @@ sub new {
         is_h2             => 0,                        # Set during start() if HTTP/2 detected
         h2_session        => undef,                    # PAGI::Server::Protocol::HTTP2::Session
         h2_streams        => {},                       # Per-stream state for HTTP/2
+        # Transport info (tcp or unix)
+        transport_type    => $args{transport_type} // 'tcp',
+        transport_path    => $args{transport_path},  # socket path for unix
         # Cached connection info (populated in start(), used by _create_scope)
         client_host       => '127.0.0.1',
         client_port       => 0,
@@ -205,9 +208,9 @@ sub start {
     my $stream = $self->{stream};
     weaken(my $weak_self = $self);
 
-    # Enable TCP_NODELAY to reduce latency for small responses
+    # Enable TCP_NODELAY to reduce latency for small responses (TCP only)
     my $handle = $stream->write_handle // $stream->read_handle;
-    if ($handle && $handle->can('setsockopt')) {
+    if ($self->{transport_type} eq 'tcp' && $handle && $handle->can('setsockopt')) {
         eval {
             $handle->setsockopt(IPPROTO_TCP, TCP_NODELAY, 1);
         };
@@ -215,7 +218,13 @@ sub start {
     }
 
     # Cache connection info once (avoids per-request socket method calls)
-    if ($handle && $handle->can('peerhost')) {
+    if ($self->{transport_type} eq 'unix') {
+        # Unix socket: no peer IP/port, server is identified by path
+        $self->{client_host} = undef;
+        $self->{client_port} = undef;
+        $self->{server_host} = $self->{transport_path};
+        $self->{server_port} = undef;
+    } elsif ($handle && $handle->can('peerhost')) {
         eval {
             $self->{client_host} = $handle->peerhost // '127.0.0.1';
             $self->{client_port} = $handle->peerport // 0;
@@ -677,7 +686,10 @@ sub _h2_create_scope {
         query_string => $query_string,
         root_path    => '',
         headers      => $headers,
-        client       => [$self->{client_host}, $self->{client_port}],
+        (defined $self->{client_host}
+            ? (client => [$self->{client_host}, $self->{client_port}])
+            : ()
+        ),
         server       => [$self->{server_host}, $self->{server_port}],
         state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
@@ -909,7 +921,10 @@ sub _h2_create_websocket_scope {
         query_string => $query_string,
         root_path    => '',
         headers      => $headers,
-        client       => [$self->{client_host}, $self->{client_port}],
+        (defined $self->{client_host}
+            ? (client => [$self->{client_host}, $self->{client_port}])
+            : ()
+        ),
         server       => [$self->{server_host}, $self->{server_port}],
         subprotocols => \@subprotocols,
         state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
@@ -1118,7 +1133,10 @@ sub _h2_create_sse_scope {
         query_string => $query_string,
         root_path    => '',
         headers      => $headers,
-        client       => [$self->{client_host}, $self->{client_port}],
+        (defined $self->{client_host}
+            ? (client => [$self->{client_host}, $self->{client_port}])
+            : ()
+        ),
         server       => [$self->{server_host}, $self->{server_port}],
         state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
         extensions   => $self->_get_extensions_for_scope,
@@ -2073,7 +2091,10 @@ sub _create_scope {
         query_string => $request->{query_string},
         root_path    => '',
         headers      => $request->{headers},
-        client       => [$self->{client_host}, $self->{client_port}],
+        (defined $self->{client_host}
+            ? (client => [$self->{client_host}, $self->{client_port}])
+            : ()
+        ),
         server       => [$self->{server_host}, $self->{server_port}],
         # Optimized: avoid hash copy when state is empty (common case)
         state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
@@ -2537,7 +2558,7 @@ sub _write_access_log {
     }
 
     my $info = {
-        client_ip       => $self->{client_host} // '-',
+        client_ip       => $self->{client_host} // ($self->{transport_type} eq 'unix' ? 'unix' : '-'),
         timestamp       => $_cached_log_timestamp,
         method          => $request->{method} // '-',
         path            => $request->{raw_path} // '/',
@@ -2945,7 +2966,10 @@ sub _create_sse_scope {
         query_string => $request->{query_string},
         root_path    => '',
         headers      => $request->{headers},
-        client       => [$self->{client_host}, $self->{client_port}],
+        (defined $self->{client_host}
+            ? (client => [$self->{client_host}, $self->{client_port}])
+            : ()
+        ),
         server       => [$self->{server_host}, $self->{server_port}],
         # Optimized: avoid hash copy when state is empty (common case)
         state        => keys %{$self->{state}} ? { %{$self->{state}} } : {},
@@ -3302,7 +3326,10 @@ sub _create_websocket_scope {
         query_string => $request->{query_string},
         root_path    => '',
         headers      => $request->{headers},
-        client       => [$self->{client_host}, $self->{client_port}],
+        (defined $self->{client_host}
+            ? (client => [$self->{client_host}, $self->{client_port}])
+            : ()
+        ),
         server       => [$self->{server_host}, $self->{server_port}],
         subprotocols => \@subprotocols,
         # Optimized: avoid hash copy when state is empty (common case)

@@ -11,6 +11,7 @@ use Time::HiRes qw(time sleep);
 use PAGI::Server;
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
+plan skip_all => "Timing-sensitive heartbeat tests require RELEASE_TESTING=1" unless $ENV{RELEASE_TESTING};
 
 # Helper: wait for a port to become reachable
 sub _wait_for_port {

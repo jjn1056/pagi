@@ -136,6 +136,325 @@ B<Not yet implemented:>
 
 For HTTP/2, see L</ENABLING HTTP/2 SUPPORT (EXPERIMENTAL)>.
 
+=head1 UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)
+
+B<This feature is experimental.> The API is subject to change in future
+releases. Please report issues at L<https://github.com/jjn1056/pagi/issues>.
+
+Unix domain sockets provide efficient local communication between a reverse
+proxy (nginx, HAProxy, etc.) and PAGI::Server running on the same machine.
+They bypass the TCP/IP stack entirely, reducing latency and overhead compared
+to connecting over C<127.0.0.1>.
+
+=head2 When to Use Unix Sockets
+
+=over 4
+
+=item * B<Behind a reverse proxy> — nginx or HAProxy on the same host handles
+TLS termination, HTTP/2 negotiation, and static files, forwarding dynamic
+requests to PAGI over a Unix socket.
+
+=item * B<Benchmarks> — frameworks like TechEmpower FrameworkBenchmarks use
+Unix sockets to eliminate network variable from application benchmarks.
+
+=item * B<Microservice IPC> — services on the same host communicate without
+network overhead.
+
+=back
+
+B<When NOT to use:> If clients connect over the network (remote browsers,
+API consumers), use TCP. Unix sockets only accept connections from processes
+on the same machine.
+
+=head2 Basic Usage
+
+B<Programmatic:>
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+B<CLI:>
+
+    pagi-server --socket /tmp/pagi.sock ./app.pl
+
+B<With workers:>
+
+    pagi-server --socket /tmp/pagi.sock --workers 4 ./app.pl
+
+In multi-worker mode, the parent process creates the Unix socket and all
+worker processes inherit the file descriptor via C<fork()>. The kernel
+distributes incoming connections across workers.
+
+=head2 How It Works
+
+=over 4
+
+=item 1. On startup, any existing file at the socket path is removed (stale
+socket cleanup).
+
+=item 2. The server creates and binds a C<SOCK_STREAM> Unix domain socket
+at the specified path using C<IO::Socket::UNIX> (multi-worker) or
+C<IO::Async::Listener> with C<< family => 'unix' >> (single-worker).
+
+=item 3. If C<socket_mode> is set, C<chmod()> is called immediately after
+binding to set the file permissions.
+
+=item 4. In multi-worker mode, the parent creates the socket before forking.
+Workers inherit the listening fd and each runs its own C<IO::Async::Listener>
+wrapping the inherited handle.
+
+=item 5. On graceful shutdown (SIGTERM/SIGINT), the socket file is unlinked
+by both the single-worker C<shutdown()> path and the multi-worker
+C<_initiate_multiworker_shutdown()> path.
+
+=back
+
+=head2 nginx Configuration
+
+B<Basic upstream:>
+
+    upstream pagi_backend {
+        server unix:/var/run/myapp/pagi.sock;
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        server_name myapp.example.com;
+
+        location / {
+            proxy_pass http://pagi_backend;
+
+            # Required for upstream keepalive:
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+
+            # Forward client info (since PAGI can't see it over Unix socket):
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
+B<Important:> The C<keepalive> directive is critical for performance. Without
+it, nginx opens a new Unix socket connection for every request.
+C<proxy_http_version 1.1> and C<proxy_set_header Connection ""> are required
+for keepalive to work.
+
+B<With TLS termination at nginx:>
+
+    server {
+        listen 443 ssl http2;
+        ssl_certificate     /etc/ssl/myapp.crt;
+        ssl_certificate_key /etc/ssl/myapp.key;
+
+        location / {
+            proxy_pass http://pagi_backend;
+            # ... same proxy headers as above
+        }
+    }
+
+nginx handles TLS and HTTP/2 with clients, then speaks plain HTTP/1.1 to
+PAGI over the Unix socket. This is the recommended production pattern.
+
+=head2 Socket Permissions and Security
+
+By default, the socket file inherits permissions from the process umask.
+Use C<socket_mode> to set explicit permissions:
+
+    # CLI
+    pagi-server --socket /var/run/myapp/pagi.sock --socket-mode 0660 ./app.pl
+
+    # Programmatic
+    PAGI::Server->new(
+        app         => $app,
+        socket      => '/var/run/myapp/pagi.sock',
+        socket_mode => 0660,
+    );
+
+B<Production recommendations:>
+
+=over 4
+
+=item * B<Use a dedicated directory>, not C</tmp/>. Directories like
+C</var/run/myapp/> or C</run/myapp/> prevent symlink attacks and provide
+an additional permission layer.
+
+=item * B<Use C<0660> with a shared group.> Create a group (e.g., C<myapp>)
+that both the application user and the nginx user belong to:
+
+    sudo groupadd myapp
+    sudo usermod -aG myapp www-data    # nginx user
+    sudo usermod -aG myapp myappuser   # app user
+    sudo mkdir -p /var/run/myapp
+    sudo chown myappuser:myapp /var/run/myapp
+    sudo chmod 0750 /var/run/myapp
+
+=item * B<Use systemd C<RuntimeDirectory>> for automatic directory management:
+
+    # /etc/systemd/system/myapp.service
+    [Service]
+    User=myappuser
+    Group=myapp
+    RuntimeDirectory=myapp
+    RuntimeDirectoryMode=0750
+    ExecStart=/usr/local/bin/pagi-server \
+        --socket /run/myapp/pagi.sock \
+        --socket-mode 0660 \
+        --workers 4 \
+        /opt/myapp/app.pl
+
+systemd creates C</run/myapp/> on service start and cleans it up on stop.
+
+=back
+
+=head2 TLS Over Unix Sockets
+
+TLS can be used over Unix sockets, though this is unusual — normally the
+reverse proxy handles TLS termination. When TLS is configured on a Unix
+socket listener, the server logs an info-level note suggesting reverse proxy
+TLS termination instead.
+
+The combination is allowed because it has legitimate uses (encrypted
+inter-container communication, compliance requirements). All major ASGI
+servers (Uvicorn, Hypercorn, Granian) also allow it.
+
+=head2 HTTP/2 Over Unix Sockets
+
+h2c (HTTP/2 cleartext) works over Unix sockets. This is useful for gRPC
+backends or reverse proxies that support HTTP/2 to upstreams (e.g., Envoy).
+Note that nginx does B<not> currently support HTTP/2 to upstream backends
+(except for gRPC via C<grpc_pass>).
+
+=head2 Scope Differences
+
+For Unix socket connections, the PAGI scope differs from TCP connections:
+
+=over 4
+
+=item * B<C<client> is absent> — Unix sockets have no peer IP address or
+port. The C<client> key is omitted entirely from the scope hashref (not set
+to C<undef>). This is spec-compliant: the PAGI specification marks C<client>
+as optional.
+
+=item * B<C<server> is C<[$socket_path, undef]>>> — instead of C<[$host, $port]>.
+
+=back
+
+B<Middleware implications:> Any middleware that accesses C<< $scope->{client} >>
+must check C<< exists $scope->{client} >> first. For client IP identification
+behind a reverse proxy, use C<X-Forwarded-For> or C<X-Real-IP> headers
+instead of C<< $scope->{client} >>. The C<PAGI::Middleware::XForwardedFor>
+middleware (if available) handles this automatically.
+
+B<Access log:> Unix socket connections log C<unix> as the client IP in the
+access log instead of an IP address.
+
+=head2 Stale Socket Cleanup
+
+If a socket file already exists at the configured path (e.g., from a previous
+crash), it is automatically removed before binding. This matches the behavior
+of Starman, Gunicorn, Uvicorn, and other production servers. The socket file
+is also removed during graceful shutdown (SIGTERM/SIGINT).
+
+If the server is killed with SIGKILL (C<kill -9>), the socket file will
+B<not> be cleaned up. It will be removed on the next startup.
+
+=head1 MULTI-LISTENER SUPPORT (EXPERIMENTAL)
+
+B<This feature is experimental.> The API is subject to change in future
+releases.
+
+A single PAGI::Server instance can listen on multiple endpoints
+simultaneously. This is useful for:
+
+=over 4
+
+=item * B<TCP for health checks + Unix socket for app traffic> — load
+balancers probe a TCP port while nginx uses the Unix socket.
+
+=item * B<Multiple TCP ports> — serve different interfaces on different ports.
+
+=item * B<Gradual migration> — listen on both old and new ports during
+a transition.
+
+=back
+
+=head2 Programmatic API
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        listen => [
+            { host => '0.0.0.0', port => 8080 },
+            { socket => '/tmp/pagi.sock', socket_mode => 0660 },
+        ],
+    );
+
+Each spec in the C<listen> array is a hashref with either C<< { host, port } >>
+for TCP or C<< { socket } >> (with optional C<socket_mode>) for Unix sockets.
+
+B<Note:> Per-listener TLS configuration is not yet supported. TLS is configured
+server-wide via the C<ssl> constructor option and applies to all TCP listeners.
+Unix socket listeners behind a reverse proxy do not need TLS — the proxy handles
+TLS termination.
+
+=head2 CLI
+
+The C<--listen> flag is repeatable. The server auto-detects TCP vs Unix
+socket: values containing C<:> are parsed as C<host:port>, everything else
+is treated as a Unix socket path.
+
+    # TCP + Unix socket
+    pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock ./app.pl
+
+    # Multiple TCP ports
+    pagi-server --listen 0.0.0.0:8080 --listen 0.0.0.0:8443 ./app.pl
+
+    # With workers
+    pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock -w 4 ./app.pl
+
+    # IPv6
+    pagi-server --listen [::1]:5000 ./app.pl
+
+C<--listen> is B<mutually exclusive> with C<--host>, C<--port>, and
+C<--socket>. C<--socket-mode> applies to all Unix socket listeners when
+using C<--listen>.
+
+=head2 How It Works
+
+=over 4
+
+=item * In B<single-worker mode>, one C<IO::Async::Listener> is created per
+endpoint. All listeners share the same event loop and connection handler.
+
+=item * In B<multi-worker mode>, the parent process creates all listening
+sockets (Unix and TCP) before forking. Workers inherit all file descriptors
+and create their own C<IO::Async::Listener> for each inherited socket.
+
+=item * The C<reuseport> option applies only to TCP listeners. Unix socket
+listeners always use the shared-socket model (parent creates, workers inherit).
+
+=item * On shutdown, all listeners are stopped and all Unix socket files are
+cleaned up.
+
+=back
+
+=head2 Accessors
+
+    $server->port;          # Bound port of first TCP listener, or undef
+    $server->socket_path;   # Path of first Unix socket listener, or undef
+    $server->listeners;     # Arrayref of all listener specs
+
+=head2 Backward Compatibility
+
+The existing C<host>/C<port> constructor options continue to work exactly
+as before. They are internally normalized to a single-element listener
+array. The C<socket> option is similarly sugar for a single Unix socket
+listener. Only C<listen> enables true multi-listener mode.
+
 =head1 WINDOWS SUPPORT
 
 B<PAGI::Server does not support Windows.>
@@ -202,6 +521,46 @@ rules are in place. For production, consider a reverse proxy (nginx, etc.)
 =item port => $port
 
 Bind port. Default: 5000
+
+=item socket => $path
+
+B<Experimental.> Unix domain socket path for listening instead of TCP host:port.
+B<Mutually exclusive> with C<host>, C<port>, and C<listen>.
+See L</UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)> for details.
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+=item socket_mode => $mode
+
+Set file permissions on the Unix domain socket after creation. The value
+should be a numeric mode (e.g., C<0660>). If not specified, the socket
+inherits the default permissions from the process umask. Silently ignored
+if C<socket> is not set.
+
+    my $server = PAGI::Server->new(
+        app         => $app,
+        socket      => '/tmp/pagi.sock',
+        socket_mode => 0660,
+    );
+
+=item listen => \@specs
+
+B<Experimental.> Array of listener specifications for multi-endpoint listening.
+Each spec is a hashref with either C<< { host, port } >> for TCP or
+C<< { socket, socket_mode } >> for Unix domain sockets.
+B<Mutually exclusive> with C<host>, C<port>, C<socket>, and C<socket_mode>.
+See L</MULTI-LISTENER SUPPORT (EXPERIMENTAL)> for details.
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        listen => [
+            { host => '0.0.0.0', port => 8080 },
+            { socket => '/tmp/pagi.sock', socket_mode => 0660 },
+        ],
+    );
 
 =item ssl => \%config
 
@@ -967,6 +1326,21 @@ shutdown is complete.
 
 Returns the bound port number. Useful when port => 0 is used.
 
+=head2 socket_path
+
+    my $path = $server->socket_path;
+
+Returns the Unix socket path of the first Unix socket listener,
+or C<undef> if no Unix socket listeners are configured.
+
+=head2 listeners
+
+    my $listeners = $server->listeners;
+
+Returns an arrayref of all normalized listener specifications.
+Each entry is a hashref with C<type> (C<'tcp'> or C<'unix'>)
+and type-specific keys (C<host>/C<port> for TCP, C<path> for Unix).
+
 =head2 is_running
 
     my $bool = $server->is_running;
@@ -1409,9 +1783,14 @@ sub _init {
     my ($self, $params) = @_;
 
     $self->{app}              = delete $params->{app} or die "app is required";
-    $self->{host}             = delete $params->{host} // '127.0.0.1';
-    $self->{port}             = delete $params->{port} // 5000;
-    $self->{ssl}              = delete $params->{ssl};
+
+    # Extract listener-related params
+    my $listen      = delete $params->{listen};
+    my $socket      = delete $params->{socket};
+    my $socket_mode = delete $params->{socket_mode};
+    my $host        = delete $params->{host};
+    my $port        = delete $params->{port};
+    $self->{ssl}    = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
 
     # Validate SSL certificate files at startup (fail fast)
@@ -1432,6 +1811,72 @@ sub _init {
             if (my $ca = $ssl->{ca_file}) {
                 die "SSL CA file not found: $ca\n" unless -e $ca;
                 die "SSL CA file not readable: $ca\n" unless -r $ca;
+            }
+        }
+    }
+
+    # Normalize all listener forms to $self->{listeners}
+    if ($listen) {
+        # Explicit listen array
+        die "Cannot specify both 'listen' and 'host' options\n" if defined $host;
+        die "Cannot specify both 'listen' and 'port' options\n" if defined $port;
+        die "Cannot specify both 'listen' and 'socket' options\n" if defined $socket;
+        die "Cannot specify both 'listen' and 'socket_mode' options\n" if defined $socket_mode;
+        die "'listen' must be a non-empty arrayref\n"
+            unless ref $listen eq 'ARRAY' && @$listen;
+
+        $self->{listeners} = [];
+        for my $spec (@$listen) {
+            die "Each listen spec must be a hashref\n" unless ref $spec eq 'HASH';
+            if ($spec->{socket}) {
+                die "Cannot specify both 'socket' and 'host' in a listen spec\n" if $spec->{host};
+                die "Cannot specify both 'socket' and 'port' in a listen spec\n" if $spec->{port};
+                push @{$self->{listeners}}, {
+                    type        => 'unix',
+                    path        => $spec->{socket},
+                    socket_mode => $spec->{socket_mode},
+                };
+            } else {
+                die "TCP listen spec requires both 'host' and 'port'\n"
+                    unless defined $spec->{host} && defined $spec->{port};
+                push @{$self->{listeners}}, {
+                    type => 'tcp',
+                    host => $spec->{host},
+                    port => $spec->{port},
+                };
+            }
+        }
+        $self->{host} = undef;
+        $self->{port} = undef;
+    } elsif (defined $socket) {
+        # Socket sugar
+        die "Cannot specify both 'socket' and 'host' options\n" if defined $host;
+        die "Cannot specify both 'socket' and 'port' options\n" if defined $port;
+        $self->{listeners} = [{
+            type        => 'unix',
+            path        => $socket,
+            socket_mode => $socket_mode,
+        }];
+        $self->{host} = undef;
+        $self->{port} = undef;
+    } else {
+        # Host/port sugar (backward compatible default)
+        $host //= '127.0.0.1';
+        $port //= 5000;
+        $self->{listeners} = [{
+            type => 'tcp',
+            host => $host,
+            port => $port,
+        }];
+        $self->{host} = $host;
+        $self->{port} = $port;
+    }
+
+    # Apply server-wide SSL to all TCP listeners
+    if ($self->{ssl}) {
+        for my $listener (@{$self->{listeners}}) {
+            if ($listener->{type} eq 'tcp') {
+                $listener->{ssl} = $self->{ssl};
             }
         }
     }
@@ -1545,6 +1990,15 @@ sub configure {
     }
     if (exists $params{port}) {
         $self->{port} = delete $params{port};
+    }
+    if (exists $params{socket}) {
+        delete $params{socket};
+    }
+    if (exists $params{socket_mode}) {
+        delete $params{socket_mode};
+    }
+    if (exists $params{listen}) {
+        delete $params{listen};
     }
     if (exists $params{ssl}) {
         $self->{ssl} = delete $params{ssl};
@@ -1846,62 +2300,108 @@ async sub _listen_singleworker {
         die "Lifespan startup failed: $message\n";
     }
 
-    my $listener = IO::Async::Listener->new(
-        on_stream => sub  {
-        my ($listener, $stream) = @_;
-            return unless $weak_self;
-            $weak_self->_on_connection($stream);
-        },
-    );
-
-    $self->add_child($listener);
-    $self->{listener} = $listener;
-
-    # Build listener options
-    my %listen_opts = (
-        queuesize => $self->{listener_backlog},
-        addr => {
-            family   => 'inet',
-            socktype => 'stream',
-            ip       => $self->{host},
-            port     => $self->{port},
-        },
-    );
-
-    # Add SSL options if configured
-    if (my $ssl_params = $self->_build_ssl_config) {
-        $listen_opts{extensions} = ['SSL'];
-        %listen_opts = (%listen_opts, %$ssl_params);
-
-        $listen_opts{on_ssl_error} = sub {
-            return unless $weak_self;
-            $weak_self->_log(debug => "SSL handshake failed: $_[0]");
-        };
-    }
-
-    # Start listening
-    my $listen_future = $listener->listen(%listen_opts);
-
-    await $listen_future;
-
-    # Configure accept error handler after listen() to avoid SSL extension conflicts
-    # Note: SSL extensions may wrap the listener, so try to configure but ignore if it fails
-    eval {
-        $listener->configure(
-            on_accept_error => sub  {
-        my ($listener, $error) = @_;
+    # Iterate over listeners array, creating one IO::Async::Listener per spec
+    my @listen_entries;
+    for my $spec (@{$self->{listeners}}) {
+        my $spec_copy = $spec;  # capture for closure
+        my $listener = IO::Async::Listener->new(
+            on_stream => sub {
+                my ($listener, $stream) = @_;
                 return unless $weak_self;
-                $weak_self->_on_accept_error($error);
+                $weak_self->_on_connection($stream, $spec_copy);
             },
         );
-    };
-    if ($@) {
-        $self->_log(debug => "Could not configure on_accept_error (likely SSL listener): $@");
+
+        $self->add_child($listener);
+
+        # Build listener options
+        my %listen_opts = (
+            queuesize => $self->{listener_backlog},
+        );
+
+        if ($spec->{type} eq 'unix') {
+            # Remove stale socket file if it exists
+            unlink $spec->{path} if -e $spec->{path};
+
+            $listen_opts{addr} = {
+                family   => 'unix',
+                socktype => 'stream',
+                path     => $spec->{path},
+            };
+
+            if ($self->{tls_enabled}) {
+                $self->_log(info => "Note: TLS is configured but does not apply to Unix socket $spec->{path}");
+            }
+        } else {
+            # TCP listener
+            $listen_opts{addr} = {
+                family   => 'inet',
+                socktype => 'stream',
+                ip       => $spec->{host},
+                port     => $spec->{port},
+            };
+
+            # Add SSL options if configured (TCP only)
+            if (my $ssl_params = $self->_build_ssl_config) {
+                $listen_opts{extensions} = ['SSL'];
+                %listen_opts = (%listen_opts, %$ssl_params);
+
+                $listen_opts{on_ssl_error} = sub {
+                    return unless $weak_self;
+                    $weak_self->_log(debug => "SSL handshake failed: $_[0]");
+                };
+            }
+        }
+
+        # Set restrictive umask for Unix socket bind to prevent brief
+        # permission window (CVE-2023-45145 pattern in Redis)
+        my $old_umask;
+        if ($spec->{type} eq 'unix') {
+            $old_umask = umask(0177);  # Owner-only until chmod
+        }
+
+        # Start listening
+        await $listener->listen(%listen_opts);
+
+        # Restore umask after bind
+        umask($old_umask) if defined $old_umask;
+
+        # Configure accept error handler after listen() to avoid SSL extension conflicts
+        eval {
+            $listener->configure(
+                on_accept_error => sub {
+                    my ($listener, $error) = @_;
+                    return unless $weak_self;
+                    $weak_self->_on_accept_error($error);
+                },
+            );
+        };
+        if ($@) {
+            $self->_log(debug => "Could not configure on_accept_error (likely SSL listener): $@");
+        }
+
+        # Post-listen setup
+        if ($spec->{type} eq 'unix') {
+            # Apply socket permissions if configured
+            if (defined $spec->{socket_mode}) {
+                chmod $spec->{socket_mode}, $spec->{path};
+            }
+        } else {
+            # Store the actual bound port from the listener's read handle
+            my $socket = $listener->read_handle;
+            if ($socket && $socket->can('sockport')) {
+                my $bound = $socket->sockport;
+                $spec->{port} = $bound;  # update spec with actual port
+                $self->{bound_port} //= $bound;  # first TCP port wins
+            }
+        }
+
+        push @listen_entries, { listener => $listener, spec => $spec };
     }
 
-    # Store the actual bound port from the listener's read handle
-    my $socket = $listener->read_handle;
-    $self->{bound_port} = $socket->sockport if $socket && $socket->can('sockport');
+    $self->{_listen_entries} = \@listen_entries;
+    # Backward compat: keep $self->{listener} pointing to first entry
+    $self->{listener} = $listen_entries[0]{listener} if @listen_entries;
     $self->{running} = 1;
 
     # Set up signal handlers for graceful shutdown (single-worker mode)
@@ -1933,7 +2433,6 @@ async sub _listen_singleworker {
         });
     }
 
-    my $scheme = $self->{tls_enabled} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
     my $max_conn = $self->effective_max_connections;
@@ -1949,7 +2448,27 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    # Log listening banner
+    my $scheme = $self->{tls_enabled} ? 'https' : 'http';
+    if (@listen_entries == 1) {
+        my $spec = $listen_entries[0]{spec};
+        if ($spec->{type} eq 'unix') {
+            $self->_log(info => "PAGI Server listening on unix:$spec->{path} (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+        } else {
+            $self->_log(info => "PAGI Server listening on $scheme://$spec->{host}:$spec->{port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+        }
+    } else {
+        my @addrs;
+        for my $entry (@listen_entries) {
+            my $s = $entry->{spec};
+            if ($s->{type} eq 'unix') {
+                push @addrs, "unix:$s->{path}";
+            } else {
+                push @addrs, "$scheme://$s->{host}:$s->{port}/";
+            }
+        }
+        $self->_log(info => "PAGI Server listening on: " . join(', ', @addrs) . " (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    }
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -1969,35 +2488,65 @@ sub _listen_multiworker {
     my $workers = $self->{workers};
     my $reuseport = $self->{reuseport};
 
-    my $listen_socket;
+    # Create all listening sockets before forking workers
+    my @listen_entries;
 
-    if ($reuseport) {
-        # SO_REUSEPORT mode: each worker creates its own socket
-        # Parent just needs to know the port for display purposes
-        # We do a quick bind to validate port availability and get actual port if 0
-        my $probe_socket = IO::Socket::INET->new(
-            LocalAddr => $self->{host},
-            LocalPort => $self->{port},
-            Proto     => 'tcp',
-            Listen    => 1,
-            ReuseAddr => 1,
-            ReusePort => 1,
-        ) or die "Cannot bind to $self->{host}:$self->{port}: $!";
-        $self->{bound_port} = $probe_socket->sockport;
-        close($probe_socket);  # Workers will create their own sockets
+    for my $spec (@{$self->{listeners}}) {
+        my $socket;
+
+        if ($spec->{type} eq 'unix') {
+            # Unix socket: parent creates, workers inherit
+            unlink $spec->{path} if -e $spec->{path};
+
+            # Set restrictive umask for bind (CVE-2023-45145 mitigation)
+            my $old_umask = umask(0177);
+
+            require IO::Socket::UNIX;
+            $socket = IO::Socket::UNIX->new(
+                Local   => $spec->{path},
+                Type    => Socket::SOCK_STREAM(),
+                Listen  => $self->{listener_backlog},
+            ) or die "Cannot create Unix socket $spec->{path}: $!";
+
+            umask($old_umask);
+
+            if (defined $spec->{socket_mode}) {
+                chmod($spec->{socket_mode}, $spec->{path})
+                    or die "Cannot chmod $spec->{path}: $!\n";
+            }
+        } elsif ($reuseport) {
+            # reuseport TCP: probe to get port, workers create their own
+            my $probe_socket = IO::Socket::INET->new(
+                LocalAddr => $spec->{host},
+                LocalPort => $spec->{port},
+                Proto     => 'tcp',
+                Listen    => 1,
+                ReuseAddr => 1,
+                ReusePort => 1,
+            ) or die "Cannot bind to $spec->{host}:$spec->{port}: $!";
+            $spec->{bound_port} = $probe_socket->sockport;
+            $self->{bound_port} //= $spec->{bound_port};
+            close($probe_socket);
+        } else {
+            # Shared-socket TCP: parent creates, workers inherit
+            $socket = IO::Socket::INET->new(
+                LocalAddr => $spec->{host},
+                LocalPort => $spec->{port},
+                Proto     => 'tcp',
+                Listen    => $self->{listener_backlog},
+                ReuseAddr => 1,
+                Blocking  => 0,
+            ) or die "Cannot create listening socket on $spec->{host}:$spec->{port}: $!";
+            $spec->{bound_port} = $socket->sockport;
+            $self->{bound_port} //= $spec->{bound_port};
+        }
+
+        push @listen_entries, { socket => $socket, spec => $spec };
     }
-    else {
-        # Traditional mode: parent creates socket, workers inherit it
-        $listen_socket = IO::Socket::INET->new(
-            LocalAddr => $self->{host},
-            LocalPort => $self->{port},
-            Proto     => 'tcp',
-            Listen    => $self->{listener_backlog},
-            ReuseAddr => 1,
-            Blocking  => 0,
-        ) or die "Cannot create listening socket: $!";
-        $self->{bound_port} = $listen_socket->sockport;
-    }
+
+    $self->{_listen_entries} = \@listen_entries;
+    # Backward compat: keep listen_socket pointing to first entry's socket
+    $self->{listen_socket} = $listen_entries[0]{socket} if @listen_entries && $listen_entries[0]{socket};
 
     $self->{running} = 1;
 
@@ -2024,7 +2573,19 @@ sub _listen_multiworker {
         );
     }
 
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    # Log listening banner for all listeners
+    my @addrs;
+    for my $entry (@listen_entries) {
+        my $s = $entry->{spec};
+        if ($s->{type} eq 'unix') {
+            push @addrs, "unix:$s->{path}";
+        } else {
+            my $port = $s->{bound_port} // $s->{port};
+            push @addrs, "$scheme://$s->{host}:$port/";
+        }
+    }
+    my $addr_str = join(', ', @addrs);
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $addr_str with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -2040,7 +2601,7 @@ sub _listen_multiworker {
     # This prevents children from inheriting the parent's sigpipe setup,
     # which can cause issues with Ctrl-C signal delivery on macOS.
     for my $i (1 .. $workers) {
-        $self->_spawn_worker($listen_socket, $i);
+        $self->_spawn_worker(\@listen_entries, $i);
     }
 
     # Set up signal handlers for parent process AFTER forking
@@ -2091,9 +2652,6 @@ sub _listen_multiworker {
         $self->{_heartbeat_check_timer} = $hb_check_timer;
     }
 
-    # Store the socket for cleanup during shutdown (only in traditional mode)
-    $self->{listen_socket} = $listen_socket if $listen_socket;
-
     # Return immediately - caller (Runner) will call $loop->run()
     # This is consistent with single-worker mode behavior
     return $self;
@@ -2114,10 +2672,21 @@ sub _initiate_multiworker_shutdown {
         delete $self->{_heartbeat_check_timer};
     }
 
-    # Close the listen socket to stop accepting new connections
+    # Close all listen sockets to stop accepting new connections
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        if ($entry->{socket}) {
+            close($entry->{socket});
+        }
+    }
     if ($self->{listen_socket}) {
-        close($self->{listen_socket});
         delete $self->{listen_socket};
+    }
+
+    # Clean up Unix socket files
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        if ($entry->{spec}{type} eq 'unix' && -e $entry->{spec}{path}) {
+            unlink $entry->{spec}{path};
+        }
     }
 
     # Signal all workers to shutdown
@@ -2187,7 +2756,7 @@ sub _increase_workers {
     my $new_worker_num = $current + 1;
 
     $self->_log(info => "Received TTIN, spawning worker $new_worker_num (total: $new_worker_num)");
-    $self->_spawn_worker($self->{listen_socket}, $new_worker_num);
+    $self->_spawn_worker($self->{_listen_entries}, $new_worker_num);
 }
 
 # Decrease worker pool by 1
@@ -2210,7 +2779,7 @@ sub _decrease_workers {
 }
 
 sub _spawn_worker {
-    my ($self, $listen_socket, $worker_num) = @_;
+    my ($self, $listen_entries, $worker_num) = @_;
 
     my $loop = $self->loop;
     weaken(my $weak_self = $self);
@@ -2230,7 +2799,7 @@ sub _spawn_worker {
     my $pid = $loop->fork(
         code => sub {
             close($hb_rd) if $hb_rd;
-            $self->_run_as_worker($listen_socket, $worker_num, $hb_wr);
+            $self->_run_as_worker($listen_entries, $worker_num, $hb_wr);
             return 0;
         },
     );
@@ -2282,7 +2851,7 @@ sub _spawn_worker {
         elsif ($weak_self->{running} && !$weak_self->{shutting_down}) {
             # Don't respawn if this was a TTOU reduction
             unless (delete $weak_self->{_dont_respawn}{$exit_pid}) {
-                $weak_self->_spawn_worker($listen_socket, $worker_num);
+                $weak_self->_spawn_worker($listen_entries, $worker_num);
             }
         }
 
@@ -2301,32 +2870,45 @@ sub _spawn_worker {
 }
 
 sub _run_as_worker {
-    my ($self, $listen_socket, $worker_num, $heartbeat_wr) = @_;
+    my ($self, $listen_entries, $worker_num, $heartbeat_wr) = @_;
 
     # Note: $ONE_TRUE_LOOP already cleared by $loop->fork(), so this creates a fresh loop
     # Note: $SIG{INT} = 'IGNORE' inherited from parent - do NOT call watch_signal(INT)
     #       or it will overwrite the IGNORE with a CODE ref!
     my $loop = IO::Async::Loop->new;
 
-    # In reuseport mode, each worker creates its own listening socket
+    # In reuseport mode, each worker creates its own TCP listening socket
     my $reuseport = $self->{reuseport};
-    if ($reuseport && !$listen_socket) {
-        $listen_socket = IO::Socket::INET->new(
-            LocalAddr => $self->{host},
-            LocalPort => $self->{bound_port},  # Use the port determined by parent
-            Proto     => 'tcp',
-            Listen    => $self->{listener_backlog},
-            ReuseAddr => 1,
-            ReusePort => 1,
-            Blocking  => 0,
-        ) or die "Worker $worker_num: Cannot create listening socket: $!";
+    for my $entry (@$listen_entries) {
+        my $spec = $entry->{spec};
+        if (!$entry->{socket} && $reuseport && $spec->{type} eq 'tcp') {
+            $entry->{socket} = IO::Socket::INET->new(
+                LocalAddr => $spec->{host},
+                LocalPort => $spec->{bound_port},
+                Proto     => 'tcp',
+                Listen    => $self->{listener_backlog},
+                ReuseAddr => 1,
+                ReusePort => 1,
+                Blocking  => 0,
+            ) or die "Worker $worker_num: Cannot create listening socket: $!";
+        }
+    }
+
+    # Build listener specs for the worker server constructor
+    my @listen_specs;
+    for my $entry (@$listen_entries) {
+        my $s = $entry->{spec};
+        if ($s->{type} eq 'unix') {
+            push @listen_specs, { socket => $s->{path}, (defined $s->{socket_mode} ? (socket_mode => $s->{socket_mode}) : ()) };
+        } else {
+            push @listen_specs, { host => $s->{host}, port => $s->{port}, ($s->{ssl} ? (ssl => $s->{ssl}) : ()) };
+        }
     }
 
     # Create a fresh server instance for this worker (single-worker mode)
     my $worker_server = PAGI::Server->new(
         app             => $self->{app},
-        host            => $self->{host},
-        port            => $self->{port},
+        listen          => \@listen_specs,
         ssl             => $self->{ssl},
         http2           => $self->{http2},
         extensions      => $self->{extensions},
@@ -2353,7 +2935,14 @@ sub _run_as_worker {
     $worker_server->{is_worker} = 1;
     $worker_server->{worker_num} = $worker_num;  # Store for lifespan scope
     $worker_server->{_request_count} = 0;  # Track requests handled
-    $worker_server->{bound_port} = $listen_socket->sockport;
+
+    # Set bound_port from first TCP listener's socket
+    for my $entry (@$listen_entries) {
+        if ($entry->{spec}{type} eq 'tcp' && $entry->{socket} && $entry->{socket}->can('sockport')) {
+            $worker_server->{bound_port} = $entry->{socket}->sockport;
+            last;
+        }
+    }
 
     $loop->add($worker_server);
 
@@ -2408,39 +2997,60 @@ sub _run_as_worker {
 
     if ($startup_error) {
         $self->_log(error => "Worker $worker_num ($$): startup failed: $startup_error");
-        close($listen_socket) if $listen_socket;  # Clean up FD before exit
+        for my $entry (@$listen_entries) {
+            close($entry->{socket}) if $entry->{socket};
+        }
         exit(2);  # Exit code 2 = startup failure (don't respawn)
     }
 
-    # Set up listener using the inherited socket
+    # Create IO::Async::Listener for each inherited socket
     weaken(my $weak_server = $worker_server);
 
-    my $listener = IO::Async::Listener->new(
-        handle => $listen_socket,
-        on_stream => sub {
-            my ($listener, $stream) = @_;
-            return unless $weak_server;
+    for my $entry (@$listen_entries) {
+        next unless $entry->{socket};
+        my $spec = $entry->{spec};
 
-            if ($ssl_params) {
-                $loop->SSL_upgrade(
-                    handle        => $stream,
-                    SSL_server    => 1,
-                    SSL_reuse_ctx => $worker_server->{_ssl_ctx},
-                )->on_done(sub {
-                    $weak_server->_on_connection($stream) if $weak_server;
-                })->on_fail(sub {
-                    my ($failure) = @_;
-                    $weak_server->_log(debug => "SSL handshake failed: $failure")
-                        if $weak_server;
-                });
-            } else {
-                $weak_server->_on_connection($stream);
-            }
-        },
-    );
+        # Build SSL config for TCP listeners if needed
+        my $use_ssl = ($ssl_params && $spec->{type} eq 'tcp');
 
-    $worker_server->add_child($listener);
-    $worker_server->{listener} = $listener;
+        my $listener = IO::Async::Listener->new(
+            handle => $entry->{socket},
+            on_stream => sub {
+                my ($listener, $stream) = @_;
+                return unless $weak_server;
+
+                if ($use_ssl) {
+                    $loop->SSL_upgrade(
+                        handle        => $stream,
+                        SSL_server    => 1,
+                        SSL_reuse_ctx => $worker_server->{_ssl_ctx},
+                    )->on_done(sub {
+                        $weak_server->_on_connection($stream, $spec) if $weak_server;
+                    })->on_fail(sub {
+                        my ($failure) = @_;
+                        $weak_server->_log(debug => "SSL handshake failed: $failure")
+                            if $weak_server;
+                    });
+                } else {
+                    $weak_server->_on_connection($stream, $spec);
+                }
+            },
+        );
+
+        $worker_server->add_child($listener);
+
+        # Configure accept error handler - try but ignore if it fails
+        eval {
+            $listener->configure(
+                on_accept_error => sub {
+                    my ($listener, $error) = @_;
+                    return unless $weak_server;
+                    $weak_server->_on_accept_error($error);
+                },
+            );
+        };
+        # Silently ignore configuration errors in workers
+    }
 
     # Set up heartbeat writer: periodically signal liveness to parent
     if ($heartbeat_wr) {
@@ -2455,31 +3065,21 @@ sub _run_as_worker {
         $hb_timer->start;
     }
 
-    # Configure accept error handler - try but ignore if it fails (SSL listeners may not support it)
-    eval {
-        $listener->configure(
-            on_accept_error => sub  {
-        my ($listener, $error) = @_;
-                return unless $weak_server;
-                $weak_server->_on_accept_error($error);
-            },
-        );
-    };
-    # Silently ignore configuration errors in workers
-
     $worker_server->{running} = 1;
 
     # Run the event loop
     $loop->run;
 
     # Clean up FDs before exit
-    close($heartbeat_wr)  if $heartbeat_wr;
-    close($listen_socket) if $listen_socket;
+    close($heartbeat_wr) if $heartbeat_wr;
+    for my $entry (@$listen_entries) {
+        close($entry->{socket}) if $entry->{socket};
+    }
     exit(0);
 }
 
 sub _on_connection {
-    my ($self, $stream) = @_;
+    my ($self, $stream, $listener_spec) = @_;
 
     weaken(my $weak_self = $self);
 
@@ -2521,6 +3121,8 @@ sub _on_connection {
         validate_events   => $self->{validate_events},
         write_high_watermark => $self->{write_high_watermark},
         write_low_watermark  => $self->{write_low_watermark},
+        transport_type    => ($listener_spec && $listener_spec->{type}) // 'tcp',
+        transport_path    => ($listener_spec ? $listener_spec->{path} : undef),
         ($self->{http2_enabled} ? (
             h2_protocol   => $self->{http2_protocol},
             alpn_protocol => $alpn_protocol,
@@ -2599,9 +3201,16 @@ sub _pause_accepting {
         delete $self->{_accept_pause_timer};
     }
 
-    # Temporarily disable the listener
-    if ($self->{listener} && $self->{listener}->read_handle) {
-        $self->{listener}->want_readready(0);
+    # Temporarily disable all listeners
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        my $listener = $entry->{listener};
+        if ($listener && $listener->read_handle) {
+            $listener->want_readready(0);
+        }
+    }
+    # Backward compat: also pause $self->{listener} if not in entries
+    if ($self->{listener} && !$self->{_listen_entries}) {
+        $self->{listener}->want_readready(0) if $self->{listener}->read_handle;
     }
 
     # Re-enable after duration
@@ -2610,13 +3219,22 @@ sub _pause_accepting {
         return unless $weak_self && $weak_self->{running};
         $weak_self->{_accept_paused} = 0;
         delete $weak_self->{_accept_pause_timer};
-        if ($weak_self->{listener} && $weak_self->{listener}->read_handle) {
-            $weak_self->{listener}->want_readready(1);
+
+        # Resume all listeners
+        for my $entry (@{$weak_self->{_listen_entries} // []}) {
+            my $listener = $entry->{listener};
+            if ($listener && $listener->read_handle) {
+                $listener->want_readready(1);
+            }
         }
+        # Backward compat
+        if ($weak_self->{listener} && !$weak_self->{_listen_entries}) {
+            $weak_self->{listener}->want_readready(1) if $weak_self->{listener}->read_handle;
+        }
+
         $weak_self->_log(debug => "Accept resumed after FD exhaustion pause");
     });
 
-    # Store the timer ID for cleanup
     $self->{_accept_pause_timer} = $timer_id;
 }
 
@@ -2803,11 +3421,19 @@ async sub shutdown {
         $self->{_accept_paused} = 0;
     }
 
-    # Stop accepting new connections
-    if ($self->{listener}) {
-        $self->remove_child($self->{listener});
-        $self->{listener} = undef;
+    # Stop accepting new connections on all listeners
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        eval { $self->remove_child($entry->{listener}) };
     }
+    $self->{listener} = undef;
+
+    # Clean up Unix socket files
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        if ($entry->{spec}{type} eq 'unix' && -e $entry->{spec}{path}) {
+            unlink $entry->{spec}{path};
+        }
+    }
+    $self->{_listen_entries} = [];
 
     # Wait for active connections to drain (graceful shutdown)
     await $self->_drain_connections;
@@ -3005,6 +3631,19 @@ sub port {
     my ($self) = @_;
 
     return $self->{bound_port} // $self->{port};
+}
+
+sub socket_path {
+    my ($self) = @_;
+    for my $listener (@{$self->{listeners} // []}) {
+        return $listener->{path} if $listener->{type} eq 'unix';
+    }
+    return undef;
+}
+
+sub listeners {
+    my ($self) = @_;
+    return $self->{listeners} // [];
 }
 
 sub is_running {

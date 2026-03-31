@@ -74,7 +74,7 @@ sub wrap {
         }
 
         # Check if request is from trusted proxy
-        my $client_ip = $scope->{client}[0] // '';
+        my $client_ip = exists $scope->{client} ? ($scope->{client}[0] // '') : '';
         unless ($self->{trust_all} || $self->_is_trusted($client_ip)) {
             await $app->($scope, $receive, $send);
             return;
@@ -92,11 +92,19 @@ sub wrap {
             my ($original_ip) = split /\s*,\s*/, $forwarded_for;
             $original_ip =~ s/^\s+//;
             $original_ip =~ s/\s+$//;
-            $new_scope{client} = [$original_ip, $scope->{client}[1]];
-            $new_scope{original_client} = $scope->{client};
+            if (exists $scope->{client}) {
+                $new_scope{client} = [$original_ip, $scope->{client}[1]];
+                $new_scope{original_client} = $scope->{client};
+            } else {
+                $new_scope{client} = [$original_ip, undef];
+            }
         } elsif ($real_ip) {
-            $new_scope{client} = [$real_ip, $scope->{client}[1]];
-            $new_scope{original_client} = $scope->{client};
+            if (exists $scope->{client}) {
+                $new_scope{client} = [$real_ip, $scope->{client}[1]];
+                $new_scope{original_client} = $scope->{client};
+            } else {
+                $new_scope{client} = [$real_ip, undef];
+            }
         }
 
         # X-Forwarded-Proto

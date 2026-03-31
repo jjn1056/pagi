@@ -248,7 +248,8 @@ Hashref containing rate limit configuration.
         messages_per_second => 10,
         on_limit_exceeded => sub  {
         my ($scope, $type, $current, $limit) = @_;
-            warn "Rate limit exceeded for $scope->{client}[0]: $type\n";
+            my $client_id = exists $scope->{client} ? $scope->{client}[0] : 'unknown';
+            warn "Rate limit exceeded for $client_id: $type\n";
             return 1;  # Close connection
         };
 
