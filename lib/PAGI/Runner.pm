@@ -194,18 +194,13 @@ Example with C<-e> and C<-M>:
 
     pagi-server -MPAGI::App::File -e 'PAGI::App::File->new(root => ".")->to_app'
 
-=head3 Server-Specific Options (passed through)
+=head3 Server-Specific Options
 
-All unrecognized options starting with C<-> are passed to the server.
-For PAGI::Server, these include:
+Server-specific options should be parsed by the server's CLI wrapper
+(e.g., C<bin/pagi-server>) and passed to Runner via the C<server_options>
+hashref parameter. This keeps Runner server-agnostic.
 
-    -w, --workers       Number of worker processes
-    --reuseport         Enable SO_REUSEPORT mode
-    --ssl-cert, --ssl-key  TLS configuration
-    --max-requests, --max-connections, --max-body-size
-    --timeout, --log-level, etc.
-
-See L<PAGI::Server> for the full list of server-specific options.
+See L<PAGI::Server> for available options when using pagi-server.
 
 =cut
 
@@ -718,7 +713,7 @@ sub _show_help {
     print <<'HELP';
 Usage: pagi-server [options] [app] [key=value ...]
 
-Common Options:
+Common Options (handled by Runner):
     -I, --lib PATH      Add PATH to @INC (repeatable, like perl -I)
     -a, --app FILE      Load app from file (legacy option)
     -o, --host HOST     Bind address (default: 127.0.0.1)
@@ -737,17 +732,6 @@ Common Options:
     -v, --version       Show version info
     --help              Show this help
 
-PAGI::Server Options (pass-through):
-    -w, --workers NUM   Number of worker processes (default: 1)
-    --ssl-cert FILE     SSL certificate file
-    --ssl-key FILE      SSL private key file
-    --reuseport         SO_REUSEPORT mode (reduces accept contention)
-    --max-requests NUM  Requests per worker before restart
-    --max-connections N Max concurrent connections (0=auto)
-    --max-body-size NUM Max request body size (default: 10MB)
-    --timeout NUM       Connection idle timeout in seconds
-    --log-level LEVEL   Log verbosity: debug, info, warn, error
-
 Environment Modes:
     development    Auto-enable Lint middleware (default if TTY)
     production     No auto-middleware (default if no TTY)
@@ -758,11 +742,8 @@ App can be:
     File path:      pagi-server ./app.pl
     Default:        pagi-server                (serves current directory)
 
-Examples:
-    pagi-server                                    # Serve current directory
-    pagi-server -E production ./app.pl            # Production mode
-    pagi-server -p 8080 --workers 4 ./myapp.pl    # Custom port + workers
-    pagi-server PAGI::App::Directory root=/tmp    # Serve /tmp
+Server-specific options are handled by the server CLI (e.g., pagi-server).
+See: perldoc pagi-server
 
 HELP
 }
