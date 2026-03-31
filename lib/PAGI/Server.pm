@@ -3186,9 +3186,16 @@ sub _pause_accepting {
         delete $self->{_accept_pause_timer};
     }
 
-    # Temporarily disable the listener
-    if ($self->{listener} && $self->{listener}->read_handle) {
-        $self->{listener}->want_readready(0);
+    # Temporarily disable all listeners
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        my $listener = $entry->{listener};
+        if ($listener && $listener->read_handle) {
+            $listener->want_readready(0);
+        }
+    }
+    # Backward compat: also pause $self->{listener} if not in entries
+    if ($self->{listener} && !$self->{_listen_entries}) {
+        $self->{listener}->want_readready(0) if $self->{listener}->read_handle;
     }
 
     # Re-enable after duration
@@ -3197,13 +3204,22 @@ sub _pause_accepting {
         return unless $weak_self && $weak_self->{running};
         $weak_self->{_accept_paused} = 0;
         delete $weak_self->{_accept_pause_timer};
-        if ($weak_self->{listener} && $weak_self->{listener}->read_handle) {
-            $weak_self->{listener}->want_readready(1);
+
+        # Resume all listeners
+        for my $entry (@{$weak_self->{_listen_entries} // []}) {
+            my $listener = $entry->{listener};
+            if ($listener && $listener->read_handle) {
+                $listener->want_readready(1);
+            }
         }
+        # Backward compat
+        if ($weak_self->{listener} && !$weak_self->{_listen_entries}) {
+            $weak_self->{listener}->want_readready(1) if $weak_self->{listener}->read_handle;
+        }
+
         $weak_self->_log(debug => "Accept resumed after FD exhaustion pause");
     });
 
-    # Store the timer ID for cleanup
     $self->{_accept_pause_timer} = $timer_id;
 }
 
