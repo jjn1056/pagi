@@ -136,34 +136,102 @@ B<Not yet implemented:>
 
 For HTTP/2, see L</ENABLING HTTP/2 SUPPORT (EXPERIMENTAL)>.
 
-=head1 UNIX DOMAIN SOCKET SUPPORT
+=head1 UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)
 
-Unix domain sockets provide efficient communication between a reverse proxy
-(nginx, etc.) and the application server on the same machine, avoiding TCP
-overhead.
+B<This feature is experimental.> The API is subject to change in future
+releases. Please report issues at L<https://github.com/jjn1056/pagi/issues>.
+
+Unix domain sockets provide efficient local communication between a reverse
+proxy (nginx, HAProxy, etc.) and PAGI::Server running on the same machine.
+They bypass the TCP/IP stack entirely, reducing latency and overhead compared
+to connecting over C<127.0.0.1>.
+
+=head2 When to Use Unix Sockets
+
+=over 4
+
+=item * B<Behind a reverse proxy> — nginx or HAProxy on the same host handles
+TLS termination, HTTP/2 negotiation, and static files, forwarding dynamic
+requests to PAGI over a Unix socket.
+
+=item * B<Benchmarks> — frameworks like TechEmpower FrameworkBenchmarks use
+Unix sockets to eliminate network variable from application benchmarks.
+
+=item * B<Microservice IPC> — services on the same host communicate without
+network overhead.
+
+=back
+
+B<When NOT to use:> If clients connect over the network (remote browsers,
+API consumers), use TCP. Unix sockets only accept connections from processes
+on the same machine.
 
 =head2 Basic Usage
+
+B<Programmatic:>
 
     my $server = PAGI::Server->new(
         app    => $app,
         socket => '/tmp/pagi.sock',
     );
 
-B<CLI:> C<pagi-server --socket /tmp/pagi.sock ./app.pl>
+B<CLI:>
+
+    pagi-server --socket /tmp/pagi.sock ./app.pl
+
+B<With workers:>
+
+    pagi-server --socket /tmp/pagi.sock --workers 4 ./app.pl
+
+In multi-worker mode, the parent process creates the Unix socket and all
+worker processes inherit the file descriptor via C<fork()>. The kernel
+distributes incoming connections across workers.
+
+=head2 How It Works
+
+=over 4
+
+=item 1. On startup, any existing file at the socket path is removed (stale
+socket cleanup).
+
+=item 2. The server creates and binds a C<SOCK_STREAM> Unix domain socket
+at the specified path using C<IO::Socket::UNIX> (multi-worker) or
+C<IO::Async::Listener> with C<< family => 'unix' >> (single-worker).
+
+=item 3. If C<socket_mode> is set, C<chmod()> is called immediately after
+binding to set the file permissions.
+
+=item 4. In multi-worker mode, the parent creates the socket before forking.
+Workers inherit the listening fd and each runs its own C<IO::Async::Listener>
+wrapping the inherited handle.
+
+=item 5. On graceful shutdown (SIGTERM/SIGINT), the socket file is unlinked
+by both the single-worker C<shutdown()> path and the multi-worker
+C<_initiate_multiworker_shutdown()> path.
+
+=back
 
 =head2 nginx Configuration
 
-    upstream pagi {
-        server unix:/tmp/pagi.sock;
+B<Basic upstream:>
+
+    upstream pagi_backend {
+        server unix:/var/run/myapp/pagi.sock;
         keepalive 32;
     }
 
     server {
         listen 80;
+        server_name myapp.example.com;
+
         location / {
-            proxy_pass http://pagi;
+            proxy_pass http://pagi_backend;
+
+            # Required for upstream keepalive:
             proxy_http_version 1.1;
             proxy_set_header Connection "";
+
+            # Forward client info (since PAGI can't see it over Unix socket):
             proxy_set_header Host $host;
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -171,60 +239,223 @@ B<CLI:> C<pagi-server --socket /tmp/pagi.sock ./app.pl>
         }
     }
 
-=head2 Socket Permissions
+B<Important:> The C<keepalive> directive is critical for performance. Without
+it, nginx opens a new Unix socket connection for every request.
+C<proxy_http_version 1.1> and C<proxy_set_header Connection ""> are required
+for keepalive to work.
 
-Use C<socket_mode> to set permissions after socket creation:
+B<With TLS termination at nginx:>
 
-    pagi-server --socket /tmp/pagi.sock --socket-mode 0660 ./app.pl
+    server {
+        listen 443 ssl http2;
+        ssl_certificate     /etc/ssl/myapp.crt;
+        ssl_certificate_key /etc/ssl/myapp.key;
 
-For production, use a dedicated directory with restricted permissions
-(e.g., C</var/run/myapp/>) rather than C</tmp/>. With systemd, use
-C<RuntimeDirectory=myapp> in your service file.
+        location / {
+            proxy_pass http://pagi_backend;
+            # ... same proxy headers as above
+        }
+    }
 
-=head2 Scope Differences
+nginx handles TLS and HTTP/2 with clients, then speaks plain HTTP/1.1 to
+PAGI over the Unix socket. This is the recommended production pattern.
 
-For Unix socket connections, the PAGI scope has these differences from
-TCP connections:
+=head2 Socket Permissions and Security
+
+By default, the socket file inherits permissions from the process umask.
+Use C<socket_mode> to set explicit permissions:
+
+    # CLI
+    pagi-server --socket /var/run/myapp/pagi.sock --socket-mode 0660 ./app.pl
+
+    # Programmatic
+    PAGI::Server->new(
+        app         => $app,
+        socket      => '/var/run/myapp/pagi.sock',
+        socket_mode => 0660,
+    );
+
+B<Production recommendations:>
 
 =over 4
 
-=item * C<client> is B<absent> from the scope (no peer IP/port available)
+=item * B<Use a dedicated directory>, not C</tmp/>. Directories like
+C</var/run/myapp/> or C</run/myapp/> prevent symlink attacks and provide
+an additional permission layer.
 
-=item * C<server> is C<[$socket_path, undef]> instead of C<[$host, $port]>
+=item * B<Use C<0660> with a shared group.> Create a group (e.g., C<myapp>)
+that both the application user and the nginx user belong to:
+
+    sudo groupadd myapp
+    sudo usermod -aG myapp www-data    # nginx user
+    sudo usermod -aG myapp myappuser   # app user
+    sudo mkdir -p /var/run/myapp
+    sudo chown myappuser:myapp /var/run/myapp
+    sudo chmod 0750 /var/run/myapp
+
+=item * B<Use systemd C<RuntimeDirectory>> for automatic directory management:
+
+    # /etc/systemd/system/myapp.service
+    [Service]
+    User=myappuser
+    Group=myapp
+    RuntimeDirectory=myapp
+    RuntimeDirectoryMode=0750
+    ExecStart=/usr/local/bin/pagi-server \
+        --socket /run/myapp/pagi.sock \
+        --socket-mode 0660 \
+        --workers 4 \
+        /opt/myapp/app.pl
+
+systemd creates C</run/myapp/> on service start and cleans it up on stop.
 
 =back
 
-Middleware that uses C<$scope-E<gt>{client}> must handle its absence.
-Use C<X-Forwarded-For> headers from the reverse proxy for client identification.
+=head2 TLS Over Unix Sockets
+
+TLS can be used over Unix sockets, though this is unusual — normally the
+reverse proxy handles TLS termination. When TLS is configured on a Unix
+socket listener, the server logs an info-level note suggesting reverse proxy
+TLS termination instead.
+
+The combination is allowed because it has legitimate uses (encrypted
+inter-container communication, compliance requirements). All major ASGI
+servers (Uvicorn, Hypercorn, Granian) also allow it.
+
+=head2 HTTP/2 Over Unix Sockets
+
+h2c (HTTP/2 cleartext) works over Unix sockets. This is useful for gRPC
+backends or reverse proxies that support HTTP/2 to upstreams (e.g., Envoy).
+Note that nginx does B<not> currently support HTTP/2 to upstream backends
+(except for gRPC via C<grpc_pass>).
+
+=head2 Scope Differences
+
+For Unix socket connections, the PAGI scope differs from TCP connections:
+
+=over 4
+
+=item * B<C<client> is absent> — Unix sockets have no peer IP address or
+port. The C<client> key is omitted entirely from the scope hashref (not set
+to C<undef>). This is spec-compliant: the PAGI specification marks C<client>
+as optional.
+
+=item * B<C<server> is C<[$socket_path, undef]>>> — instead of C<[$host, $port]>.
+
+=back
+
+B<Middleware implications:> Any middleware that accesses C<< $scope->{client} >>
+must check C<< exists $scope->{client} >> first. For client IP identification
+behind a reverse proxy, use C<X-Forwarded-For> or C<X-Real-IP> headers
+instead of C<< $scope->{client} >>. The C<PAGI::Middleware::XForwardedFor>
+middleware (if available) handles this automatically.
+
+B<Access log:> Unix socket connections log C<unix> as the client IP in the
+access log instead of an IP address.
 
 =head2 Stale Socket Cleanup
 
-Any existing file at the socket path is automatically removed before binding.
-The socket file is also removed during graceful shutdown (SIGTERM/SIGINT).
+If a socket file already exists at the configured path (e.g., from a previous
+crash), it is automatically removed before binding. This matches the behavior
+of Starman, Gunicorn, Uvicorn, and other production servers. The socket file
+is also removed during graceful shutdown (SIGTERM/SIGINT).
 
-=head1 MULTI-LISTENER SUPPORT
+If the server is killed with SIGKILL (C<kill -9>), the socket file will
+B<not> be cleaned up. It will be removed on the next startup.
 
-A single server instance can listen on multiple endpoints simultaneously
-using the C<listen> constructor option:
+=head1 MULTI-LISTENER SUPPORT (EXPERIMENTAL)
+
+B<This feature is experimental.> The API is subject to change in future
+releases.
+
+A single PAGI::Server instance can listen on multiple endpoints
+simultaneously. This is useful for:
+
+=over 4
+
+=item * B<TCP for health checks + Unix socket for app traffic> — load
+balancers probe a TCP port while nginx uses the Unix socket.
+
+=item * B<Multiple TCP ports> — serve different interfaces on different ports.
+
+=item * B<Gradual migration> — listen on both old and new ports during
+a transition.
+
+=back
+
+=head2 Programmatic API
 
     my $server = PAGI::Server->new(
         app    => $app,
         listen => [
             { host => '0.0.0.0', port => 8080 },
-            { socket => '/tmp/pagi.sock' },
+            { socket => '/tmp/pagi.sock', socket_mode => 0660 },
         ],
     );
 
-B<CLI:>
+Each spec in the C<listen> array is a hashref with either C<< { host, port } >>
+for TCP or C<< { socket } >> (with optional C<socket_mode>) for Unix sockets.
 
+Per-listener TLS is supported:
+
+    listen => [
+        { host => '0.0.0.0', port => 443, ssl => { cert_file => '...', key_file => '...' } },
+        { socket => '/tmp/pagi.sock' },  # plain HTTP for nginx
+    ],
+
+=head2 CLI
+
+The C<--listen> flag is repeatable. The server auto-detects TCP vs Unix
+socket: values containing C<:> are parsed as C<host:port>, everything else
+is treated as a Unix socket path.
+
+    # TCP + Unix socket
     pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock ./app.pl
 
-This is useful for exposing a TCP port for health checks while using a
-Unix socket for application traffic from a reverse proxy.
+    # Multiple TCP ports
+    pagi-server --listen 0.0.0.0:8080 --listen 0.0.0.0:8443 ./app.pl
 
-The C<reuseport> option applies only to TCP listeners. Unix socket
+    # With workers
+    pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock -w 4 ./app.pl
+
+    # IPv6
+    pagi-server --listen [::1]:5000 ./app.pl
+
+C<--listen> is B<mutually exclusive> with C<--host>, C<--port>, and
+C<--socket>. C<--socket-mode> applies to all Unix socket listeners when
+using C<--listen>.
+
+=head2 How It Works
+
+=over 4
+
+=item * In B<single-worker mode>, one C<IO::Async::Listener> is created per
+endpoint. All listeners share the same event loop and connection handler.
+
+=item * In B<multi-worker mode>, the parent process creates all listening
+sockets (Unix and TCP) before forking. Workers inherit all file descriptors
+and create their own C<IO::Async::Listener> for each inherited socket.
+
+=item * The C<reuseport> option applies only to TCP listeners. Unix socket
 listeners always use the shared-socket model (parent creates, workers inherit).
-Works with both single-worker and multi-worker modes.
+
+=item * On shutdown, all listeners are stopped and all Unix socket files are
+cleaned up.
+
+=back
+
+=head2 Accessors
+
+    $server->port;          # Bound port of first TCP listener, or undef
+    $server->socket_path;   # Path of first Unix socket listener, or undef
+    $server->listeners;     # Arrayref of all listener specs
+
+=head2 Backward Compatibility
+
+The existing C<host>/C<port> constructor options continue to work exactly
+as before. They are internally normalized to a single-element listener
+array. The C<socket> option is similarly sugar for a single Unix socket
+listener. Only C<listen> enables true multi-listener mode.
 
 =head1 WINDOWS SUPPORT
 
@@ -295,8 +526,9 @@ Bind port. Default: 5000
 
 =item socket => $path
 
-Unix domain socket path for listening instead of TCP host:port.
+B<Experimental.> Unix domain socket path for listening instead of TCP host:port.
 B<Mutually exclusive> with C<host>, C<port>, and C<listen>.
+See L</UNIX DOMAIN SOCKET SUPPORT (EXPERIMENTAL)> for details.
 
     my $server = PAGI::Server->new(
         app    => $app,
@@ -318,10 +550,11 @@ if C<socket> is not set.
 
 =item listen => \@specs
 
-Array of listener specifications for multi-endpoint listening. Each spec
-is a hashref with either C<< { host, port } >> for TCP or
+B<Experimental.> Array of listener specifications for multi-endpoint listening.
+Each spec is a hashref with either C<< { host, port } >> for TCP or
 C<< { socket, socket_mode } >> for Unix domain sockets.
 B<Mutually exclusive> with C<host>, C<port>, C<socket>, and C<socket_mode>.
+See L</MULTI-LISTENER SUPPORT (EXPERIMENTAL)> for details.
 
     my $server = PAGI::Server->new(
         app    => $app,
