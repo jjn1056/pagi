@@ -537,4 +537,32 @@ subtest 'PAGI_ENV exported after mode resolution' => sub {
     like($ENV{PAGI_ENV}, qr/^(development|production)$/, 'PAGI_ENV is valid mode');
 };
 
+# Test: Runner accepts server_options hashref
+subtest 'server_options hashref accepted by constructor' => sub {
+    my $runner = PAGI::Runner->new(
+        port          => 0,
+        quiet         => 1,
+        server_options => { workers => 4, timeout => 30 },
+    );
+
+    is(ref $runner->{server_options}, 'HASH', 'server_options is a hashref');
+    is($runner->{server_options}{workers}, 4, 'workers preserved');
+    is($runner->{server_options}{timeout}, 30, 'timeout preserved');
+};
+
+# Test: server_options passed via parse_options args
+subtest 'server_options passed via parse_options' => sub {
+    my $runner = PAGI::Runner->new;
+    $runner->parse_options(
+        '-p', '8080',
+        'server_options', { workers => 2 },
+        'app.pl',
+    );
+
+    is(ref $runner->{server_options}, 'HASH', 'server_options is hashref');
+    is($runner->{server_options}{workers}, 2, 'workers from server_options');
+    is($runner->{port}, 8080, 'port still parsed');
+    is($runner->{argv}[0], 'app.pl', 'app in argv');
+};
+
 done_testing;

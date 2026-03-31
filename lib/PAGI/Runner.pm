@@ -155,7 +155,7 @@ sub new {
         app               => undef,
         app_spec          => undef,
         app_args          => {},
-        server_options    => [],
+        server_options    => $args{server_options} // [],
         argv              => [],
     }, $class;
 }
@@ -211,6 +211,15 @@ See L<PAGI::Server> for the full list of server-specific options.
 
 sub parse_options {
     my ($self, @args) = @_;
+
+    # Check for server_options hashref passed from bin/pagi-server
+    for my $i (0 .. $#args) {
+        if ($args[$i] eq 'server_options' && ref($args[$i + 1]) eq 'HASH') {
+            $self->{server_options} = $args[$i + 1];
+            splice @args, $i, 2;
+            last;
+        }
+    }
 
     # Pre-process cuddled options like -MModule or -e"code" → -M Module, -e "code"
     # This matches Plack::Runner behavior for perl-like flags
