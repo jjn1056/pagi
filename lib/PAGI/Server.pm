@@ -2106,35 +2106,60 @@ sub _listen_multiworker {
     my $workers = $self->{workers};
     my $reuseport = $self->{reuseport};
 
-    my $listen_socket;
+    # Create all listening sockets before forking workers
+    my @listen_entries;
 
-    if ($reuseport) {
-        # SO_REUSEPORT mode: each worker creates its own socket
-        # Parent just needs to know the port for display purposes
-        # We do a quick bind to validate port availability and get actual port if 0
-        my $probe_socket = IO::Socket::INET->new(
-            LocalAddr => $self->{host},
-            LocalPort => $self->{port},
-            Proto     => 'tcp',
-            Listen    => 1,
-            ReuseAddr => 1,
-            ReusePort => 1,
-        ) or die "Cannot bind to $self->{host}:$self->{port}: $!";
-        $self->{bound_port} = $probe_socket->sockport;
-        close($probe_socket);  # Workers will create their own sockets
+    for my $spec (@{$self->{listeners}}) {
+        my $socket;
+
+        if ($spec->{type} eq 'unix') {
+            # Unix socket: parent creates, workers inherit
+            unlink $spec->{path} if -e $spec->{path};
+
+            require IO::Socket::UNIX;
+            $socket = IO::Socket::UNIX->new(
+                Local   => $spec->{path},
+                Type    => Socket::SOCK_STREAM(),
+                Listen  => $self->{listener_backlog},
+            ) or die "Cannot create Unix socket $spec->{path}: $!";
+
+            if (defined $spec->{socket_mode}) {
+                chmod($spec->{socket_mode}, $spec->{path})
+                    or die "Cannot chmod $spec->{path}: $!\n";
+            }
+        } elsif ($reuseport) {
+            # reuseport TCP: probe to get port, workers create their own
+            my $probe_socket = IO::Socket::INET->new(
+                LocalAddr => $spec->{host},
+                LocalPort => $spec->{port},
+                Proto     => 'tcp',
+                Listen    => 1,
+                ReuseAddr => 1,
+                ReusePort => 1,
+            ) or die "Cannot bind to $spec->{host}:$spec->{port}: $!";
+            $spec->{bound_port} = $probe_socket->sockport;
+            $self->{bound_port} //= $spec->{bound_port};
+            close($probe_socket);
+        } else {
+            # Shared-socket TCP: parent creates, workers inherit
+            $socket = IO::Socket::INET->new(
+                LocalAddr => $spec->{host},
+                LocalPort => $spec->{port},
+                Proto     => 'tcp',
+                Listen    => $self->{listener_backlog},
+                ReuseAddr => 1,
+                Blocking  => 0,
+            ) or die "Cannot create listening socket on $spec->{host}:$spec->{port}: $!";
+            $spec->{bound_port} = $socket->sockport;
+            $self->{bound_port} //= $spec->{bound_port};
+        }
+
+        push @listen_entries, { socket => $socket, spec => $spec };
     }
-    else {
-        # Traditional mode: parent creates socket, workers inherit it
-        $listen_socket = IO::Socket::INET->new(
-            LocalAddr => $self->{host},
-            LocalPort => $self->{port},
-            Proto     => 'tcp',
-            Listen    => $self->{listener_backlog},
-            ReuseAddr => 1,
-            Blocking  => 0,
-        ) or die "Cannot create listening socket: $!";
-        $self->{bound_port} = $listen_socket->sockport;
-    }
+
+    $self->{_listen_entries} = \@listen_entries;
+    # Backward compat: keep listen_socket pointing to first entry's socket
+    $self->{listen_socket} = $listen_entries[0]{socket} if @listen_entries && $listen_entries[0]{socket};
 
     $self->{running} = 1;
 
@@ -2161,7 +2186,19 @@ sub _listen_multiworker {
         );
     }
 
-    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $scheme://$self->{host}:$self->{bound_port}/ with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    # Log listening banner for all listeners
+    my @addrs;
+    for my $entry (@listen_entries) {
+        my $s = $entry->{spec};
+        if ($s->{type} eq 'unix') {
+            push @addrs, "unix:$s->{path}";
+        } else {
+            my $port = $s->{bound_port} // $s->{port};
+            push @addrs, "$scheme://$s->{host}:$port/";
+        }
+    }
+    my $addr_str = join(', ', @addrs);
+    $self->_log(info => "PAGI Server (multi-worker, $mode) listening on $addr_str with $workers workers (loop: $loop_class, max_conn: $max_conn/worker, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -2177,7 +2214,7 @@ sub _listen_multiworker {
     # This prevents children from inheriting the parent's sigpipe setup,
     # which can cause issues with Ctrl-C signal delivery on macOS.
     for my $i (1 .. $workers) {
-        $self->_spawn_worker($listen_socket, $i);
+        $self->_spawn_worker(\@listen_entries, $i);
     }
 
     # Set up signal handlers for parent process AFTER forking
@@ -2228,9 +2265,6 @@ sub _listen_multiworker {
         $self->{_heartbeat_check_timer} = $hb_check_timer;
     }
 
-    # Store the socket for cleanup during shutdown (only in traditional mode)
-    $self->{listen_socket} = $listen_socket if $listen_socket;
-
     # Return immediately - caller (Runner) will call $loop->run()
     # This is consistent with single-worker mode behavior
     return $self;
@@ -2251,10 +2285,21 @@ sub _initiate_multiworker_shutdown {
         delete $self->{_heartbeat_check_timer};
     }
 
-    # Close the listen socket to stop accepting new connections
+    # Close all listen sockets to stop accepting new connections
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        if ($entry->{socket}) {
+            close($entry->{socket});
+        }
+    }
     if ($self->{listen_socket}) {
-        close($self->{listen_socket});
         delete $self->{listen_socket};
+    }
+
+    # Clean up Unix socket files
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        if ($entry->{spec}{type} eq 'unix' && -e $entry->{spec}{path}) {
+            unlink $entry->{spec}{path};
+        }
     }
 
     # Signal all workers to shutdown
@@ -2324,7 +2369,7 @@ sub _increase_workers {
     my $new_worker_num = $current + 1;
 
     $self->_log(info => "Received TTIN, spawning worker $new_worker_num (total: $new_worker_num)");
-    $self->_spawn_worker($self->{listen_socket}, $new_worker_num);
+    $self->_spawn_worker($self->{_listen_entries}, $new_worker_num);
 }
 
 # Decrease worker pool by 1
@@ -2347,7 +2392,7 @@ sub _decrease_workers {
 }
 
 sub _spawn_worker {
-    my ($self, $listen_socket, $worker_num) = @_;
+    my ($self, $listen_entries, $worker_num) = @_;
 
     my $loop = $self->loop;
     weaken(my $weak_self = $self);
@@ -2367,7 +2412,7 @@ sub _spawn_worker {
     my $pid = $loop->fork(
         code => sub {
             close($hb_rd) if $hb_rd;
-            $self->_run_as_worker($listen_socket, $worker_num, $hb_wr);
+            $self->_run_as_worker($listen_entries, $worker_num, $hb_wr);
             return 0;
         },
     );
@@ -2419,7 +2464,7 @@ sub _spawn_worker {
         elsif ($weak_self->{running} && !$weak_self->{shutting_down}) {
             # Don't respawn if this was a TTOU reduction
             unless (delete $weak_self->{_dont_respawn}{$exit_pid}) {
-                $weak_self->_spawn_worker($listen_socket, $worker_num);
+                $weak_self->_spawn_worker($listen_entries, $worker_num);
             }
         }
 
@@ -2438,32 +2483,45 @@ sub _spawn_worker {
 }
 
 sub _run_as_worker {
-    my ($self, $listen_socket, $worker_num, $heartbeat_wr) = @_;
+    my ($self, $listen_entries, $worker_num, $heartbeat_wr) = @_;
 
     # Note: $ONE_TRUE_LOOP already cleared by $loop->fork(), so this creates a fresh loop
     # Note: $SIG{INT} = 'IGNORE' inherited from parent - do NOT call watch_signal(INT)
     #       or it will overwrite the IGNORE with a CODE ref!
     my $loop = IO::Async::Loop->new;
 
-    # In reuseport mode, each worker creates its own listening socket
+    # In reuseport mode, each worker creates its own TCP listening socket
     my $reuseport = $self->{reuseport};
-    if ($reuseport && !$listen_socket) {
-        $listen_socket = IO::Socket::INET->new(
-            LocalAddr => $self->{host},
-            LocalPort => $self->{bound_port},  # Use the port determined by parent
-            Proto     => 'tcp',
-            Listen    => $self->{listener_backlog},
-            ReuseAddr => 1,
-            ReusePort => 1,
-            Blocking  => 0,
-        ) or die "Worker $worker_num: Cannot create listening socket: $!";
+    for my $entry (@$listen_entries) {
+        my $spec = $entry->{spec};
+        if (!$entry->{socket} && $reuseport && $spec->{type} eq 'tcp') {
+            $entry->{socket} = IO::Socket::INET->new(
+                LocalAddr => $spec->{host},
+                LocalPort => $spec->{bound_port},
+                Proto     => 'tcp',
+                Listen    => $self->{listener_backlog},
+                ReuseAddr => 1,
+                ReusePort => 1,
+                Blocking  => 0,
+            ) or die "Worker $worker_num: Cannot create listening socket: $!";
+        }
+    }
+
+    # Build listener specs for the worker server constructor
+    my @listen_specs;
+    for my $entry (@$listen_entries) {
+        my $s = $entry->{spec};
+        if ($s->{type} eq 'unix') {
+            push @listen_specs, { socket => $s->{path}, (defined $s->{socket_mode} ? (socket_mode => $s->{socket_mode}) : ()) };
+        } else {
+            push @listen_specs, { host => $s->{host}, port => $s->{port}, ($s->{ssl} ? (ssl => $s->{ssl}) : ()) };
+        }
     }
 
     # Create a fresh server instance for this worker (single-worker mode)
     my $worker_server = PAGI::Server->new(
         app             => $self->{app},
-        host            => $self->{host},
-        port            => $self->{port},
+        listen          => \@listen_specs,
         ssl             => $self->{ssl},
         http2           => $self->{http2},
         extensions      => $self->{extensions},
@@ -2490,7 +2548,14 @@ sub _run_as_worker {
     $worker_server->{is_worker} = 1;
     $worker_server->{worker_num} = $worker_num;  # Store for lifespan scope
     $worker_server->{_request_count} = 0;  # Track requests handled
-    $worker_server->{bound_port} = $listen_socket->sockport;
+
+    # Set bound_port from first TCP listener's socket
+    for my $entry (@$listen_entries) {
+        if ($entry->{spec}{type} eq 'tcp' && $entry->{socket} && $entry->{socket}->can('sockport')) {
+            $worker_server->{bound_port} = $entry->{socket}->sockport;
+            last;
+        }
+    }
 
     $loop->add($worker_server);
 
@@ -2545,39 +2610,60 @@ sub _run_as_worker {
 
     if ($startup_error) {
         $self->_log(error => "Worker $worker_num ($$): startup failed: $startup_error");
-        close($listen_socket) if $listen_socket;  # Clean up FD before exit
+        for my $entry (@$listen_entries) {
+            close($entry->{socket}) if $entry->{socket};
+        }
         exit(2);  # Exit code 2 = startup failure (don't respawn)
     }
 
-    # Set up listener using the inherited socket
+    # Create IO::Async::Listener for each inherited socket
     weaken(my $weak_server = $worker_server);
 
-    my $listener = IO::Async::Listener->new(
-        handle => $listen_socket,
-        on_stream => sub {
-            my ($listener, $stream) = @_;
-            return unless $weak_server;
+    for my $entry (@$listen_entries) {
+        next unless $entry->{socket};
+        my $spec = $entry->{spec};
 
-            if ($ssl_params) {
-                $loop->SSL_upgrade(
-                    handle        => $stream,
-                    SSL_server    => 1,
-                    SSL_reuse_ctx => $worker_server->{_ssl_ctx},
-                )->on_done(sub {
-                    $weak_server->_on_connection($stream) if $weak_server;
-                })->on_fail(sub {
-                    my ($failure) = @_;
-                    $weak_server->_log(debug => "SSL handshake failed: $failure")
-                        if $weak_server;
-                });
-            } else {
-                $weak_server->_on_connection($stream);
-            }
-        },
-    );
+        # Build SSL config for TCP listeners if needed
+        my $use_ssl = ($ssl_params && $spec->{type} eq 'tcp');
 
-    $worker_server->add_child($listener);
-    $worker_server->{listener} = $listener;
+        my $listener = IO::Async::Listener->new(
+            handle => $entry->{socket},
+            on_stream => sub {
+                my ($listener, $stream) = @_;
+                return unless $weak_server;
+
+                if ($use_ssl) {
+                    $loop->SSL_upgrade(
+                        handle        => $stream,
+                        SSL_server    => 1,
+                        SSL_reuse_ctx => $worker_server->{_ssl_ctx},
+                    )->on_done(sub {
+                        $weak_server->_on_connection($stream, $spec) if $weak_server;
+                    })->on_fail(sub {
+                        my ($failure) = @_;
+                        $weak_server->_log(debug => "SSL handshake failed: $failure")
+                            if $weak_server;
+                    });
+                } else {
+                    $weak_server->_on_connection($stream, $spec);
+                }
+            },
+        );
+
+        $worker_server->add_child($listener);
+
+        # Configure accept error handler - try but ignore if it fails
+        eval {
+            $listener->configure(
+                on_accept_error => sub {
+                    my ($listener, $error) = @_;
+                    return unless $weak_server;
+                    $weak_server->_on_accept_error($error);
+                },
+            );
+        };
+        # Silently ignore configuration errors in workers
+    }
 
     # Set up heartbeat writer: periodically signal liveness to parent
     if ($heartbeat_wr) {
@@ -2592,26 +2678,16 @@ sub _run_as_worker {
         $hb_timer->start;
     }
 
-    # Configure accept error handler - try but ignore if it fails (SSL listeners may not support it)
-    eval {
-        $listener->configure(
-            on_accept_error => sub  {
-        my ($listener, $error) = @_;
-                return unless $weak_server;
-                $weak_server->_on_accept_error($error);
-            },
-        );
-    };
-    # Silently ignore configuration errors in workers
-
     $worker_server->{running} = 1;
 
     # Run the event loop
     $loop->run;
 
     # Clean up FDs before exit
-    close($heartbeat_wr)  if $heartbeat_wr;
-    close($listen_socket) if $listen_socket;
+    close($heartbeat_wr) if $heartbeat_wr;
+    for my $entry (@$listen_entries) {
+        close($entry->{socket}) if $entry->{socket};
+    }
     exit(0);
 }
 
