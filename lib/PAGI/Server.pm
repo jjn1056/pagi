@@ -1409,9 +1409,14 @@ sub _init {
     my ($self, $params) = @_;
 
     $self->{app}              = delete $params->{app} or die "app is required";
-    $self->{host}             = delete $params->{host} // '127.0.0.1';
-    $self->{port}             = delete $params->{port} // 5000;
-    $self->{ssl}              = delete $params->{ssl};
+
+    # Extract listener-related params
+    my $listen      = delete $params->{listen};
+    my $socket      = delete $params->{socket};
+    my $socket_mode = delete $params->{socket_mode};
+    my $host        = delete $params->{host};
+    my $port        = delete $params->{port};
+    $self->{ssl}    = delete $params->{ssl};
     $self->{disable_tls}      = delete $params->{disable_tls} // 0;  # Extract early for validation
 
     # Validate SSL certificate files at startup (fail fast)
@@ -1432,6 +1437,74 @@ sub _init {
             if (my $ca = $ssl->{ca_file}) {
                 die "SSL CA file not found: $ca\n" unless -e $ca;
                 die "SSL CA file not readable: $ca\n" unless -r $ca;
+            }
+        }
+    }
+
+    # Normalize all listener forms to $self->{listeners}
+    if ($listen) {
+        # Explicit listen array
+        die "Cannot specify both 'listen' and 'host' options\n" if defined $host;
+        die "Cannot specify both 'listen' and 'port' options\n" if defined $port;
+        die "Cannot specify both 'listen' and 'socket' options\n" if defined $socket;
+        die "Cannot specify both 'listen' and 'socket_mode' options\n" if defined $socket_mode;
+        die "'listen' must be a non-empty arrayref\n"
+            unless ref $listen eq 'ARRAY' && @$listen;
+
+        $self->{listeners} = [];
+        for my $spec (@$listen) {
+            die "Each listen spec must be a hashref\n" unless ref $spec eq 'HASH';
+            if ($spec->{socket}) {
+                die "Cannot specify both 'socket' and 'host' in a listen spec\n" if $spec->{host};
+                die "Cannot specify both 'socket' and 'port' in a listen spec\n" if $spec->{port};
+                push @{$self->{listeners}}, {
+                    type        => 'unix',
+                    path        => $spec->{socket},
+                    socket_mode => $spec->{socket_mode},
+                    ($spec->{ssl} ? (ssl => $spec->{ssl}) : ()),
+                };
+            } else {
+                die "TCP listen spec requires both 'host' and 'port'\n"
+                    unless defined $spec->{host} && defined $spec->{port};
+                push @{$self->{listeners}}, {
+                    type => 'tcp',
+                    host => $spec->{host},
+                    port => $spec->{port},
+                    ($spec->{ssl} ? (ssl => $spec->{ssl}) : ()),
+                };
+            }
+        }
+        $self->{host} = undef;
+        $self->{port} = undef;
+    } elsif (defined $socket) {
+        # Socket sugar
+        die "Cannot specify both 'socket' and 'host' options\n" if defined $host;
+        die "Cannot specify both 'socket' and 'port' options\n" if defined $port;
+        $self->{listeners} = [{
+            type        => 'unix',
+            path        => $socket,
+            socket_mode => $socket_mode,
+        }];
+        $self->{host} = undef;
+        $self->{port} = undef;
+    } else {
+        # Host/port sugar (backward compatible default)
+        $host //= '127.0.0.1';
+        $port //= 5000;
+        $self->{listeners} = [{
+            type => 'tcp',
+            host => $host,
+            port => $port,
+        }];
+        $self->{host} = $host;
+        $self->{port} = $port;
+    }
+
+    # Merge server-wide SSL into TCP listeners that lack per-listener SSL
+    if ($self->{ssl}) {
+        for my $listener (@{$self->{listeners}}) {
+            if ($listener->{type} eq 'tcp' && !$listener->{ssl}) {
+                $listener->{ssl} = $self->{ssl};
             }
         }
     }
@@ -1545,6 +1618,15 @@ sub configure {
     }
     if (exists $params{port}) {
         $self->{port} = delete $params{port};
+    }
+    if (exists $params{socket}) {
+        delete $params{socket};
+    }
+    if (exists $params{socket_mode}) {
+        delete $params{socket_mode};
+    }
+    if (exists $params{listen}) {
+        delete $params{listen};
     }
     if (exists $params{ssl}) {
         $self->{ssl} = delete $params{ssl};
