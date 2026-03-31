@@ -165,8 +165,8 @@ sub new {
     $runner->parse_options(@args);
 
 Parses CLI options from the argument list. Common options are stored
-in the runner object. Server-specific options (those not recognized)
-are collected for pass-through to the server.
+in the runner object. Server-specific options are passed separately
+via the C<server_options> hashref (see L</load_server>).
 
 =head3 Common Options (handled by Runner)
 
