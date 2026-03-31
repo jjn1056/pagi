@@ -496,10 +496,14 @@ sub load_server {
     # else: development mode uses server default (STDERR)
 
     # Build server
+    # Omit host/port when socket or listen is provided (mutually exclusive)
+    my $has_socket_or_listen = exists $server_opts{socket} || exists $server_opts{listen};
     return $server_class->new(
         app        => $self->{app},
-        host       => $self->{host} // '127.0.0.1',
-        port       => $self->{port} // 5000,
+        ($has_socket_or_listen ? () : (
+            host   => $self->{host} // '127.0.0.1',
+            port   => $self->{port} // 5000,
+        )),
         quiet      => $self->{quiet} // 0,
         ($self->{loop} ? (loop_type => $self->{loop}) : ()),
         (defined $access_log || $disable_log

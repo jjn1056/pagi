@@ -578,4 +578,45 @@ subtest 'load_server passes server_options' => sub {
     is($server->{timeout}, 42, 'timeout from server_options applied');
 };
 
+# Test: load_server with socket server_options omits host/port
+subtest 'load_server with socket option omits host/port' => sub {
+    plan skip_all => "Unix sockets not supported on Windows" if $^O eq 'MSWin32';
+
+    my $socket_path = File::Temp::tmpnam() . '.sock';
+    my $runner = PAGI::Runner->new(
+        quiet          => 1,
+        server_options => { socket => $socket_path },
+    );
+    $runner->prepare_app;
+    my $server = $runner->load_server;
+
+    ok($server->isa('PAGI::Server'), 'returns PAGI::Server');
+    is($server->socket_path, $socket_path, 'socket_path set correctly');
+    is($server->port, undef, 'port is undef for socket server');
+};
+
+# Test: load_server with listen server_options omits host/port
+subtest 'load_server with listen option omits host/port' => sub {
+    plan skip_all => "Unix sockets not supported on Windows" if $^O eq 'MSWin32';
+
+    my $socket_path = File::Temp::tmpnam() . '.sock';
+    my $runner = PAGI::Runner->new(
+        quiet          => 1,
+        server_options => {
+            listen => [
+                { host => '127.0.0.1', port => 0 },
+                { socket => $socket_path },
+            ],
+        },
+    );
+    $runner->prepare_app;
+    my $server = $runner->load_server;
+
+    ok($server->isa('PAGI::Server'), 'returns PAGI::Server');
+    my $listeners = $server->listeners;
+    is(scalar @$listeners, 2, 'two listeners configured');
+    is($listeners->[0]{type}, 'tcp', 'first listener is tcp');
+    is($listeners->[1]{type}, 'unix', 'second listener is unix');
+};
+
 done_testing;
