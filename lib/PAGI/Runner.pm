@@ -155,7 +155,7 @@ sub new {
         app               => undef,
         app_spec          => undef,
         app_args          => {},
-        server_options    => $args{server_options} // [],
+        server_options    => $args{server_options} // {},
         argv              => [],
     }, $class;
 }
@@ -490,8 +490,8 @@ sub load_server {
         die "Cannot load server '$server_class': $@\n";
     }
 
-    # Parse server-specific options
-    my %server_opts = $self->_parse_server_options($server_class);
+    # Get server-specific options (passed from bin/pagi-server or similar)
+    my %server_opts = %{$self->{server_options} // {}};
 
     # Handle access log
     # Production mode disables logging by default for performance

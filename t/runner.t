@@ -300,16 +300,20 @@ subtest 'integration: module-based app serves files' => sub {
     $loop->remove($http);
 };
 
-# Test 19: SSL options validation (via server_options)
+# Test 19: SSL options validation (via server_options hashref)
 subtest 'SSL options validation' => sub {
-    my $runner = PAGI::Runner->new;
-    $runner->{server_options} = ['--ssl-cert', '/nonexistent/cert.pem'];
-    $runner->prepare_app;  # Load default app
+    my $runner = PAGI::Runner->new(
+        quiet          => 1,
+        server_options => {
+            ssl => { cert_file => '/nonexistent/cert.pem', key_file => '/nonexistent/key.pem' },
+        },
+    );
+    $runner->prepare_app;
 
     like(
         dies { $runner->load_server },
-        qr/--ssl-cert and --ssl-key must be specified together/,
-        'dies without both SSL options'
+        qr/SSL certificate file not found/,
+        'dies with invalid SSL cert path'
     );
 };
 
@@ -436,24 +440,19 @@ subtest '-E flag parsing' => sub {
     is($runner->mode, 'production', 'mode returns production');
 };
 
-# Test 26: server options pass-through
-subtest 'server options pass-through' => sub {
+# Test 26: remaining args after runner options go to argv
+subtest 'remaining args go to argv' => sub {
     my $runner = PAGI::Runner->new;
     $runner->parse_options(
         '-p', '8080',
-        '--workers', '4',
-        '--reuseport',
-        '--max-requests', '1000',
         'app.pl',
+        'root=/tmp',
     );
 
     is($runner->{port}, 8080, 'runner option parsed');
-    # Server options should be in server_options (with their values)
-    my $server_opts = join(' ', @{$runner->{server_options}});
-    like($server_opts, qr/--workers/, '--workers in server_options');
-    like($server_opts, qr/4/, 'workers value in server_options');
-    like($server_opts, qr/--reuseport/, '--reuseport in server_options');
-    like($server_opts, qr/--max-requests/, '--max-requests in server_options');
+    # Remaining non-option args go to argv
+    is($runner->{argv}[0], 'app.pl', 'app spec in argv');
+    is($runner->{argv}[1], 'root=/tmp', 'app arg in argv');
 };
 
 # Test 27: --no-default-middleware flag
@@ -563,6 +562,20 @@ subtest 'server_options passed via parse_options' => sub {
     is($runner->{server_options}{workers}, 2, 'workers from server_options');
     is($runner->{port}, 8080, 'port still parsed');
     is($runner->{argv}[0], 'app.pl', 'app in argv');
+};
+
+# Test: load_server passes server_options to PAGI::Server
+subtest 'load_server passes server_options' => sub {
+    my $runner = PAGI::Runner->new(
+        port           => 0,
+        quiet          => 1,
+        server_options => { timeout => 42 },
+    );
+    $runner->prepare_app;
+    my $server = $runner->load_server;
+
+    ok($server->isa('PAGI::Server'), 'returns PAGI::Server');
+    is($server->{timeout}, 42, 'timeout from server_options applied');
 };
 
 done_testing;
