@@ -396,12 +396,10 @@ a transition.
 Each spec in the C<listen> array is a hashref with either C<< { host, port } >>
 for TCP or C<< { socket } >> (with optional C<socket_mode>) for Unix sockets.
 
-Per-listener TLS is supported:
-
-    listen => [
-        { host => '0.0.0.0', port => 443, ssl => { cert_file => '...', key_file => '...' } },
-        { socket => '/tmp/pagi.sock' },  # plain HTTP for nginx
-    ],
+B<Note:> Per-listener TLS configuration is not yet supported. TLS is configured
+server-wide via the C<ssl> constructor option and applies to all TCP listeners.
+Unix socket listeners behind a reverse proxy do not need TLS — the proxy handles
+TLS termination.
 
 =head2 CLI
 
@@ -563,8 +561,6 @@ See L</MULTI-LISTENER SUPPORT (EXPERIMENTAL)> for details.
             { socket => '/tmp/pagi.sock', socket_mode => 0660 },
         ],
     );
-
-Each spec may also include a C<ssl> hashref for per-listener TLS configuration.
 
 =item ssl => \%config
 
@@ -1839,7 +1835,6 @@ sub _init {
                     type        => 'unix',
                     path        => $spec->{socket},
                     socket_mode => $spec->{socket_mode},
-                    ($spec->{ssl} ? (ssl => $spec->{ssl}) : ()),
                 };
             } else {
                 die "TCP listen spec requires both 'host' and 'port'\n"
@@ -1848,7 +1843,6 @@ sub _init {
                     type => 'tcp',
                     host => $spec->{host},
                     port => $spec->{port},
-                    ($spec->{ssl} ? (ssl => $spec->{ssl}) : ()),
                 };
             }
         }
@@ -1878,10 +1872,10 @@ sub _init {
         $self->{port} = $port;
     }
 
-    # Merge server-wide SSL into TCP listeners that lack per-listener SSL
+    # Apply server-wide SSL to all TCP listeners
     if ($self->{ssl}) {
         for my $listener (@{$self->{listeners}}) {
-            if ($listener->{type} eq 'tcp' && !$listener->{ssl}) {
+            if ($listener->{type} eq 'tcp') {
                 $listener->{ssl} = $self->{ssl};
             }
         }
