@@ -136,6 +136,96 @@ B<Not yet implemented:>
 
 For HTTP/2, see L</ENABLING HTTP/2 SUPPORT (EXPERIMENTAL)>.
 
+=head1 UNIX DOMAIN SOCKET SUPPORT
+
+Unix domain sockets provide efficient communication between a reverse proxy
+(nginx, etc.) and the application server on the same machine, avoiding TCP
+overhead.
+
+=head2 Basic Usage
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+B<CLI:> C<pagi-server --socket /tmp/pagi.sock ./app.pl>
+
+=head2 nginx Configuration
+
+    upstream pagi {
+        server unix:/tmp/pagi.sock;
+        keepalive 32;
+    }
+
+    server {
+        listen 80;
+        location / {
+            proxy_pass http://pagi;
+            proxy_http_version 1.1;
+            proxy_set_header Connection "";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
+=head2 Socket Permissions
+
+Use C<socket_mode> to set permissions after socket creation:
+
+    pagi-server --socket /tmp/pagi.sock --socket-mode 0660 ./app.pl
+
+For production, use a dedicated directory with restricted permissions
+(e.g., C</var/run/myapp/>) rather than C</tmp/>. With systemd, use
+C<RuntimeDirectory=myapp> in your service file.
+
+=head2 Scope Differences
+
+For Unix socket connections, the PAGI scope has these differences from
+TCP connections:
+
+=over 4
+
+=item * C<client> is B<absent> from the scope (no peer IP/port available)
+
+=item * C<server> is C<[$socket_path, undef]> instead of C<[$host, $port]>
+
+=back
+
+Middleware that uses C<$scope-E<gt>{client}> must handle its absence.
+Use C<X-Forwarded-For> headers from the reverse proxy for client identification.
+
+=head2 Stale Socket Cleanup
+
+Any existing file at the socket path is automatically removed before binding.
+The socket file is also removed during graceful shutdown (SIGTERM/SIGINT).
+
+=head1 MULTI-LISTENER SUPPORT
+
+A single server instance can listen on multiple endpoints simultaneously
+using the C<listen> constructor option:
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        listen => [
+            { host => '0.0.0.0', port => 8080 },
+            { socket => '/tmp/pagi.sock' },
+        ],
+    );
+
+B<CLI:>
+
+    pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock ./app.pl
+
+This is useful for exposing a TCP port for health checks while using a
+Unix socket for application traffic from a reverse proxy.
+
+The C<reuseport> option applies only to TCP listeners. Unix socket
+listeners always use the shared-socket model (parent creates, workers inherit).
+Works with both single-worker and multi-worker modes.
+
 =head1 WINDOWS SUPPORT
 
 B<PAGI::Server does not support Windows.>
@@ -202,6 +292,46 @@ rules are in place. For production, consider a reverse proxy (nginx, etc.)
 =item port => $port
 
 Bind port. Default: 5000
+
+=item socket => $path
+
+Unix domain socket path for listening instead of TCP host:port.
+B<Mutually exclusive> with C<host>, C<port>, and C<listen>.
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => '/tmp/pagi.sock',
+    );
+
+=item socket_mode => $mode
+
+Set file permissions on the Unix domain socket after creation. The value
+should be a numeric mode (e.g., C<0660>). If not specified, the socket
+inherits the default permissions from the process umask. Silently ignored
+if C<socket> is not set.
+
+    my $server = PAGI::Server->new(
+        app         => $app,
+        socket      => '/tmp/pagi.sock',
+        socket_mode => 0660,
+    );
+
+=item listen => \@specs
+
+Array of listener specifications for multi-endpoint listening. Each spec
+is a hashref with either C<< { host, port } >> for TCP or
+C<< { socket, socket_mode } >> for Unix domain sockets.
+B<Mutually exclusive> with C<host>, C<port>, C<socket>, and C<socket_mode>.
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        listen => [
+            { host => '0.0.0.0', port => 8080 },
+            { socket => '/tmp/pagi.sock', socket_mode => 0660 },
+        ],
+    );
+
+Each spec may also include a C<ssl> hashref for per-listener TLS configuration.
 
 =item ssl => \%config
 
@@ -966,6 +1096,21 @@ shutdown is complete.
     my $port = $server->port;
 
 Returns the bound port number. Useful when port => 0 is used.
+
+=head2 socket_path
+
+    my $path = $server->socket_path;
+
+Returns the Unix socket path of the first Unix socket listener,
+or C<undef> if no Unix socket listeners are configured.
+
+=head2 listeners
+
+    my $listeners = $server->listeners;
+
+Returns an arrayref of all normalized listener specifications.
+Each entry is a hashref with C<type> (C<'tcp'> or C<'unix'>)
+and type-specific keys (C<host>/C<port> for TCP, C<path> for Unix).
 
 =head2 is_running
 

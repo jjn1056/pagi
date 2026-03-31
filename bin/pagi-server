@@ -315,6 +315,26 @@ Number of worker processes (default: 1, single-process mode)
 
 Enable SO_REUSEPORT mode for multi-worker servers.
 
+=item B<--socket> PATH
+
+Unix socket path. Mutually exclusive with C<--host>/C<--port>/C<--listen>.
+
+    pagi-server --socket /tmp/pagi.sock ./app.pl
+
+=item B<--socket-mode> MODE
+
+Octal file permissions for Unix sockets (e.g., C<0660>).
+
+    pagi-server --socket /tmp/pagi.sock --socket-mode 0660 ./app.pl
+
+=item B<--listen> SPEC
+
+Listen endpoint (repeatable). SPEC is C<host:port> for TCP or
+C</path/to/socket> for Unix socket. Mutually exclusive with
+C<--host>/C<--port>/C<--socket>.
+
+    pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock ./app.pl
+
 =item B<--ssl-cert> FILE, B<--ssl-key> FILE
 
 Enable HTTPS with the specified certificate and key files.
@@ -479,6 +499,15 @@ Increase/decrease worker count (multi-worker mode only).
 
     # Using EV event loop
     pagi-server --loop EV ./app.pl
+
+    # Unix socket for nginx
+    pagi-server --socket /tmp/pagi.sock ./app.pl
+
+    # Multi-listener: TCP + Unix socket
+    pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock ./app.pl
+
+    # Multi-listener with workers
+    pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock -w 4 ./app.pl
 
 =head1 ENVIRONMENT
 
