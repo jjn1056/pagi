@@ -310,22 +310,8 @@ sub parse_options {
         $self->{app_spec} = $opts{app};
     }
 
-    # Separate remaining args: options for server vs app spec/args
-    # Need to keep option values with their options
-    my $i = 0;
-    while ($i < @args) {
-        my $arg = $args[$i];
-        if ($arg =~ /^-/) {
-            push @{$self->{server_options}}, $arg;
-            # If next arg is a value (doesn't start with - and isn't =), keep it with the option
-            if ($i + 1 < @args && $args[$i + 1] !~ /^-/ && $arg !~ /=/) {
-                push @{$self->{server_options}}, $args[++$i];
-            }
-        } else {
-            push @{$self->{argv}}, $arg;
-        }
-        $i++;
-    }
+    # Remaining args go to argv (app spec and app args)
+    push @{$self->{argv}}, @args;
 }
 
 =head2 mode
@@ -527,75 +513,6 @@ sub load_server {
     );
 }
 
-sub _parse_server_options {
-    my ($self, $server_class) = @_;
-
-    my @args = @{$self->{server_options} // []};
-    my %opts;
-
-    if ($server_class eq 'PAGI::Server') {
-        GetOptionsFromArray(
-            \@args,
-            # Workers/scaling
-            'w|workers=i'           => \$opts{workers},
-            'reuseport'             => \$opts{reuseport},
-            'max-requests=i'        => \$opts{max_requests},
-            'max-connections=i'     => \$opts{max_connections},
-
-            # TLS
-            'ssl-cert=s'            => \$opts{_ssl_cert},
-            'ssl-key=s'             => \$opts{_ssl_key},
-
-            # Timeouts
-            'timeout=i'             => \$opts{timeout},
-            'shutdown-timeout=i'    => \$opts{shutdown_timeout},
-            'request-timeout=i'     => \$opts{request_timeout},
-            'ws-idle-timeout=i'     => \$opts{ws_idle_timeout},
-            'sse-idle-timeout=i'    => \$opts{sse_idle_timeout},
-            'heartbeat-timeout=i'  => \$opts{heartbeat_timeout},
-
-            # Limits
-            'max-body-size=i'       => \$opts{max_body_size},
-            'max-header-size=i'     => \$opts{max_header_size},
-            'max-header-count=i'    => \$opts{max_header_count},
-            'max-receive-queue=i'   => \$opts{max_receive_queue},
-            'max-ws-frame-size=i'   => \$opts{max_ws_frame_size},
-            'b|listener-backlog=i'  => \$opts{listener_backlog},
-
-            # Misc
-            'log-level=s'           => \$opts{log_level},
-            'sync-file-threshold=i' => \$opts{sync_file_threshold},
-            'access-log-format=s'   => \$opts{access_log_format},
-        );
-
-        # Build ssl hash if certs provided
-        # Note: TLS module availability is checked by the server, not here
-        if ($opts{_ssl_cert} || $opts{_ssl_key}) {
-            die "--ssl-cert and --ssl-key must be specified together\n"
-                unless $opts{_ssl_cert} && $opts{_ssl_key};
-
-            die "SSL cert not found: $opts{_ssl_cert}\n"
-                unless -f $opts{_ssl_cert};
-            die "SSL key not found: $opts{_ssl_key}\n"
-                unless -f $opts{_ssl_key};
-
-            $opts{ssl} = {
-                cert_file => delete $opts{_ssl_cert},
-                key_file  => delete $opts{_ssl_key},
-            };
-        }
-        delete $opts{_ssl_cert};
-        delete $opts{_ssl_key};
-
-        # Handle workers (0 for single-process, >1 for multi-worker)
-        if (defined $opts{workers}) {
-            $opts{workers} = $opts{workers} > 1 ? $opts{workers} : 0;
-        }
-    }
-
-    # Return only defined options
-    return map { $_ => $opts{$_} } grep { defined $opts{$_} } keys %opts;
-}
 
 =head2 run
 
