@@ -89,7 +89,10 @@ delete $server_opts{_ssl_key};
 
 # Handle --socket-mode (octal string to numeric)
 if (defined $server_opts{_socket_mode}) {
-    $server_opts{socket_mode} = oct($server_opts{_socket_mode});
+    my $mode_str = $server_opts{_socket_mode};
+    die "--socket-mode must be an octal value like 0660, got: $mode_str\n"
+        unless $mode_str =~ /^0[0-7]{3}$/;
+    $server_opts{socket_mode} = oct($mode_str);
 }
 delete $server_opts{_socket_mode};
 

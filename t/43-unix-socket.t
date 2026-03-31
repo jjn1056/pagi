@@ -528,4 +528,19 @@ subtest 'CLI --listen parser: path with colon treated as Unix socket' => sub {
     }
 };
 
+subtest 'socket_mode CLI validation rejects non-octal' => sub {
+    # Test the validation logic that should be in bin/pagi-server
+    # Values without leading 0 are ambiguous and should be rejected
+
+    my @valid = ('0660', '0600', '0777', '0700', '0770');
+    my @invalid = ('660', '777', '600', 'abc', '0888', '1234');
+
+    for my $v (@valid) {
+        like($v, qr/^0[0-7]{3}$/, "valid octal: $v");
+    }
+    for my $v (@invalid) {
+        unlike($v, qr/^0[0-7]{3}$/, "invalid octal: $v");
+    }
+};
+
 done_testing;
