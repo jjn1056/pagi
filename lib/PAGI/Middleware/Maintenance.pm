@@ -114,7 +114,7 @@ sub _should_bypass {
     }
 
     # Check bypass IPs
-    my $client_ip = $scope->{client}[0] // '';
+    my $client_ip = exists $scope->{client} ? ($scope->{client}[0] // '') : '';
     for my $bypass_ip (@{$self->{bypass_ips}}) {
         if ($bypass_ip =~ m{/}) {
             # CIDR notation

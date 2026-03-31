@@ -18,7 +18,7 @@ PAGI::Middleware::RateLimit - Request rate limiting middleware
             requests_per_second => 10,
             burst => 20,
             key_generator => sub  {
-        my ($scope) = @_; $scope->{client}[0] };
+        my ($scope) = @_; exists $scope->{client} ? $scope->{client}[0] : 'unknown' };
         $my_app;
     };
 
@@ -76,7 +76,7 @@ sub _init {
     $self->{burst} = $config->{burst} // 20;
     $self->{key_generator} = $config->{key_generator} // sub  {
         my ($scope) = @_;
-        return $scope->{client}[0] // 'unknown';
+        return exists $scope->{client} ? ($scope->{client}[0] // 'unknown') : 'unknown';
     };
     $self->{backend} = $config->{backend} // 'memory';
     $self->{cleanup_interval} = $config->{cleanup_interval} // 60;

@@ -106,7 +106,7 @@ sub _format_log {
     my $format = $self->{format};
 
     # Extract info from scope
-    my $client_ip = $scope->{client}[0] // '-';
+    my $client_ip = exists $scope->{client} ? ($scope->{client}[0] // '-') : '-';
     my $method = $scope->{method} // '-';
     my $path = $scope->{path} // '/';
     my $query = $scope->{query_string};
