@@ -1928,62 +1928,98 @@ async sub _listen_singleworker {
         die "Lifespan startup failed: $message\n";
     }
 
-    my $listener = IO::Async::Listener->new(
-        on_stream => sub  {
-        my ($listener, $stream) = @_;
-            return unless $weak_self;
-            $weak_self->_on_connection($stream);
-        },
-    );
-
-    $self->add_child($listener);
-    $self->{listener} = $listener;
-
-    # Build listener options
-    my %listen_opts = (
-        queuesize => $self->{listener_backlog},
-        addr => {
-            family   => 'inet',
-            socktype => 'stream',
-            ip       => $self->{host},
-            port     => $self->{port},
-        },
-    );
-
-    # Add SSL options if configured
-    if (my $ssl_params = $self->_build_ssl_config) {
-        $listen_opts{extensions} = ['SSL'];
-        %listen_opts = (%listen_opts, %$ssl_params);
-
-        $listen_opts{on_ssl_error} = sub {
-            return unless $weak_self;
-            $weak_self->_log(debug => "SSL handshake failed: $_[0]");
-        };
-    }
-
-    # Start listening
-    my $listen_future = $listener->listen(%listen_opts);
-
-    await $listen_future;
-
-    # Configure accept error handler after listen() to avoid SSL extension conflicts
-    # Note: SSL extensions may wrap the listener, so try to configure but ignore if it fails
-    eval {
-        $listener->configure(
-            on_accept_error => sub  {
-        my ($listener, $error) = @_;
+    # Iterate over listeners array, creating one IO::Async::Listener per spec
+    my @listen_entries;
+    for my $spec (@{$self->{listeners}}) {
+        my $spec_copy = $spec;  # capture for closure
+        my $listener = IO::Async::Listener->new(
+            on_stream => sub {
+                my ($listener, $stream) = @_;
                 return unless $weak_self;
-                $weak_self->_on_accept_error($error);
+                $weak_self->_on_connection($stream, $spec_copy);
             },
         );
-    };
-    if ($@) {
-        $self->_log(debug => "Could not configure on_accept_error (likely SSL listener): $@");
+
+        $self->add_child($listener);
+
+        # Build listener options
+        my %listen_opts = (
+            queuesize => $self->{listener_backlog},
+        );
+
+        if ($spec->{type} eq 'unix') {
+            # Remove stale socket file if it exists
+            unlink $spec->{path} if -e $spec->{path};
+
+            $listen_opts{addr} = {
+                family   => 'unix',
+                socktype => 'stream',
+                path     => $spec->{path},
+            };
+
+            if ($self->{tls_enabled}) {
+                $self->_log(info => "Note: TLS is configured but does not apply to Unix socket $spec->{path}");
+            }
+        } else {
+            # TCP listener
+            $listen_opts{addr} = {
+                family   => 'inet',
+                socktype => 'stream',
+                ip       => $spec->{host},
+                port     => $spec->{port},
+            };
+
+            # Add SSL options if configured (TCP only)
+            if (my $ssl_params = $self->_build_ssl_config) {
+                $listen_opts{extensions} = ['SSL'];
+                %listen_opts = (%listen_opts, %$ssl_params);
+
+                $listen_opts{on_ssl_error} = sub {
+                    return unless $weak_self;
+                    $weak_self->_log(debug => "SSL handshake failed: $_[0]");
+                };
+            }
+        }
+
+        # Start listening
+        await $listener->listen(%listen_opts);
+
+        # Configure accept error handler after listen() to avoid SSL extension conflicts
+        eval {
+            $listener->configure(
+                on_accept_error => sub {
+                    my ($listener, $error) = @_;
+                    return unless $weak_self;
+                    $weak_self->_on_accept_error($error);
+                },
+            );
+        };
+        if ($@) {
+            $self->_log(debug => "Could not configure on_accept_error (likely SSL listener): $@");
+        }
+
+        # Post-listen setup
+        if ($spec->{type} eq 'unix') {
+            # Apply socket permissions if configured
+            if (defined $spec->{socket_mode}) {
+                chmod $spec->{socket_mode}, $spec->{path};
+            }
+        } else {
+            # Store the actual bound port from the listener's read handle
+            my $socket = $listener->read_handle;
+            if ($socket && $socket->can('sockport')) {
+                my $bound = $socket->sockport;
+                $spec->{port} = $bound;  # update spec with actual port
+                $self->{bound_port} //= $bound;  # first TCP port wins
+            }
+        }
+
+        push @listen_entries, { listener => $listener, spec => $spec };
     }
 
-    # Store the actual bound port from the listener's read handle
-    my $socket = $listener->read_handle;
-    $self->{bound_port} = $socket->sockport if $socket && $socket->can('sockport');
+    $self->{_listen_entries} = \@listen_entries;
+    # Backward compat: keep $self->{listener} pointing to first entry
+    $self->{listener} = $listen_entries[0]{listener} if @listen_entries;
     $self->{running} = 1;
 
     # Set up signal handlers for graceful shutdown (single-worker mode)
@@ -2015,7 +2051,6 @@ async sub _listen_singleworker {
         });
     }
 
-    my $scheme = $self->{tls_enabled} ? 'https' : 'http';
     my $loop_class = ref($self->loop);
     $loop_class =~ s/^IO::Async::Loop:://;  # Shorten for display
     my $max_conn = $self->effective_max_connections;
@@ -2031,7 +2066,27 @@ async sub _listen_singleworker {
         );
     }
 
-    $self->_log(info => "PAGI Server listening on $scheme://$self->{host}:$self->{bound_port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    # Log listening banner
+    my $scheme = $self->{tls_enabled} ? 'https' : 'http';
+    if (@listen_entries == 1) {
+        my $spec = $listen_entries[0]{spec};
+        if ($spec->{type} eq 'unix') {
+            $self->_log(info => "PAGI Server listening on unix:$spec->{path} (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+        } else {
+            $self->_log(info => "PAGI Server listening on $scheme://$spec->{host}:$spec->{port}/ (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+        }
+    } else {
+        my @addrs;
+        for my $entry (@listen_entries) {
+            my $s = $entry->{spec};
+            if ($s->{type} eq 'unix') {
+                push @addrs, "unix:$s->{path}";
+            } else {
+                push @addrs, "$scheme://$s->{host}:$s->{port}/";
+            }
+        }
+        $self->_log(info => "PAGI Server listening on: " . join(', ', @addrs) . " (loop: $loop_class, max_conn: $max_conn, http2: $http2_status, tls: $tls_status, future_xs: $future_xs_status)");
+    }
 
     # Warn in production if using default max_connections
     if (($ENV{PAGI_ENV} // '') eq 'production' && !$self->{max_connections}) {
@@ -2561,7 +2616,7 @@ sub _run_as_worker {
 }
 
 sub _on_connection {
-    my ($self, $stream) = @_;
+    my ($self, $stream, $listener_spec) = @_;
 
     weaken(my $weak_self = $self);
 
@@ -2603,6 +2658,8 @@ sub _on_connection {
         validate_events   => $self->{validate_events},
         write_high_watermark => $self->{write_high_watermark},
         write_low_watermark  => $self->{write_low_watermark},
+        transport_type    => ($listener_spec && $listener_spec->{type}) // 'tcp',
+        transport_path    => ($listener_spec ? $listener_spec->{path} : undef),
         ($self->{http2_enabled} ? (
             h2_protocol   => $self->{http2_protocol},
             alpn_protocol => $alpn_protocol,
@@ -2885,11 +2942,19 @@ async sub shutdown {
         $self->{_accept_paused} = 0;
     }
 
-    # Stop accepting new connections
-    if ($self->{listener}) {
-        $self->remove_child($self->{listener});
-        $self->{listener} = undef;
+    # Stop accepting new connections on all listeners
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        eval { $self->remove_child($entry->{listener}) };
     }
+    $self->{listener} = undef;
+
+    # Clean up Unix socket files
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        if ($entry->{spec}{type} eq 'unix' && -e $entry->{spec}{path}) {
+            unlink $entry->{spec}{path};
+        }
+    }
+    $self->{_listen_entries} = [];
 
     # Wait for active connections to drain (graceful shutdown)
     await $self->_drain_connections;
