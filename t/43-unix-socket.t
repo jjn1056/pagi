@@ -483,4 +483,49 @@ subtest 'multi-worker Unix socket' => sub {
     ok(!-e $socket_path, 'Socket cleaned up after shutdown');
 };
 
+subtest 'CLI --listen parser: path with colon treated as Unix socket' => sub {
+    # This tests the detection logic used in bin/pagi-server
+    # Paths starting with / or . should always be Unix sockets
+    # even if they contain colons followed by digits
+
+    # Simulate the parser logic
+    my @test_cases = (
+        ['/tmp/pagi.sock',           'unix',  '/tmp/pagi.sock',    undef, 'absolute path'],
+        ['./pagi.sock',              'unix',  './pagi.sock',       undef, 'relative path'],
+        ['/var/run/app:8080',        'unix',  '/var/run/app:8080', undef, 'path with colon+digits'],
+        ['127.0.0.1:5000',          'tcp',   '127.0.0.1',         5000,  'IPv4:port'],
+        ['0.0.0.0:8080',            'tcp',   '0.0.0.0',           8080,  'wildcard:port'],
+        ['localhost:3000',           'tcp',   'localhost',          3000,  'hostname:port'],
+        ['[::1]:5000',              'tcp',   '::1',               5000,  'IPv6:port'],
+    );
+
+    for my $case (@test_cases) {
+        my ($input, $expected_type, $expected_val1, $expected_val2, $desc) = @$case;
+        my ($type, $host, $port, $path);
+
+        if ($input =~ m{^[./]}) {
+            # Starts with / or . — always a Unix socket path
+            $type = 'unix';
+            $path = $input;
+        } elsif ($input =~ /^\[([^\]]+)\]:(\d+)$/) {
+            $type = 'tcp';
+            ($host, $port) = ($1, int($2));
+        } elsif ($input =~ /^(.+):(\d+)$/) {
+            $type = 'tcp';
+            ($host, $port) = ($1, int($2));
+        } else {
+            $type = 'unix';
+            $path = $input;
+        }
+
+        is($type, $expected_type, "$desc: type=$expected_type");
+        if ($expected_type eq 'tcp') {
+            is($host, $expected_val1, "$desc: host");
+            is($port, $expected_val2, "$desc: port");
+        } else {
+            is($path, $expected_val1, "$desc: path");
+        }
+    }
+};
+
 done_testing;

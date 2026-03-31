@@ -98,14 +98,21 @@ delete $server_opts{_socket_mode};
 if (my $listen_specs = delete $server_opts{_listen}) {
     my @listeners;
     for my $spec (@$listen_specs) {
-        if ($spec =~ /^\[([^\]]+)\]:(\d+)$/) {
+        if ($spec =~ m{^[./]}) {
+            # Starts with / or . — always a Unix socket path
+            # (even if it contains colons, e.g. /var/run/app:8080)
+            my %entry = (socket => $spec);
+            $entry{socket_mode} = $server_opts{socket_mode}
+                if defined $server_opts{socket_mode};
+            push @listeners, \%entry;
+        } elsif ($spec =~ /^\[([^\]]+)\]:(\d+)$/) {
             # IPv6: [::1]:5000
             push @listeners, { host => $1, port => int($2) };
         } elsif ($spec =~ /^(.+):(\d+)$/) {
             # IPv4/hostname: 127.0.0.1:5000
             push @listeners, { host => $1, port => int($2) };
         } else {
-            # Unix socket path
+            # Bare name without / or . prefix — treat as Unix socket
             my %entry = (socket => $spec);
             $entry{socket_mode} = $server_opts{socket_mode}
                 if defined $server_opts{socket_mode};
@@ -332,6 +339,9 @@ Octal file permissions for Unix sockets (e.g., C<0660>).
 Listen endpoint (repeatable). SPEC is C<host:port> for TCP or
 C</path/to/socket> for Unix socket. Mutually exclusive with
 C<--host>/C<--port>/C<--socket>.
+
+Paths starting with C</> or C<.> are always treated as Unix socket paths,
+even if they contain colons. For TCP, use C<host:port> format.
 
     pagi-server --listen 0.0.0.0:8080 --listen /tmp/pagi.sock ./app.pl
 
