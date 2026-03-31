@@ -3,6 +3,9 @@ use strict;
 use warnings;
 use Test2::V0;
 use File::Temp qw(tmpnam);
+use IO::Async::Loop;
+use IO::Socket::UNIX;
+use Future::AsyncAwait;
 
 plan skip_all => "Unix sockets not supported on Windows" if $^O eq 'MSWin32';
 
@@ -210,10 +213,6 @@ subtest 'listeners accessor' => sub {
 };
 
 subtest 'scope correctness for Unix socket connection' => sub {
-    use IO::Async::Loop;
-    use IO::Socket::UNIX;
-    use Future::AsyncAwait;
-
     my $loop = IO::Async::Loop->new;
     my $socket_path = tmpnam() . '.sock';
 
@@ -311,6 +310,89 @@ subtest 'port returns undef for unix-only server' => sub {
     );
 
     is($server->port, undef, 'port undef for unix-only server');
+};
+
+subtest 'socket_mode sets file permissions' => sub {
+    my $loop = IO::Async::Loop->new;
+    my $socket_path = tmpnam() . '.sock';
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                } elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $server = PAGI::Server->new(
+        app         => $app,
+        socket      => $socket_path,
+        socket_mode => 0660,
+        quiet       => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    ok(-S $socket_path, 'Socket file exists');
+    my $mode = (stat($socket_path))[2] & 07777;
+    is(sprintf('%04o', $mode), '0660', 'Socket has correct permissions');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+subtest 'stale socket file is cleaned up before bind' => sub {
+    my $loop = IO::Async::Loop->new;
+    my $socket_path = tmpnam() . '.sock';
+
+    # Create a stale file at the socket path
+    open my $fh, '>', $socket_path or die "Cannot create stale file: $!";
+    print $fh "stale";
+    close $fh;
+    ok(-e $socket_path, 'Stale file exists');
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                } elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => $socket_path,
+        quiet  => 1,
+    );
+
+    $loop->add($server);
+
+    ok(lives { $server->listen->get }, 'Server binds despite stale file');
+    ok(-S $socket_path, 'Socket file exists (is a socket now)');
+
+    $server->shutdown->get;
+    $loop->remove($server);
 };
 
 done_testing;
