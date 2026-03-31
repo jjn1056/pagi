@@ -3089,6 +3089,19 @@ sub port {
     return $self->{bound_port} // $self->{port};
 }
 
+sub socket_path {
+    my ($self) = @_;
+    for my $listener (@{$self->{listeners} // []}) {
+        return $listener->{path} if $listener->{type} eq 'unix';
+    }
+    return undef;
+}
+
+sub listeners {
+    my ($self) = @_;
+    return $self->{listeners} // [];
+}
+
 sub is_running {
     my ($self) = @_;
 

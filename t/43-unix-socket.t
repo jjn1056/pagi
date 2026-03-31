@@ -171,4 +171,54 @@ subtest 'listen spec: TCP requires host and port' => sub {
     );
 };
 
+subtest 'socket_path accessor' => sub {
+    my $socket_path = tmpnam() . '.sock';
+
+    my $server = PAGI::Server->new(
+        app    => sub { },
+        socket => $socket_path,
+        quiet  => 1,
+    );
+
+    is($server->socket_path, $socket_path, 'socket_path returns path');
+
+    my $tcp_server = PAGI::Server->new(
+        app   => sub { },
+        port  => 0,
+        quiet => 1,
+    );
+
+    is($tcp_server->socket_path, undef, 'socket_path undef for TCP server');
+};
+
+subtest 'listeners accessor' => sub {
+    my $socket_path = tmpnam() . '.sock';
+
+    my $server = PAGI::Server->new(
+        app    => sub { },
+        listen => [
+            { host => '127.0.0.1', port => 8080 },
+            { socket => $socket_path },
+        ],
+        quiet  => 1,
+    );
+
+    my $listeners = $server->listeners;
+    is(scalar @$listeners, 2, 'two listeners');
+    is($listeners->[0]{type}, 'tcp', 'first is tcp');
+    is($listeners->[1]{type}, 'unix', 'second is unix');
+};
+
+subtest 'port returns undef for unix-only server' => sub {
+    my $socket_path = tmpnam() . '.sock';
+
+    my $server = PAGI::Server->new(
+        app    => sub { },
+        socket => $socket_path,
+        quiet  => 1,
+    );
+
+    is($server->port, undef, 'port undef for unix-only server');
+};
+
 done_testing;
