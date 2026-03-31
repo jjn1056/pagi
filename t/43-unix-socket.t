@@ -543,4 +543,91 @@ subtest 'socket_mode CLI validation rejects non-octal' => sub {
     }
 };
 
+subtest 'socket created with restrictive permissions before chmod' => sub {
+    my $loop = IO::Async::Loop->new;
+    my $socket_path = tmpnam() . '.sock';
+
+    # Don't set socket_mode — we want to see the umask-based default
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                } elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => $socket_path,
+        quiet  => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    ok(-S $socket_path, 'Socket file exists');
+    my $mode = (stat($socket_path))[2] & 07777;
+    # With umask(0177), socket should be owner-only (0600)
+    # The exact bits depend on the kernel but should NOT be world-accessible
+    ok(!($mode & 0002), 'Socket is not world-writable (umask protection)');
+    ok(!($mode & 0020), 'Socket is not group-writable (umask protection)');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+subtest 'umask restored after socket bind' => sub {
+    my $loop = IO::Async::Loop->new;
+    my $socket_path = tmpnam() . '.sock';
+
+    # Record umask before
+    my $before = umask();
+    umask($before);  # restore (umask returns old value)
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                } elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => $socket_path,
+        quiet  => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    # Check umask was restored
+    my $after = umask();
+    umask($after);
+    is($after, $before, 'Process umask restored after socket bind');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
 done_testing;

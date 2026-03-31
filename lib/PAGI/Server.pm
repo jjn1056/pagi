@@ -2353,8 +2353,18 @@ async sub _listen_singleworker {
             }
         }
 
+        # Set restrictive umask for Unix socket bind to prevent brief
+        # permission window (CVE-2023-45145 pattern in Redis)
+        my $old_umask;
+        if ($spec->{type} eq 'unix') {
+            $old_umask = umask(0177);  # Owner-only until chmod
+        }
+
         # Start listening
         await $listener->listen(%listen_opts);
+
+        # Restore umask after bind
+        umask($old_umask) if defined $old_umask;
 
         # Configure accept error handler after listen() to avoid SSL extension conflicts
         eval {
@@ -2488,12 +2498,17 @@ sub _listen_multiworker {
             # Unix socket: parent creates, workers inherit
             unlink $spec->{path} if -e $spec->{path};
 
+            # Set restrictive umask for bind (CVE-2023-45145 mitigation)
+            my $old_umask = umask(0177);
+
             require IO::Socket::UNIX;
             $socket = IO::Socket::UNIX->new(
                 Local   => $spec->{path},
                 Type    => Socket::SOCK_STREAM(),
                 Listen  => $self->{listener_backlog},
             ) or die "Cannot create Unix socket $spec->{path}: $!";
+
+            umask($old_umask);
 
             if (defined $spec->{socket_mode}) {
                 chmod($spec->{socket_mode}, $spec->{path})
