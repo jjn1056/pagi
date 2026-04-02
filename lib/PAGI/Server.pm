@@ -42,6 +42,7 @@ use Future;
 use Future::AsyncAwait;
 
 use Scalar::Util qw(weaken refaddr);
+use Socket qw(sockaddr_family unpack_sockaddr_in unpack_sockaddr_un AF_UNIX AF_INET);
 use POSIX ();
 
 use PAGI::Server::Connection;
@@ -2655,6 +2656,90 @@ sub _listen_multiworker {
     # Return immediately - caller (Runner) will call $loop->run()
     # This is consistent with single-worker mode behavior
     return $self;
+}
+
+# Collect inherited file descriptors from PAGI_REUSE and LISTEN_FDS.
+# Returns a hashref keyed by "host:port" or "unix:path", values are
+# { fd, type, host/port/path, handle?, source }
+sub _collect_inherited_fds {
+    my ($self) = @_;
+    my %inherited;
+
+    # Source 1: PAGI_REUSE (format: addr:port:fd,unix:path:fd,...)
+    if (my $reuse = $ENV{PAGI_REUSE}) {
+        for my $entry (split /,/, $reuse) {
+            if ($entry =~ /^unix:(.+):(\d+)$/) {
+                my ($path, $fd) = ($1, int($2));
+                $inherited{"unix:$path"} = {
+                    fd => $fd, type => 'unix', path => $path,
+                    source => 'pagi_reuse',
+                };
+            } elsif ($entry =~ /^(\[.+?\]):(\d+):(\d+)$/) {
+                my ($host, $port, $fd) = ($1, int($2), int($3));
+                $inherited{"$host:$port"} = {
+                    fd => $fd, type => 'tcp', host => $host, port => $port,
+                    source => 'pagi_reuse',
+                };
+            } elsif ($entry =~ /^(.+):(\d+):(\d+)$/) {
+                my ($host, $port, $fd) = ($1, int($2), int($3));
+                $inherited{"$host:$port"} = {
+                    fd => $fd, type => 'tcp', host => $host, port => $port,
+                    source => 'pagi_reuse',
+                };
+            }
+            # Malformed entries silently skipped
+        }
+    }
+
+    # Source 2: LISTEN_FDS (systemd socket activation)
+    my $listen_fds = $ENV{LISTEN_FDS};
+    if (defined $listen_fds && $listen_fds =~ /^\d+$/ && $listen_fds > 0) {
+        if (defined $ENV{LISTEN_PID} && $ENV{LISTEN_PID} == $$) {
+            my $n = int($listen_fds);
+            for my $i (0 .. $n - 1) {
+                my $fd = 3 + $i;  # SD_LISTEN_FDS_START
+
+                my $fh;
+                unless (open($fh, '+<&=', $fd)) {
+                    $self->_log(warn => "Cannot fdopen inherited fd $fd: $!");
+                    next;
+                }
+
+                my $addr = getsockname($fh);
+                unless ($addr) {
+                    $self->_log(warn => "Cannot getsockname on inherited fd $fd: $!");
+                    next;
+                }
+
+                my $family = sockaddr_family($addr);
+
+                if ($family == AF_UNIX) {
+                    my $path = unpack_sockaddr_un($addr);
+                    my $key = "unix:$path";
+                    $inherited{$key} //= {
+                        fd => $fd, type => 'unix', path => $path,
+                        handle => $fh, source => 'systemd',
+                    };
+                } elsif ($family == AF_INET) {
+                    my ($port, $host_packed) = unpack_sockaddr_in($addr);
+                    my $host = Socket::inet_ntoa($host_packed);
+                    my $key = "$host:$port";
+                    $inherited{$key} //= {
+                        fd => $fd, type => 'tcp', host => $host, port => $port,
+                        handle => $fh, source => 'systemd',
+                    };
+                } else {
+                    $self->_log(warn =>
+                        "Inherited fd $fd has unsupported address family $family");
+                }
+            }
+        }
+
+        # Always clean up systemd env vars (per sd_listen_fds spec)
+        delete @ENV{qw(LISTEN_FDS LISTEN_PID LISTEN_FDNAMES)};
+    }
+
+    return \%inherited;
 }
 
 # Initiate graceful shutdown in multi-worker mode
