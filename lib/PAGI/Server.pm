@@ -2794,6 +2794,10 @@ sub _listen_multiworker {
             }
         } elsif ($reuseport) {
             # reuseport TCP: probe to get port, workers create their own
+            # Note: reuseport sockets are not registered in PAGI_REUSE because
+            # each worker creates its own socket. fd inheritance for reuseport
+            # mode is not currently supported — use shared-socket mode for
+            # hot restart / systemd socket activation.
             my $probe_socket = IO::Socket::INET->new(
                 LocalAddr => $spec->{host},
                 LocalPort => $spec->{port},
@@ -3060,13 +3064,16 @@ sub _initiate_multiworker_shutdown {
     }
 
     # Close all listen sockets to stop accepting new connections
-    for my $entry (@{$self->{_listen_entries} // []}) {
-        if ($entry->{socket}) {
-            close($entry->{socket});
+    # (skip during hot restart — new master is using these fds)
+    if (!$self->{_hot_restart_in_progress}) {
+        for my $entry (@{$self->{_listen_entries} // []}) {
+            if ($entry->{socket}) {
+                close($entry->{socket});
+            }
         }
-    }
-    if ($self->{listen_socket}) {
-        delete $self->{listen_socket};
+        if ($self->{listen_socket}) {
+            delete $self->{listen_socket};
+        }
     }
 
     # Clean up PAGI_REUSE entries (skip during hot restart)
