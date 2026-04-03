@@ -567,9 +567,9 @@ B<This feature is experimental.> The API is subject to change in future
 releases.
 
 PAGI::Server uses a C<PAGI_REUSE> environment variable to pass inherited
-listening socket file descriptors to re-exec'd processes (for future hot
-restart support). This mechanism also supports systemd socket activation
-(see L</SYSTEMD SOCKET ACTIVATION (EXPERIMENTAL)>).
+listening socket file descriptors to re-exec'd processes during hot restart
+(see L</HOT RESTART (EXPERIMENTAL)>). This mechanism also supports systemd
+socket activation (see L</SYSTEMD SOCKET ACTIVATION (EXPERIMENTAL)>).
 
 =head2 PAGI_REUSE Format
 
