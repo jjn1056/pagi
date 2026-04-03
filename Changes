@@ -58,6 +58,10 @@
   - FD reuse internals: PAGI_REUSE format, $^F explanation, matching mechanism
   - All new features marked experimental
 
+  [Test Fixes]
+  - Use condition-based waiting in HTTP/2 SSE keepalive test (eliminates flakiness)
+  - Gate timing-sensitive multiworker/heartbeat tests behind RELEASE_TESTING
+
   [Cleanup]
   - Remove force-tracked docs/plans files from git index
 
