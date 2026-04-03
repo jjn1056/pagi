@@ -456,6 +456,165 @@ as before. They are internally normalized to a single-element listener
 array. The C<socket> option is similarly sugar for a single Unix socket
 listener. Only C<listen> enables true multi-listener mode.
 
+=head1 SYSTEMD SOCKET ACTIVATION (EXPERIMENTAL)
+
+B<This feature is experimental.> The API is subject to change in future
+releases.
+
+PAGI::Server supports systemd socket activation, which allows systemd to
+create and hold listening sockets on behalf of the server. This enables
+zero-downtime restarts: when the server is restarted, the kernel continues
+to queue incoming connections on the socket without refusing or dropping
+them, even during the gap between the old process exiting and the new one
+starting.
+
+Benefits of systemd socket activation:
+
+=over 4
+
+=item * B<Zero-downtime restarts> — the kernel queues connections during restarts
+
+=item * B<Atomic permission handling> — systemd creates the socket as root, then drops privileges before exec
+
+=item * B<On-demand activation> — the server is started automatically when the first connection arrives
+
+=back
+
+=head2 Basic Setup
+
+Create two systemd unit files: a C<.socket> unit that describes the socket,
+and a C<.service> unit for the server itself.
+
+B<TCP socket (C</etc/systemd/system/pagi.socket>):>
+
+    [Unit]
+    Description=PAGI Application Socket
+
+    [Socket]
+    ListenStream=0.0.0.0:8080
+    Accept=no
+
+    [Install]
+    WantedBy=sockets.target
+
+B<Unix socket (C</etc/systemd/system/pagi.socket>):>
+
+    [Unit]
+    Description=PAGI Application Socket
+
+    [Socket]
+    ListenStream=/run/pagi/app.sock
+    SocketMode=0660
+    SocketUser=www-data
+    SocketGroup=www-data
+    Accept=no
+
+    [Install]
+    WantedBy=sockets.target
+
+B<Service unit (C</etc/systemd/system/pagi.service>):>
+
+    [Unit]
+    Description=PAGI Application Server
+    Requires=pagi.socket
+
+    [Service]
+    User=www-data
+    ExecStart=/usr/local/bin/pagi-server -E production ./app.pl
+    Restart=on-failure
+
+    [Install]
+    WantedBy=multi-user.target
+
+C<Accept=no> is B<required>. PAGI::Server accepts connections itself via
+C<IO::Async>; systemd must not accept on its behalf.
+
+=head2 How Auto-Detection Works
+
+When PAGI::Server starts, it checks the C<LISTEN_FDS> and C<LISTEN_PID>
+environment variables set by systemd. If C<LISTEN_PID> matches the current
+process PID, the server inspects each inherited file descriptor (starting at
+fd 3) with C<getsockname()> to determine its address.
+
+Each inherited socket is then matched against the configured listeners. For
+example, if you configure C<< port => 8080 >> and systemd has a socket bound
+to C<0.0.0.0:8080>, PAGI::Server will use the inherited fd instead of
+creating a new socket.
+
+The same application code works identically with or without systemd:
+
+    # Without systemd: PAGI::Server binds the socket itself
+    # With systemd:    PAGI::Server inherits the socket from systemd
+    my $server = PAGI::Server->new(
+        app  => $app,
+        host => '0.0.0.0',
+        port => 8080,
+    );
+
+After reading the inherited fds, PAGI::Server removes C<LISTEN_FDS>,
+C<LISTEN_PID>, and C<LISTEN_FDNAMES> from the environment (per the
+C<sd_listen_fds(3)> specification), so child processes do not re-inherit them.
+
+=head2 Unix Socket Cleanup
+
+Normally, PAGI::Server unlinks its Unix socket file on shutdown. For
+systemd-activated Unix sockets, the socket file is B<not> unlinked because
+systemd owns the socket and will recreate it for the next activation.
+
+=head1 FD REUSE INTERNALS (EXPERIMENTAL)
+
+B<This feature is experimental.> The API is subject to change in future
+releases.
+
+PAGI::Server uses a C<PAGI_REUSE> environment variable to pass inherited
+listening socket file descriptors to re-exec'd processes (for future hot
+restart support). This mechanism also supports systemd socket activation
+(see L</SYSTEMD SOCKET ACTIVATION (EXPERIMENTAL)>).
+
+=head2 PAGI_REUSE Format
+
+The variable is a comma-separated list of C<addr:port:fd> entries:
+
+    # TCP listeners
+    PAGI_REUSE=127.0.0.1:8080:3,0.0.0.0:8443:4
+
+    # Unix socket listeners
+    PAGI_REUSE=unix:/run/pagi/app.sock:5
+
+    # Mixed
+    PAGI_REUSE=0.0.0.0:8080:3,unix:/run/pagi/app.sock:4
+
+Each entry encodes the address the socket is bound to and the file descriptor
+number to use.
+
+=head2 Fd Matching
+
+When starting, C<_collect_inherited_fds()> parses C<PAGI_REUSE> and/or
+C<LISTEN_FDS>, building a table of C<< address => fd >> pairs. During
+C<listen()>, each configured listener looks up its own address in the table.
+If a match is found, the existing fd is used instead of calling C<bind()> and
+C<listen()>. This allows the kernel's accept queue to be preserved across
+restarts.
+
+=head2 File Descriptor Inheritance
+
+To ensure that listening socket fds are inherited across C<exec()>,
+PAGI::Server sets C<$^F = 1023> before creating sockets. Perl uses C<$^F>
+(the maximum system file descriptor, equivalent to C<POSIX_OPEN_MAX> in
+spirit) to decide which fds receive the C<FD_CLOEXEC> close-on-exec flag:
+fds with numbers greater than C<$^F> get C<FD_CLOEXEC> set automatically.
+By raising C<$^F> to 1023, listen socket fds remain open across C<exec()>
+without requiring explicit C<fcntl> calls.
+
+=head2 Future: Hot Restart (USR2)
+
+The C<PAGI_REUSE> mechanism is designed to support a future hot restart
+workflow via C<SIGUSR2>: the master process would fork-exec a new master,
+passing C<PAGI_REUSE> to transfer listening sockets. The new master would
+then spin up workers and signal the old master to drain and exit. This
+provides zero-downtime code deploys without systemd. See L</SIGNAL HANDLING>
+for the current signal table.
+
 =head1 WINDOWS SUPPORT
 
 B<PAGI::Server does not support Windows.>

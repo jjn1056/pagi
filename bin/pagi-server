@@ -493,6 +493,12 @@ Graceful restart (multi-worker mode only).
 
 Increase/decrease worker count (multi-worker mode only).
 
+=item B<USR2>
+
+Hot restart (multi-worker mode only). Fork and exec a new master process
+that inherits listening sockets via C<PAGI_REUSE>. Zero-downtime deploy.
+B<Not yet implemented> — coming in a future release.
+
 =back
 
 =head1 EXAMPLES
