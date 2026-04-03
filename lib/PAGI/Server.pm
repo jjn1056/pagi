@@ -42,6 +42,7 @@ use Future;
 use Future::AsyncAwait;
 
 use Scalar::Util qw(weaken refaddr);
+use Socket qw(sockaddr_family unpack_sockaddr_in unpack_sockaddr_un AF_UNIX AF_INET);
 use POSIX ();
 
 use PAGI::Server::Connection;
@@ -454,6 +455,269 @@ The existing C<host>/C<port> constructor options continue to work exactly
 as before. They are internally normalized to a single-element listener
 array. The C<socket> option is similarly sugar for a single Unix socket
 listener. Only C<listen> enables true multi-listener mode.
+
+=head1 SYSTEMD SOCKET ACTIVATION (EXPERIMENTAL)
+
+B<This feature is experimental.> The API is subject to change in future
+releases.
+
+PAGI::Server supports systemd socket activation, which allows systemd to
+create and hold listening sockets on behalf of the server. This enables
+zero-downtime restarts: when the server is restarted, the kernel continues
+to queue incoming connections on the socket without refusing or dropping
+them, even during the gap between the old process exiting and the new one
+starting.
+
+Benefits of systemd socket activation:
+
+=over 4
+
+=item * B<Zero-downtime restarts> — the kernel queues connections during restarts
+
+=item * B<Atomic permission handling> — systemd creates the socket as root, then drops privileges before exec
+
+=item * B<On-demand activation> — the server is started automatically when the first connection arrives
+
+=back
+
+=head2 Basic Setup
+
+Create two systemd unit files: a C<.socket> unit that describes the socket,
+and a C<.service> unit for the server itself.
+
+B<TCP socket (C</etc/systemd/system/pagi.socket>):>
+
+    [Unit]
+    Description=PAGI Application Socket
+
+    [Socket]
+    ListenStream=0.0.0.0:8080
+    Accept=no
+
+    [Install]
+    WantedBy=sockets.target
+
+B<Unix socket (C</etc/systemd/system/pagi.socket>):>
+
+    [Unit]
+    Description=PAGI Application Socket
+
+    [Socket]
+    ListenStream=/run/pagi/app.sock
+    SocketMode=0660
+    SocketUser=www-data
+    SocketGroup=www-data
+    Accept=no
+
+    [Install]
+    WantedBy=sockets.target
+
+B<Service unit (C</etc/systemd/system/pagi.service>):>
+
+    [Unit]
+    Description=PAGI Application Server
+    Requires=pagi.socket
+
+    [Service]
+    User=www-data
+    ExecStart=/usr/local/bin/pagi-server -E production ./app.pl
+    Restart=on-failure
+
+    [Install]
+    WantedBy=multi-user.target
+
+C<Accept=no> is B<required>. PAGI::Server accepts connections itself via
+C<IO::Async>; systemd must not accept on its behalf.
+
+=head2 How Auto-Detection Works
+
+When PAGI::Server starts, it checks the C<LISTEN_FDS> and C<LISTEN_PID>
+environment variables set by systemd. If C<LISTEN_PID> matches the current
+process PID, the server inspects each inherited file descriptor (starting at
+fd 3) with C<getsockname()> to determine its address.
+
+Each inherited socket is then matched against the configured listeners. For
+example, if you configure C<< port => 8080 >> and systemd has a socket bound
+to C<0.0.0.0:8080>, PAGI::Server will use the inherited fd instead of
+creating a new socket.
+
+The same application code works identically with or without systemd:
+
+    # Without systemd: PAGI::Server binds the socket itself
+    # With systemd:    PAGI::Server inherits the socket from systemd
+    my $server = PAGI::Server->new(
+        app  => $app,
+        host => '0.0.0.0',
+        port => 8080,
+    );
+
+After reading the inherited fds, PAGI::Server removes C<LISTEN_FDS>,
+C<LISTEN_PID>, and C<LISTEN_FDNAMES> from the environment (per the
+C<sd_listen_fds(3)> specification), so child processes do not re-inherit them.
+
+=head2 Unix Socket Cleanup
+
+Normally, PAGI::Server unlinks its Unix socket file on shutdown. For
+systemd-activated Unix sockets, the socket file is B<not> unlinked because
+systemd owns the socket and will recreate it for the next activation.
+
+=head1 FD REUSE INTERNALS (EXPERIMENTAL)
+
+B<This feature is experimental.> The API is subject to change in future
+releases.
+
+PAGI::Server uses a C<PAGI_REUSE> environment variable to pass inherited
+listening socket file descriptors to re-exec'd processes during hot restart
+(see L</HOT RESTART (EXPERIMENTAL)>). This mechanism also supports systemd
+socket activation (see L</SYSTEMD SOCKET ACTIVATION (EXPERIMENTAL)>).
+
+=head2 PAGI_REUSE Format
+
+The variable is a comma-separated list of C<addr:port:fd> entries:
+
+    # TCP listeners
+    PAGI_REUSE=127.0.0.1:8080:3,0.0.0.0:8443:4
+
+    # Unix socket listeners
+    PAGI_REUSE=unix:/run/pagi/app.sock:5
+
+    # Mixed
+    PAGI_REUSE=0.0.0.0:8080:3,unix:/run/pagi/app.sock:4
+
+Each entry encodes the address the socket is bound to and the file descriptor
+number to use.
+
+=head2 Fd Matching
+
+When starting, C<_collect_inherited_fds()> parses C<PAGI_REUSE> and/or
+C<LISTEN_FDS>, building a table of C<< address => fd >> pairs. During
+C<listen()>, each configured listener looks up its own address in the table.
+If a match is found, the existing fd is used instead of calling C<bind()> and
+C<listen()>. This allows the kernel's accept queue to be preserved across
+restarts.
+
+=head2 File Descriptor Inheritance
+
+To ensure that listening socket fds are inherited across C<exec()>,
+PAGI::Server sets C<$^F = 1023> before creating sockets. Perl uses C<$^F>
+(the maximum system file descriptor, equivalent to C<POSIX_OPEN_MAX> in
+spirit) to decide which fds receive the C<FD_CLOEXEC> close-on-exec flag:
+fds with numbers greater than C<$^F> get C<FD_CLOEXEC> set automatically.
+By raising C<$^F> to 1023, listen socket fds remain open across C<exec()>
+without requiring explicit C<fcntl> calls.
+
+=head1 HOT RESTART (EXPERIMENTAL)
+
+B<This feature is experimental.> The API and signal behaviour are subject
+to change in future releases.
+
+Deploying new code normally requires a server restart. During that restart
+there is a gap — however brief — where the listening socket is closed and
+incoming connections are dropped. Hot restart eliminates this gap by having
+the old master fork and exec a brand-new master process that B<inherits> the
+already-open listening sockets. Both the old master and the new master serve
+requests during the transition; clients never see a refused connection.
+
+=head2 How It Works
+
+=over 4
+
+=item 1.
+
+An admin sends C<SIGUSR2> to the running master: C<kill -USR2 E<lt>master_pidE<gt>>
+
+=item 2.
+
+The old master sets C<PAGI_REUSE> (encoding each listening socket fd) and
+C<PAGI_MASTER_PID> (its own PID) in the environment, then calls C<fork()>
+followed immediately by C<exec()> of the original C<pagi-server> command
+(reconstructed from C<PAGI_ARGV>).
+
+=item 3.
+
+The new master starts, finds the inherited file descriptors via C<PAGI_REUSE>,
+and reuses the existing listening sockets rather than calling C<bind()>/C<listen()>
+again. The kernel's accept queue is preserved — no connections are dropped.
+
+=item 4.
+
+The new master spawns its worker pool and waits for each worker to complete
+the lifespan startup handshake (heartbeat).
+
+=item 5.
+
+Once all workers are healthy, the new master sends C<SIGTERM> to the old
+master (read from C<PAGI_MASTER_PID>).
+
+=item 6.
+
+The old master receives C<SIGTERM>, finishes in-flight requests within its
+shutdown timeout, and exits cleanly.
+
+=back
+
+=head2 HUP vs USR2
+
+    HUP   — Rolling worker restart. Workers are replaced one by one.
+             Code loaded at master startup (middleware, startup modules)
+             is NOT reloaded. Use for: config changes picked up per-worker.
+
+    USR2  — Full master re-exec. Everything reloaded from disk including
+             the perl binary, all modules, middleware stack. Use for:
+             code deploys, Perl upgrades, PAGI::Server upgrades.
+
+=head2 Deploy Workflow
+
+    # Deploy new code
+    rsync -a ./lib/ /opt/myapp/lib/
+
+    # Hot restart (zero downtime)
+    kill -USR2 $(cat /var/run/myapp/pagi.pid)
+
+    # Verify (optional)
+    curl http://localhost:8080/health
+
+=head2 systemd Unit File
+
+    [Service]
+    Type=forking
+    PIDFile=/var/run/myapp/pagi.pid
+    ExecStart=/usr/local/bin/pagi-server \
+        --host 0.0.0.0 --port 8080 \
+        --workers 4 --pid /var/run/myapp/pagi.pid \
+        --daemonize /opt/myapp/app.pl
+    ExecReload=/bin/kill -USR2 $MAINPID
+    KillMode=process
+
+=head2 Failure Handling
+
+The design ensures the old master never stops until the new master explicitly
+sends C<SIGTERM>:
+
+=over 4
+
+=item * B<Fork failure> — The old master logs the error and continues serving.
+No new master is started.
+
+=item * B<Exec failure> — The forked child exits before loading any code.
+The old master notices (via C<waitpid>) and continues serving.
+
+=item * B<New master crash during startup> — The old master never receives
+C<SIGTERM> and continues serving indefinitely.
+
+=item * B<Workers fail lifespan startup> — The new master exits without
+sending C<SIGTERM>. The old master is unaffected.
+
+=back
+
+=head2 PERL5LIB and Module Paths
+
+When the new master is C<exec>'d it inherits the process environment, but
+B<not> any C<-I> flags that were on the original command line. If your
+application uses C<-Ilib>, ensure C<PERL5LIB> is set in the environment or
+in the systemd unit file so the re-exec'd process can find your modules.
+Alternatively, use the C<--lib> flag (C<pagi-server --lib ./lib ./app.pl>),
+which is captured in C<PAGI_ARGV> and replayed on re-exec.
 
 =head1 WINDOWS SUPPORT
 
@@ -2300,9 +2564,55 @@ async sub _listen_singleworker {
         die "Lifespan startup failed: $message\n";
     }
 
+    # Collect any inherited fds (from PAGI_REUSE or LISTEN_FDS)
+    my $inherited = $self->_collect_inherited_fds;
+
     # Iterate over listeners array, creating one IO::Async::Listener per spec
     my @listen_entries;
     for my $spec (@{$self->{listeners}}) {
+
+        # Check for inherited fd matching this spec
+        my $match_key = $spec->{type} eq 'unix'
+            ? "unix:$spec->{path}"
+            : "$spec->{host}:$spec->{port}";
+
+        if (my $inh = delete $inherited->{$match_key}) {
+            # Reuse inherited fd — skip bind/listen entirely
+            $spec->{_inherited} = 1;
+
+            my $handle = $inh->{handle};
+            if (!$handle) {
+                my $class = $inh->{type} eq 'unix'
+                    ? 'IO::Socket::UNIX' : 'IO::Socket::INET';
+                require IO::Socket::UNIX if $inh->{type} eq 'unix';
+                $handle = $class->new_from_fd($inh->{fd}, 'r')
+                    or die "Cannot open inherited fd $inh->{fd}: $!\n";
+            }
+
+            if ($inh->{type} eq 'tcp' && $handle->can('sockport')) {
+                $spec->{port} = $handle->sockport;
+                $self->{bound_port} //= $spec->{port};
+            }
+
+            my $spec_ref = $spec;
+            weaken(my $weak_inner = $self);
+            my $listener = IO::Async::Listener->new(
+                handle    => $handle,
+                on_stream => sub {
+                    my ($l, $stream) = @_;
+                    return unless $weak_inner;
+                    $weak_inner->_on_connection($stream, $spec_ref);
+                },
+            );
+            $self->add_child($listener);
+
+            $self->_log(info => "Reusing inherited fd $inh->{fd} for $match_key"
+                . " (source: $inh->{source})");
+
+            push @listen_entries, { listener => $listener, spec => $spec };
+            next;  # Skip normal bind/listen
+        }
+
         my $spec_copy = $spec;  # capture for closure
         my $listener = IO::Async::Listener->new(
             on_stream => sub {
@@ -2360,8 +2670,11 @@ async sub _listen_singleworker {
             $old_umask = umask(0177);  # Owner-only until chmod
         }
 
-        # Start listening
-        await $listener->listen(%listen_opts);
+        # Start listening ($^F raised so fd survives exec for hot restart)
+        {
+            local $^F = 1023;
+            await $listener->listen(%listen_opts);
+        }
 
         # Restore umask after bind
         umask($old_umask) if defined $old_umask;
@@ -2396,7 +2709,34 @@ async sub _listen_singleworker {
             }
         }
 
+        # Register in PAGI_REUSE for hot restart fd inheritance
+        my $rh = $listener->read_handle;
+        if ($rh) {
+            my $fd = fileno($rh);
+            if (defined $fd) {
+                my $reuse_key = $spec->{type} eq 'unix'
+                    ? "unix:$spec->{path}:$fd"
+                    : "$spec->{host}:$spec->{port}:$fd";
+                $spec->{_reuse_key} = $reuse_key;
+                $ENV{PAGI_REUSE} = length($ENV{PAGI_REUSE} // '')
+                    ? "$ENV{PAGI_REUSE},$reuse_key"
+                    : $reuse_key;
+            }
+        }
+
         push @listen_entries, { listener => $listener, spec => $spec };
+    }
+
+    # Warn about unmatched inherited fds
+    for my $key (sort keys %$inherited) {
+        my $inh = $inherited->{$key};
+        $self->_log(warn => "Inherited fd $inh->{fd} ($key) does not match "
+            . "any listener spec — closing");
+        if ($inh->{handle}) {
+            close($inh->{handle});
+        } else {
+            POSIX::close($inh->{fd});
+        }
     }
 
     $self->{_listen_entries} = \@listen_entries;
@@ -2429,6 +2769,11 @@ async sub _listen_singleworker {
         weaken($weak_self);
         $self->loop->watch_signal(HUP => sub {
             $weak_self->_log(warn => "Received HUP signal (graceful restart only works in multi-worker mode)")
+                if $weak_self && !$weak_self->{quiet};
+        });
+
+        $self->loop->watch_signal(USR2 => sub {
+            $weak_self->_log(warn => "Received USR2 signal (hot restart only works in multi-worker mode)")
                 if $weak_self && !$weak_self->{quiet};
         });
     }
@@ -2491,10 +2836,39 @@ sub _listen_multiworker {
     # Create all listening sockets before forking workers
     my @listen_entries;
 
+    # Collect any inherited fds (from PAGI_REUSE or LISTEN_FDS)
+    my $inherited = $self->_collect_inherited_fds;
+
     for my $spec (@{$self->{listeners}}) {
         my $socket;
 
-        if ($spec->{type} eq 'unix') {
+        # Check for inherited fd matching this spec
+        my $match_key = $spec->{type} eq 'unix'
+            ? "unix:$spec->{path}"
+            : "$spec->{host}:$spec->{port}";
+
+        if (my $inh = delete $inherited->{$match_key}) {
+            $spec->{_inherited} = 1;
+
+            if ($inh->{handle}) {
+                $socket = $inh->{handle};
+            } else {
+                my $class = $inh->{type} eq 'unix'
+                    ? 'IO::Socket::UNIX' : 'IO::Socket::INET';
+                require IO::Socket::UNIX if $inh->{type} eq 'unix';
+                $socket = $class->new_from_fd($inh->{fd}, 'r')
+                    or die "Cannot open inherited fd $inh->{fd}: $!\n";
+            }
+
+            if ($inh->{type} eq 'tcp' && $socket->can('sockport')) {
+                $spec->{bound_port} = $socket->sockport;
+                $self->{bound_port} //= $spec->{bound_port};
+            }
+
+            $self->_log(info => "Reusing inherited fd $inh->{fd} for $match_key"
+                . " (source: $inh->{source})");
+        }
+        elsif ($spec->{type} eq 'unix') {
             # Unix socket: parent creates, workers inherit
             unlink $spec->{path} if -e $spec->{path};
 
@@ -2502,11 +2876,14 @@ sub _listen_multiworker {
             my $old_umask = umask(0177);
 
             require IO::Socket::UNIX;
-            $socket = IO::Socket::UNIX->new(
-                Local   => $spec->{path},
-                Type    => Socket::SOCK_STREAM(),
-                Listen  => $self->{listener_backlog},
-            ) or die "Cannot create Unix socket $spec->{path}: $!";
+            {
+                local $^F = 1023;
+                $socket = IO::Socket::UNIX->new(
+                    Local   => $spec->{path},
+                    Type    => Socket::SOCK_STREAM(),
+                    Listen  => $self->{listener_backlog},
+                ) or die "Cannot create Unix socket $spec->{path}: $!";
+            }
 
             umask($old_umask);
 
@@ -2514,8 +2891,22 @@ sub _listen_multiworker {
                 chmod($spec->{socket_mode}, $spec->{path})
                     or die "Cannot chmod $spec->{path}: $!\n";
             }
+
+            # Register in PAGI_REUSE for hot restart fd inheritance
+            if ($socket && !$spec->{_inherited}) {
+                my $fd = fileno($socket);
+                my $reuse_key = "unix:$spec->{path}:$fd";
+                $spec->{_reuse_key} = $reuse_key;
+                $ENV{PAGI_REUSE} = length($ENV{PAGI_REUSE} // '')
+                    ? "$ENV{PAGI_REUSE},$reuse_key"
+                    : $reuse_key;
+            }
         } elsif ($reuseport) {
             # reuseport TCP: probe to get port, workers create their own
+            # Note: reuseport sockets are not registered in PAGI_REUSE because
+            # each worker creates its own socket. fd inheritance for reuseport
+            # mode is not currently supported — use shared-socket mode for
+            # hot restart / systemd socket activation.
             my $probe_socket = IO::Socket::INET->new(
                 LocalAddr => $spec->{host},
                 LocalPort => $spec->{port},
@@ -2529,19 +2920,44 @@ sub _listen_multiworker {
             close($probe_socket);
         } else {
             # Shared-socket TCP: parent creates, workers inherit
-            $socket = IO::Socket::INET->new(
-                LocalAddr => $spec->{host},
-                LocalPort => $spec->{port},
-                Proto     => 'tcp',
-                Listen    => $self->{listener_backlog},
-                ReuseAddr => 1,
-                Blocking  => 0,
-            ) or die "Cannot create listening socket on $spec->{host}:$spec->{port}: $!";
+            {
+                local $^F = 1023;
+                $socket = IO::Socket::INET->new(
+                    LocalAddr => $spec->{host},
+                    LocalPort => $spec->{port},
+                    Proto     => 'tcp',
+                    Listen    => $self->{listener_backlog},
+                    ReuseAddr => 1,
+                    Blocking  => 0,
+                ) or die "Cannot create listening socket on $spec->{host}:$spec->{port}: $!";
+            }
             $spec->{bound_port} = $socket->sockport;
             $self->{bound_port} //= $spec->{bound_port};
+
+            # Register in PAGI_REUSE for hot restart fd inheritance
+            if ($socket && !$spec->{_inherited}) {
+                my $fd = fileno($socket);
+                my $reuse_key = "$spec->{host}:" . $socket->sockport . ":$fd";
+                $spec->{_reuse_key} = $reuse_key;
+                $ENV{PAGI_REUSE} = length($ENV{PAGI_REUSE} // '')
+                    ? "$ENV{PAGI_REUSE},$reuse_key"
+                    : $reuse_key;
+            }
         }
 
         push @listen_entries, { socket => $socket, spec => $spec };
+    }
+
+    # Warn about unmatched inherited fds
+    for my $key (sort keys %$inherited) {
+        my $inh = $inherited->{$key};
+        $self->_log(warn => "Inherited fd $inh->{fd} ($key) does not match "
+            . "any listener spec — closing");
+        if ($inh->{handle}) {
+            close($inh->{handle});
+        } else {
+            POSIX::close($inh->{fd});
+        }
     }
 
     $self->{_listen_entries} = \@listen_entries;
@@ -2612,6 +3028,7 @@ sub _listen_multiworker {
         $loop->watch_signal(HUP => sub { $self->_graceful_restart });
         $loop->watch_signal(TTIN => sub { $self->_increase_workers });
         $loop->watch_signal(TTOU => sub { $self->_decrease_workers });
+        $loop->watch_signal(USR2 => sub { $self->_hot_restart });
     }
 
     # Start heartbeat monitor if enabled
@@ -2652,9 +3069,127 @@ sub _listen_multiworker {
         $self->{_heartbeat_check_timer} = $hb_check_timer;
     }
 
+    # Hot restart handoff: if we were spawned by USR2, signal the old master
+    if (my $old_master_pid = delete $ENV{PAGI_MASTER_PID}) {
+        $old_master_pid = int($old_master_pid);
+
+        # Wait for workers to be healthy before retiring old master
+        # Delay = half the heartbeat timeout + 1 second buffer
+        my $handoff_delay = ($self->{heartbeat_timeout} || 10) / 2 + 1;
+        weaken(my $weak_self_handoff = $self);
+
+        $self->loop->watch_time(
+            after => $handoff_delay,
+            code  => sub {
+                return unless $weak_self_handoff;
+
+                my $worker_count = scalar keys %{$weak_self_handoff->{worker_pids}};
+                if ($worker_count == 0) {
+                    $weak_self_handoff->_log(error =>
+                        "Hot restart: no workers running, not retiring old master $old_master_pid");
+                    return;
+                }
+
+                if (kill(0, $old_master_pid)) {
+                    $weak_self_handoff->_log(info =>
+                        "Hot restart: $worker_count workers healthy, "
+                        . "sending SIGTERM to old master $old_master_pid");
+                    kill('TERM', $old_master_pid);
+                } else {
+                    $weak_self_handoff->_log(warn =>
+                        "Hot restart: old master $old_master_pid is no longer running");
+                }
+            },
+        );
+    }
+
     # Return immediately - caller (Runner) will call $loop->run()
     # This is consistent with single-worker mode behavior
     return $self;
+}
+
+# Collect inherited file descriptors from PAGI_REUSE and LISTEN_FDS.
+# Returns a hashref keyed by "host:port" or "unix:path", values are
+# { fd, type, host/port/path, handle?, source }
+sub _collect_inherited_fds {
+    my ($self) = @_;
+    my %inherited;
+
+    # Source 1: PAGI_REUSE (format: addr:port:fd,unix:path:fd,...)
+    if (my $reuse = $ENV{PAGI_REUSE}) {
+        for my $entry (split /,/, $reuse) {
+            if ($entry =~ /^unix:(.+):(\d+)$/) {
+                my ($path, $fd) = ($1, int($2));
+                $inherited{"unix:$path"} = {
+                    fd => $fd, type => 'unix', path => $path,
+                    source => 'pagi_reuse',
+                };
+            } elsif ($entry =~ /^(\[.+?\]):(\d+):(\d+)$/) {
+                my ($host, $port, $fd) = ($1, int($2), int($3));
+                $inherited{"$host:$port"} = {
+                    fd => $fd, type => 'tcp', host => $host, port => $port,
+                    source => 'pagi_reuse',
+                };
+            } elsif ($entry =~ /^(.+):(\d+):(\d+)$/) {
+                my ($host, $port, $fd) = ($1, int($2), int($3));
+                $inherited{"$host:$port"} = {
+                    fd => $fd, type => 'tcp', host => $host, port => $port,
+                    source => 'pagi_reuse',
+                };
+            }
+            # Malformed entries silently skipped
+        }
+    }
+
+    # Source 2: LISTEN_FDS (systemd socket activation)
+    my $listen_fds = $ENV{LISTEN_FDS};
+    if (defined $listen_fds && $listen_fds =~ /^\d+$/ && $listen_fds > 0) {
+        if (defined $ENV{LISTEN_PID} && $ENV{LISTEN_PID} == $$) {
+            my $n = int($listen_fds);
+            for my $i (0 .. $n - 1) {
+                my $fd = 3 + $i;  # SD_LISTEN_FDS_START
+
+                my $fh;
+                unless (open($fh, '+<&=', $fd)) {
+                    $self->_log(warn => "Cannot fdopen inherited fd $fd: $!");
+                    next;
+                }
+
+                my $addr = getsockname($fh);
+                unless ($addr) {
+                    $self->_log(warn => "Cannot getsockname on inherited fd $fd: $!");
+                    next;
+                }
+
+                my $family = sockaddr_family($addr);
+
+                if ($family == AF_UNIX) {
+                    my $path = unpack_sockaddr_un($addr);
+                    my $key = "unix:$path";
+                    $inherited{$key} //= {
+                        fd => $fd, type => 'unix', path => $path,
+                        handle => $fh, source => 'systemd',
+                    };
+                } elsif ($family == AF_INET) {
+                    my ($port, $host_packed) = unpack_sockaddr_in($addr);
+                    my $host = Socket::inet_ntoa($host_packed);
+                    my $key = "$host:$port";
+                    $inherited{$key} //= {
+                        fd => $fd, type => 'tcp', host => $host, port => $port,
+                        handle => $fh, source => 'systemd',
+                    };
+                } else {
+                    $self->_log(warn =>
+                        "Inherited fd $fd has unsupported address family $family");
+                }
+            }
+        }
+
+        # Always clean up systemd env vars (per sd_listen_fds spec)
+        delete @ENV{qw(LISTEN_FDS LISTEN_PID LISTEN_FDNAMES)};
+    }
+
+    return \%inherited;
 }
 
 # Initiate graceful shutdown in multi-worker mode
@@ -2673,19 +3208,37 @@ sub _initiate_multiworker_shutdown {
     }
 
     # Close all listen sockets to stop accepting new connections
-    for my $entry (@{$self->{_listen_entries} // []}) {
-        if ($entry->{socket}) {
-            close($entry->{socket});
+    # (skip during hot restart — new master is using these fds)
+    if (!$self->{_hot_restart_in_progress}) {
+        for my $entry (@{$self->{_listen_entries} // []}) {
+            if ($entry->{socket}) {
+                close($entry->{socket});
+            }
+        }
+        if ($self->{listen_socket}) {
+            delete $self->{listen_socket};
         }
     }
-    if ($self->{listen_socket}) {
-        delete $self->{listen_socket};
+
+    # Clean up PAGI_REUSE entries (skip during hot restart)
+    if (!$self->{_hot_restart_in_progress}) {
+        for my $entry (@{$self->{_listen_entries} // []}) {
+            my $key = $entry->{spec}{_reuse_key};
+            if ($key && defined $ENV{PAGI_REUSE}) {
+                $ENV{PAGI_REUSE} =~ s/(?:^|,)\Q$key\E//;
+                $ENV{PAGI_REUSE} =~ s/^,// if defined $ENV{PAGI_REUSE};
+            }
+        }
     }
 
-    # Clean up Unix socket files
-    for my $entry (@{$self->{_listen_entries} // []}) {
-        if ($entry->{spec}{type} eq 'unix' && -e $entry->{spec}{path}) {
-            unlink $entry->{spec}{path};
+    # Clean up Unix socket files (skip inherited, skip during hot restart)
+    if (!$self->{_hot_restart_in_progress}) {
+        for my $entry (@{$self->{_listen_entries} // []}) {
+            if ($entry->{spec}{type} eq 'unix'
+                && !$entry->{spec}{_inherited}
+                && -e $entry->{spec}{path}) {
+                unlink $entry->{spec}{path};
+            }
         }
     }
 
@@ -2744,6 +3297,52 @@ sub _graceful_restart {
             },
         );
     }
+}
+
+# Hot restart: fork+exec a new master that inherits listen sockets via PAGI_REUSE
+sub _hot_restart {
+    my ($self) = @_;
+
+    if ($self->{_hot_restart_in_progress}) {
+        $self->_log(warn => "Hot restart already in progress, ignoring USR2");
+        return;
+    }
+
+    if ($self->{shutting_down}) {
+        $self->_log(warn => "Server is shutting down, ignoring USR2");
+        return;
+    }
+
+    $self->{_hot_restart_in_progress} = 1;
+    $self->_log(info => "Received USR2, starting hot restart");
+
+    # Store our PID so the new master can signal us when ready
+    $ENV{PAGI_MASTER_PID} = $$;
+
+    # Fork and exec a new master process
+    my $pid = fork();
+
+    if (!defined $pid) {
+        $self->_log(error => "Hot restart fork failed: $!");
+        $self->{_hot_restart_in_progress} = 0;
+        delete $ENV{PAGI_MASTER_PID};
+        return;
+    }
+
+    if ($pid == 0) {
+        # Child: exec new master
+        my @args = defined $ENV{PAGI_ARGV}
+            ? split(/\0/, $ENV{PAGI_ARGV})
+            : ();
+        exec($^X, $0, @args)
+            or do {
+                warn "Hot restart exec failed: $!\n";
+                POSIX::_exit(1);
+            };
+    }
+
+    # Parent: log and continue running
+    $self->_log(info => "Hot restart: new master spawned as PID $pid");
 }
 
 # Increase worker pool by 1
@@ -3427,9 +4026,20 @@ async sub shutdown {
     }
     $self->{listener} = undef;
 
-    # Clean up Unix socket files
+    # Clean up PAGI_REUSE entries for sockets we created (not inherited)
     for my $entry (@{$self->{_listen_entries} // []}) {
-        if ($entry->{spec}{type} eq 'unix' && -e $entry->{spec}{path}) {
+        my $key = $entry->{spec}{_reuse_key};
+        if ($key && !$self->{_hot_restart_in_progress} && defined $ENV{PAGI_REUSE}) {
+            $ENV{PAGI_REUSE} =~ s/(?:^|,)\Q$key\E//;
+            $ENV{PAGI_REUSE} =~ s/^,// if defined $ENV{PAGI_REUSE};
+        }
+    }
+
+    # Clean up Unix socket files (only those we created, not inherited)
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        if ($entry->{spec}{type} eq 'unix'
+            && !$entry->{spec}{_inherited}
+            && -e $entry->{spec}{path}) {
             unlink $entry->{spec}{path};
         }
     }
