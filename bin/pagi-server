@@ -18,6 +18,9 @@ BEGIN {
     for my $i (reverse @to_splice) {
         splice @ARGV, $i, 1;
     }
+
+    # Capture original args for hot restart re-exec (USR2)
+    $ENV{PAGI_ARGV} = join("\0", @ARGV) unless exists $ENV{PAGI_ARGV};
 }
 
 use strict;
