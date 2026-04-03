@@ -2568,10 +2568,39 @@ sub _listen_multiworker {
     # Create all listening sockets before forking workers
     my @listen_entries;
 
+    # Collect any inherited fds (from PAGI_REUSE or LISTEN_FDS)
+    my $inherited = $self->_collect_inherited_fds;
+
     for my $spec (@{$self->{listeners}}) {
         my $socket;
 
-        if ($spec->{type} eq 'unix') {
+        # Check for inherited fd matching this spec
+        my $match_key = $spec->{type} eq 'unix'
+            ? "unix:$spec->{path}"
+            : "$spec->{host}:$spec->{port}";
+
+        if (my $inh = delete $inherited->{$match_key}) {
+            $spec->{_inherited} = 1;
+
+            if ($inh->{handle}) {
+                $socket = $inh->{handle};
+            } else {
+                my $class = $inh->{type} eq 'unix'
+                    ? 'IO::Socket::UNIX' : 'IO::Socket::INET';
+                require IO::Socket::UNIX if $inh->{type} eq 'unix';
+                $socket = $class->new_from_fd($inh->{fd}, 'r')
+                    or die "Cannot open inherited fd $inh->{fd}: $!\n";
+            }
+
+            if ($inh->{type} eq 'tcp' && $socket->can('sockport')) {
+                $spec->{bound_port} = $socket->sockport;
+                $self->{bound_port} //= $spec->{bound_port};
+            }
+
+            $self->_log(info => "Reusing inherited fd $inh->{fd} for $match_key"
+                . " (source: $inh->{source})");
+        }
+        elsif ($spec->{type} eq 'unix') {
             # Unix socket: parent creates, workers inherit
             unlink $spec->{path} if -e $spec->{path};
 
@@ -2579,17 +2608,30 @@ sub _listen_multiworker {
             my $old_umask = umask(0177);
 
             require IO::Socket::UNIX;
-            $socket = IO::Socket::UNIX->new(
-                Local   => $spec->{path},
-                Type    => Socket::SOCK_STREAM(),
-                Listen  => $self->{listener_backlog},
-            ) or die "Cannot create Unix socket $spec->{path}: $!";
+            {
+                local $^F = 1023;
+                $socket = IO::Socket::UNIX->new(
+                    Local   => $spec->{path},
+                    Type    => Socket::SOCK_STREAM(),
+                    Listen  => $self->{listener_backlog},
+                ) or die "Cannot create Unix socket $spec->{path}: $!";
+            }
 
             umask($old_umask);
 
             if (defined $spec->{socket_mode}) {
                 chmod($spec->{socket_mode}, $spec->{path})
                     or die "Cannot chmod $spec->{path}: $!\n";
+            }
+
+            # Register in PAGI_REUSE for hot restart fd inheritance
+            if ($socket && !$spec->{_inherited}) {
+                my $fd = fileno($socket);
+                my $reuse_key = "unix:$spec->{path}:$fd";
+                $spec->{_reuse_key} = $reuse_key;
+                $ENV{PAGI_REUSE} = length($ENV{PAGI_REUSE} // '')
+                    ? "$ENV{PAGI_REUSE},$reuse_key"
+                    : $reuse_key;
             }
         } elsif ($reuseport) {
             # reuseport TCP: probe to get port, workers create their own
@@ -2606,19 +2648,44 @@ sub _listen_multiworker {
             close($probe_socket);
         } else {
             # Shared-socket TCP: parent creates, workers inherit
-            $socket = IO::Socket::INET->new(
-                LocalAddr => $spec->{host},
-                LocalPort => $spec->{port},
-                Proto     => 'tcp',
-                Listen    => $self->{listener_backlog},
-                ReuseAddr => 1,
-                Blocking  => 0,
-            ) or die "Cannot create listening socket on $spec->{host}:$spec->{port}: $!";
+            {
+                local $^F = 1023;
+                $socket = IO::Socket::INET->new(
+                    LocalAddr => $spec->{host},
+                    LocalPort => $spec->{port},
+                    Proto     => 'tcp',
+                    Listen    => $self->{listener_backlog},
+                    ReuseAddr => 1,
+                    Blocking  => 0,
+                ) or die "Cannot create listening socket on $spec->{host}:$spec->{port}: $!";
+            }
             $spec->{bound_port} = $socket->sockport;
             $self->{bound_port} //= $spec->{bound_port};
+
+            # Register in PAGI_REUSE for hot restart fd inheritance
+            if ($socket && !$spec->{_inherited}) {
+                my $fd = fileno($socket);
+                my $reuse_key = "$spec->{host}:" . $socket->sockport . ":$fd";
+                $spec->{_reuse_key} = $reuse_key;
+                $ENV{PAGI_REUSE} = length($ENV{PAGI_REUSE} // '')
+                    ? "$ENV{PAGI_REUSE},$reuse_key"
+                    : $reuse_key;
+            }
         }
 
         push @listen_entries, { socket => $socket, spec => $spec };
+    }
+
+    # Warn about unmatched inherited fds
+    for my $key (sort keys %$inherited) {
+        my $inh = $inherited->{$key};
+        $self->_log(warn => "Inherited fd $inh->{fd} ($key) does not match "
+            . "any listener spec — closing");
+        if ($inh->{handle}) {
+            close($inh->{handle});
+        } else {
+            POSIX::close($inh->{fd});
+        }
     }
 
     $self->{_listen_entries} = \@listen_entries;
@@ -2843,10 +2910,25 @@ sub _initiate_multiworker_shutdown {
         delete $self->{listen_socket};
     }
 
-    # Clean up Unix socket files
-    for my $entry (@{$self->{_listen_entries} // []}) {
-        if ($entry->{spec}{type} eq 'unix' && -e $entry->{spec}{path}) {
-            unlink $entry->{spec}{path};
+    # Clean up PAGI_REUSE entries (skip during hot restart)
+    if (!$self->{_hot_restart_in_progress}) {
+        for my $entry (@{$self->{_listen_entries} // []}) {
+            my $key = $entry->{spec}{_reuse_key};
+            if ($key && defined $ENV{PAGI_REUSE}) {
+                $ENV{PAGI_REUSE} =~ s/(?:^|,)\Q$key\E//;
+                $ENV{PAGI_REUSE} =~ s/^,// if defined $ENV{PAGI_REUSE};
+            }
+        }
+    }
+
+    # Clean up Unix socket files (skip inherited, skip during hot restart)
+    if (!$self->{_hot_restart_in_progress}) {
+        for my $entry (@{$self->{_listen_entries} // []}) {
+            if ($entry->{spec}{type} eq 'unix'
+                && !$entry->{spec}{_inherited}
+                && -e $entry->{spec}{path}) {
+                unlink $entry->{spec}{path};
+            }
         }
     }
 
