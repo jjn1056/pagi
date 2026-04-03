@@ -606,14 +606,118 @@ fds with numbers greater than C<$^F> get C<FD_CLOEXEC> set automatically.
 By raising C<$^F> to 1023, listen socket fds remain open across C<exec()>
 without requiring explicit C<fcntl> calls.
 
-=head2 Future: Hot Restart (USR2)
+=head1 HOT RESTART (EXPERIMENTAL)
 
-The C<PAGI_REUSE> mechanism is designed to support a future hot restart
-workflow via C<SIGUSR2>: the master process would fork-exec a new master,
-passing C<PAGI_REUSE> to transfer listening sockets. The new master would
-then spin up workers and signal the old master to drain and exit. This
-provides zero-downtime code deploys without systemd. See L</SIGNAL HANDLING>
-for the current signal table.
+B<This feature is experimental.> The API and signal behaviour are subject
+to change in future releases.
+
+Deploying new code normally requires a server restart. During that restart
+there is a gap — however brief — where the listening socket is closed and
+incoming connections are dropped. Hot restart eliminates this gap by having
+the old master fork and exec a brand-new master process that B<inherits> the
+already-open listening sockets. Both the old master and the new master serve
+requests during the transition; clients never see a refused connection.
+
+=head2 How It Works
+
+=over 4
+
+=item 1.
+
+An admin sends C<SIGUSR2> to the running master: C<kill -USR2 E<lt>master_pidE<gt>>
+
+=item 2.
+
+The old master sets C<PAGI_REUSE> (encoding each listening socket fd) and
+C<PAGI_MASTER_PID> (its own PID) in the environment, then calls C<fork()>
+followed immediately by C<exec()> of the original C<pagi-server> command
+(reconstructed from C<PAGI_ARGV>).
+
+=item 3.
+
+The new master starts, finds the inherited file descriptors via C<PAGI_REUSE>,
+and reuses the existing listening sockets rather than calling C<bind()>/C<listen()>
+again. The kernel's accept queue is preserved — no connections are dropped.
+
+=item 4.
+
+The new master spawns its worker pool and waits for each worker to complete
+the lifespan startup handshake (heartbeat).
+
+=item 5.
+
+Once all workers are healthy, the new master sends C<SIGTERM> to the old
+master (read from C<PAGI_MASTER_PID>).
+
+=item 6.
+
+The old master receives C<SIGTERM>, finishes in-flight requests within its
+shutdown timeout, and exits cleanly.
+
+=back
+
+=head2 HUP vs USR2
+
+    HUP   — Rolling worker restart. Workers are replaced one by one.
+             Code loaded at master startup (middleware, startup modules)
+             is NOT reloaded. Use for: config changes picked up per-worker.
+
+    USR2  — Full master re-exec. Everything reloaded from disk including
+             the perl binary, all modules, middleware stack. Use for:
+             code deploys, Perl upgrades, PAGI::Server upgrades.
+
+=head2 Deploy Workflow
+
+    # Deploy new code
+    rsync -a ./lib/ /opt/myapp/lib/
+
+    # Hot restart (zero downtime)
+    kill -USR2 $(cat /var/run/myapp/pagi.pid)
+
+    # Verify (optional)
+    curl http://localhost:8080/health
+
+=head2 systemd Unit File
+
+    [Service]
+    Type=forking
+    PIDFile=/var/run/myapp/pagi.pid
+    ExecStart=/usr/local/bin/pagi-server \
+        --host 0.0.0.0 --port 8080 \
+        --workers 4 --pid /var/run/myapp/pagi.pid \
+        --daemonize /opt/myapp/app.pl
+    ExecReload=/bin/kill -USR2 $MAINPID
+    KillMode=process
+
+=head2 Failure Handling
+
+The design ensures the old master never stops until the new master explicitly
+sends C<SIGTERM>:
+
+=over 4
+
+=item * B<Fork failure> — The old master logs the error and continues serving.
+No new master is started.
+
+=item * B<Exec failure> — The forked child exits before loading any code.
+The old master notices (via C<waitpid>) and continues serving.
+
+=item * B<New master crash during startup> — The old master never receives
+C<SIGTERM> and continues serving indefinitely.
+
+=item * B<Workers fail lifespan startup> — The new master exits without
+sending C<SIGTERM>. The old master is unaffected.
+
+=back
+
+=head2 PERL5LIB and Module Paths
+
+When the new master is C<exec>'d it inherits the process environment, but
+B<not> any C<-I> flags that were on the original command line. If your
+application uses C<-Ilib>, ensure C<PERL5LIB> is set in the environment or
+in the systemd unit file so the re-exec'd process can find your modules.
+Alternatively, use the C<--lib> flag (C<pagi-server --lib ./lib ./app.pl>),
+which is captured in C<PAGI_ARGV> and replayed on re-exec.
 
 =head1 WINDOWS SUPPORT
 

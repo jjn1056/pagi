@@ -496,8 +496,15 @@ Increase/decrease worker count (multi-worker mode only).
 =item B<USR2>
 
 Hot restart (multi-worker mode only). Fork and exec a new master process
-that inherits listening sockets via C<PAGI_REUSE>. Zero-downtime deploy.
-B<Not yet implemented> — coming in a future release.
+that inherits listening sockets via C<PAGI_REUSE>. The new master spawns
+workers and, once they are healthy, sends SIGTERM to the old master.
+Zero-downtime deploy — both old and new masters serve requests during
+the transition.
+
+    # Deploy new code, then:
+    kill -USR2 $(cat /var/run/myapp/pagi.pid)
+
+Ignored in single-worker mode (logs a warning).
 
 =back
 
