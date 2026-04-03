@@ -2667,6 +2667,11 @@ async sub _listen_singleworker {
             $weak_self->_log(warn => "Received HUP signal (graceful restart only works in multi-worker mode)")
                 if $weak_self && !$weak_self->{quiet};
         });
+
+        $self->loop->watch_signal(USR2 => sub {
+            $weak_self->_log(warn => "Received USR2 signal (hot restart only works in multi-worker mode)")
+                if $weak_self && !$weak_self->{quiet};
+        });
     }
 
     my $loop_class = ref($self->loop);
@@ -2919,6 +2924,7 @@ sub _listen_multiworker {
         $loop->watch_signal(HUP => sub { $self->_graceful_restart });
         $loop->watch_signal(TTIN => sub { $self->_increase_workers });
         $loop->watch_signal(TTOU => sub { $self->_decrease_workers });
+        $loop->watch_signal(USR2 => sub { $self->_hot_restart });
     }
 
     # Start heartbeat monitor if enabled
@@ -3153,6 +3159,52 @@ sub _graceful_restart {
             },
         );
     }
+}
+
+# Hot restart: fork+exec a new master that inherits listen sockets via PAGI_REUSE
+sub _hot_restart {
+    my ($self) = @_;
+
+    if ($self->{_hot_restart_in_progress}) {
+        $self->_log(warn => "Hot restart already in progress, ignoring USR2");
+        return;
+    }
+
+    if ($self->{shutting_down}) {
+        $self->_log(warn => "Server is shutting down, ignoring USR2");
+        return;
+    }
+
+    $self->{_hot_restart_in_progress} = 1;
+    $self->_log(info => "Received USR2, starting hot restart");
+
+    # Store our PID so the new master can signal us when ready
+    $ENV{PAGI_MASTER_PID} = $$;
+
+    # Fork and exec a new master process
+    my $pid = fork();
+
+    if (!defined $pid) {
+        $self->_log(error => "Hot restart fork failed: $!");
+        $self->{_hot_restart_in_progress} = 0;
+        delete $ENV{PAGI_MASTER_PID};
+        return;
+    }
+
+    if ($pid == 0) {
+        # Child: exec new master
+        my @args = defined $ENV{PAGI_ARGV}
+            ? split(/\0/, $ENV{PAGI_ARGV})
+            : ();
+        exec($^X, $0, @args)
+            or do {
+                warn "Hot restart exec failed: $!\n";
+                POSIX::_exit(1);
+            };
+    }
+
+    # Parent: log and continue running
+    $self->_log(info => "Hot restart: new master spawned as PID $pid");
 }
 
 # Increase worker pool by 1
