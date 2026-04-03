@@ -105,4 +105,253 @@ subtest 'LISTEN_FDS: ignored when LISTEN_PID mismatches' => sub {
     ok(!defined $ENV{LISTEN_FDNAMES}, 'LISTEN_FDNAMES cleaned');
 };
 
+subtest 'fd reuse: server reuses inherited TCP socket from PAGI_REUSE' => sub {
+    my $loop = IO::Async::Loop->new;
+
+    # Create a real listening socket to simulate an inherited fd
+    my $pre_socket = IO::Socket::INET->new(
+        LocalAddr => '127.0.0.1',
+        LocalPort => 0,
+        Proto     => 'tcp',
+        Listen    => 128,
+        ReuseAddr => 1,
+    ) or die "Cannot create socket: $!";
+
+    my $port = $pre_socket->sockport;
+    my $fd = fileno($pre_socket);
+
+    local $ENV{PAGI_REUSE} = "127.0.0.1:$port:$fd";
+    local $ENV{LISTEN_FDS};
+    local $ENV{LISTEN_PID};
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                } elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [['content-type', 'text/plain']],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => 'reused',
+            more => 0,
+        });
+    };
+
+    my $server = PAGI::Server->new(
+        app   => $app,
+        host  => '127.0.0.1',
+        port  => $port,
+        quiet => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    # Verify inherited flag
+    ok($server->listeners->[0]{_inherited}, 'listener marked inherited');
+
+    # Verify request works through reused socket using async IO
+    my $resp = '';
+    my $done_f = $loop->new_future;
+    my $client_sock = IO::Socket::INET->new(
+        PeerAddr => '127.0.0.1',
+        PeerPort => $port,
+        Proto    => 'tcp',
+    ) or die "Cannot connect: $!";
+
+    require IO::Async::Stream;
+    my $client_stream = IO::Async::Stream->new(
+        handle  => $client_sock,
+        on_read => sub {
+            my ($self, $buffref, $eof) = @_;
+            $resp .= $$buffref;
+            $$buffref = '';
+            if ($eof) {
+                $done_f->done unless $done_f->is_ready;
+            }
+            return 0;
+        },
+        on_read_eof => sub {
+            $done_f->done unless $done_f->is_ready;
+        },
+    );
+    $loop->add($client_stream);
+    $client_stream->write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+
+    # Wait for response with timeout
+    my $timeout_f = $loop->delay_future(after => 5);
+    Future->wait_any($done_f, $timeout_f)->get;
+    eval { $loop->remove($client_stream) };
+
+    like($resp, qr/200 OK/, 'got 200 from reused socket');
+    like($resp, qr/reused/, 'got response body');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+subtest 'PAGI_REUSE: registered after new socket creation' => sub {
+    my $loop = IO::Async::Loop->new;
+    local $ENV{PAGI_REUSE};
+    local $ENV{LISTEN_FDS};
+    local $ENV{LISTEN_PID};
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                } elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $server = PAGI::Server->new(
+        app   => $app,
+        host  => '127.0.0.1',
+        port  => 0,
+        quiet => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    my $port = $server->port;
+    ok(defined $ENV{PAGI_REUSE}, 'PAGI_REUSE set after listen');
+    like($ENV{PAGI_REUSE}, qr/127\.0\.0\.1:$port:\d+/,
+        'PAGI_REUSE contains addr:port:fd');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+
+    ok(!$ENV{PAGI_REUSE} || $ENV{PAGI_REUSE} !~ /127\.0\.0\.1:$port/,
+        'PAGI_REUSE entry removed after shutdown');
+};
+
+subtest 'PAGI_REUSE: Unix socket registered' => sub {
+    use File::Temp qw(tmpnam);
+    use IO::Socket::UNIX;
+
+    my $loop = IO::Async::Loop->new;
+    my $socket_path = tmpnam() . '.sock';
+    local $ENV{PAGI_REUSE};
+    local $ENV{LISTEN_FDS};
+    local $ENV{LISTEN_PID};
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                } elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => $socket_path,
+        quiet  => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    ok(defined $ENV{PAGI_REUSE}, 'PAGI_REUSE set for Unix socket');
+    like($ENV{PAGI_REUSE}, qr/unix:\Q$socket_path\E:\d+/,
+        'contains unix:path:fd');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+};
+
+subtest 'inherited Unix socket NOT unlinked on shutdown' => sub {
+    use File::Temp qw(tmpnam);
+    use IO::Socket::UNIX;
+
+    my $loop = IO::Async::Loop->new;
+    my $socket_path = tmpnam() . '.sock';
+
+    # Create a real Unix listening socket
+    my $pre_socket = IO::Socket::UNIX->new(
+        Local  => $socket_path,
+        Type   => Socket::SOCK_STREAM(),
+        Listen => 128,
+    ) or die "Cannot create Unix socket: $!";
+
+    my $fd = fileno($pre_socket);
+
+    local $ENV{PAGI_REUSE} = "unix:$socket_path:$fd";
+    local $ENV{LISTEN_FDS};
+    local $ENV{LISTEN_PID};
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        if ($scope->{type} eq 'lifespan') {
+            while (1) {
+                my $event = await $receive->();
+                if ($event->{type} eq 'lifespan.startup') {
+                    await $send->({ type => 'lifespan.startup.complete' });
+                } elsif ($event->{type} eq 'lifespan.shutdown') {
+                    await $send->({ type => 'lifespan.shutdown.complete' });
+                    last;
+                }
+            }
+            return;
+        }
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'OK', more => 0 });
+    };
+
+    my $server = PAGI::Server->new(
+        app    => $app,
+        socket => $socket_path,
+        quiet  => 1,
+    );
+
+    $loop->add($server);
+    $server->listen->get;
+
+    ok($server->listeners->[0]{_inherited}, 'marked as inherited');
+
+    $server->shutdown->get;
+    $loop->remove($server);
+
+    # Key assertion: inherited Unix socket file should NOT be unlinked
+    ok(-e $socket_path, 'inherited Unix socket file preserved after shutdown');
+
+    # Clean up manually
+    close($pre_socket);
+    unlink $socket_path;
+};
+
 done_testing;

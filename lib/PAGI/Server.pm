@@ -2301,9 +2301,55 @@ async sub _listen_singleworker {
         die "Lifespan startup failed: $message\n";
     }
 
+    # Collect any inherited fds (from PAGI_REUSE or LISTEN_FDS)
+    my $inherited = $self->_collect_inherited_fds;
+
     # Iterate over listeners array, creating one IO::Async::Listener per spec
     my @listen_entries;
     for my $spec (@{$self->{listeners}}) {
+
+        # Check for inherited fd matching this spec
+        my $match_key = $spec->{type} eq 'unix'
+            ? "unix:$spec->{path}"
+            : "$spec->{host}:$spec->{port}";
+
+        if (my $inh = delete $inherited->{$match_key}) {
+            # Reuse inherited fd — skip bind/listen entirely
+            $spec->{_inherited} = 1;
+
+            my $handle = $inh->{handle};
+            if (!$handle) {
+                my $class = $inh->{type} eq 'unix'
+                    ? 'IO::Socket::UNIX' : 'IO::Socket::INET';
+                require IO::Socket::UNIX if $inh->{type} eq 'unix';
+                $handle = $class->new_from_fd($inh->{fd}, 'r')
+                    or die "Cannot open inherited fd $inh->{fd}: $!\n";
+            }
+
+            if ($inh->{type} eq 'tcp' && $handle->can('sockport')) {
+                $spec->{port} = $handle->sockport;
+                $self->{bound_port} //= $spec->{port};
+            }
+
+            my $spec_ref = $spec;
+            weaken(my $weak_inner = $self);
+            my $listener = IO::Async::Listener->new(
+                handle    => $handle,
+                on_stream => sub {
+                    my ($l, $stream) = @_;
+                    return unless $weak_inner;
+                    $weak_inner->_on_connection($stream, $spec_ref);
+                },
+            );
+            $self->add_child($listener);
+
+            $self->_log(info => "Reusing inherited fd $inh->{fd} for $match_key"
+                . " (source: $inh->{source})");
+
+            push @listen_entries, { listener => $listener, spec => $spec };
+            next;  # Skip normal bind/listen
+        }
+
         my $spec_copy = $spec;  # capture for closure
         my $listener = IO::Async::Listener->new(
             on_stream => sub {
@@ -2361,8 +2407,11 @@ async sub _listen_singleworker {
             $old_umask = umask(0177);  # Owner-only until chmod
         }
 
-        # Start listening
-        await $listener->listen(%listen_opts);
+        # Start listening ($^F raised so fd survives exec for hot restart)
+        {
+            local $^F = 1023;
+            await $listener->listen(%listen_opts);
+        }
 
         # Restore umask after bind
         umask($old_umask) if defined $old_umask;
@@ -2397,7 +2446,34 @@ async sub _listen_singleworker {
             }
         }
 
+        # Register in PAGI_REUSE for hot restart fd inheritance
+        my $rh = $listener->read_handle;
+        if ($rh) {
+            my $fd = fileno($rh);
+            if (defined $fd) {
+                my $reuse_key = $spec->{type} eq 'unix'
+                    ? "unix:$spec->{path}:$fd"
+                    : "$spec->{host}:$spec->{port}:$fd";
+                $spec->{_reuse_key} = $reuse_key;
+                $ENV{PAGI_REUSE} = length($ENV{PAGI_REUSE} // '')
+                    ? "$ENV{PAGI_REUSE},$reuse_key"
+                    : $reuse_key;
+            }
+        }
+
         push @listen_entries, { listener => $listener, spec => $spec };
+    }
+
+    # Warn about unmatched inherited fds
+    for my $key (sort keys %$inherited) {
+        my $inh = $inherited->{$key};
+        $self->_log(warn => "Inherited fd $inh->{fd} ($key) does not match "
+            . "any listener spec — closing");
+        if ($inh->{handle}) {
+            close($inh->{handle});
+        } else {
+            POSIX::close($inh->{fd});
+        }
     }
 
     $self->{_listen_entries} = \@listen_entries;
@@ -3512,9 +3588,20 @@ async sub shutdown {
     }
     $self->{listener} = undef;
 
-    # Clean up Unix socket files
+    # Clean up PAGI_REUSE entries for sockets we created (not inherited)
     for my $entry (@{$self->{_listen_entries} // []}) {
-        if ($entry->{spec}{type} eq 'unix' && -e $entry->{spec}{path}) {
+        my $key = $entry->{spec}{_reuse_key};
+        if ($key && !$self->{_hot_restart_in_progress} && defined $ENV{PAGI_REUSE}) {
+            $ENV{PAGI_REUSE} =~ s/(?:^|,)\Q$key\E//;
+            $ENV{PAGI_REUSE} =~ s/^,// if defined $ENV{PAGI_REUSE};
+        }
+    }
+
+    # Clean up Unix socket files (only those we created, not inherited)
+    for my $entry (@{$self->{_listen_entries} // []}) {
+        if ($entry->{spec}{type} eq 'unix'
+            && !$entry->{spec}{_inherited}
+            && -e $entry->{spec}{path}) {
             unlink $entry->{spec}{path};
         }
     }
