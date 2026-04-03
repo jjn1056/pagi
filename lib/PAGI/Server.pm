@@ -2965,6 +2965,40 @@ sub _listen_multiworker {
         $self->{_heartbeat_check_timer} = $hb_check_timer;
     }
 
+    # Hot restart handoff: if we were spawned by USR2, signal the old master
+    if (my $old_master_pid = delete $ENV{PAGI_MASTER_PID}) {
+        $old_master_pid = int($old_master_pid);
+
+        # Wait for workers to be healthy before retiring old master
+        # Delay = half the heartbeat timeout + 1 second buffer
+        my $handoff_delay = ($self->{heartbeat_timeout} || 10) / 2 + 1;
+        weaken(my $weak_self_handoff = $self);
+
+        $self->loop->watch_time(
+            after => $handoff_delay,
+            code  => sub {
+                return unless $weak_self_handoff;
+
+                my $worker_count = scalar keys %{$weak_self_handoff->{worker_pids}};
+                if ($worker_count == 0) {
+                    $weak_self_handoff->_log(error =>
+                        "Hot restart: no workers running, not retiring old master $old_master_pid");
+                    return;
+                }
+
+                if (kill(0, $old_master_pid)) {
+                    $weak_self_handoff->_log(info =>
+                        "Hot restart: $worker_count workers healthy, "
+                        . "sending SIGTERM to old master $old_master_pid");
+                    kill('TERM', $old_master_pid);
+                } else {
+                    $weak_self_handoff->_log(warn =>
+                        "Hot restart: old master $old_master_pid is no longer running");
+                }
+            },
+        );
+    }
+
     # Return immediately - caller (Runner) will call $loop->run()
     # This is consistent with single-worker mode behavior
     return $self;
