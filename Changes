@@ -20,7 +20,6 @@
   - `local $^F = 1023` prevents close-on-exec on listen socket fds
   - Automatic LISTEN_FDS/LISTEN_PID detection for systemd socket activation
   - Inherited Unix socket files preserved on shutdown (systemd/parent owns them)
-  - PAGI_ARGV capture for re-exec argument reconstruction
 
   [New Features — USR2 Hot Restart (Experimental)]
   - USR2 signal triggers zero-downtime master re-exec in multi-worker mode
@@ -29,14 +28,6 @@
   - Old master drains connections and exits; sockets never close
   - Idempotent: duplicate USR2 during restart is a no-op
   - Failure-safe: old master continues if new master fails to start
-
-  [Refactoring]
-  - PAGI::Runner is now fully server-agnostic: all PAGI::Server CLI option
-    parsing moved to bin/pagi-server, Runner accepts server_options hashref
-  - Internal listener normalization: all forms (host/port, socket, listen array)
-    normalize to a unified $self->{listeners} array
-  - Connection.pm transport awareness: transport_type/transport_path fields
-    for conditional TCP_NODELAY, peer info, and scope construction
 
   [Bug Fixes]
   - Guard $scope->{client} access in 5 middlewares (AccessLog, Maintenance,
@@ -47,23 +38,9 @@
     sockets (prevents mis-parsing paths containing colons)
   - Runner load_server omits host/port when socket or listen is provided
 
-  [Documentation]
-  - Comprehensive POD for Unix socket support: nginx config, permissions, systemd
-    RuntimeDirectory, scope differences, security recommendations
-  - Comprehensive POD for multi-listener: API, CLI, reuseport interaction
-  - Comprehensive POD for systemd socket activation: .socket/.service examples,
-    auto-detection, matching, Accept=no requirement
-  - Comprehensive POD for hot restart: motivation, HUP vs USR2 comparison,
-    deploy workflow, systemd unit file, failure handling guarantees
-  - FD reuse internals: PAGI_REUSE format, $^F explanation, matching mechanism
-  - All new features marked experimental
-
   [Test Fixes]
   - Use condition-based waiting in HTTP/2 SSE keepalive test (eliminates flakiness)
   - Gate timing-sensitive multiworker/heartbeat tests behind RELEASE_TESTING
-
-  [Cleanup]
-  - Remove force-tracked docs/plans files from git index
 
 0.001020 - 2026-03-16
   [Security Hardening]
