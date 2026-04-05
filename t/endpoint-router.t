@@ -2,6 +2,7 @@ use strict;
 use warnings;
 use Test2::V0;
 use Future::AsyncAwait;
+use PAGI::Stash;
 
 # Load the module
 my $loaded = eval { require PAGI::Endpoint::Router; 1 };
@@ -242,7 +243,7 @@ subtest 'middleware as method names' => sub {
 
             my $token = $req->header('authorization');
             if ($token && $token eq 'Bearer valid') {
-                $req->stash->{user} = { id => 1 };
+                PAGI::Stash->new($req)->set(user => { id => 1 });
                 await $next->();
             } else {
                 await $res->status(401)->json({ error => 'Unauthorized' });
@@ -262,7 +263,7 @@ subtest 'middleware as method names' => sub {
 
         async sub protected_handler {
             my ($self, $req, $res) = @_;
-            my $user = $req->stash->{user};
+            my $user = PAGI::Stash->new($req)->get('user');
             await $res->json({ user_id => $user->{id} });
         }
     }
@@ -352,13 +353,13 @@ subtest 'stash flows through middleware to handler' => sub {
 
         async sub set_user {
             my ($self, $req, $res, $next) = @_;
-            $req->stash->{user} = 'alice';
+            PAGI::Stash->new($req)->set(user => 'alice');
             await $next->();
         }
 
         async sub check_user {
             my ($self, $req, $res) = @_;
-            $handler_saw_user = $req->stash->{user};
+            $handler_saw_user = PAGI::Stash->new($req)->get('user');
             await $res->text('ok');
         }
     }

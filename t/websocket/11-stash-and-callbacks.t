@@ -7,6 +7,7 @@ use Future;
 
 use lib 'lib';
 use PAGI::WebSocket;
+use PAGI::Stash;
 
 # Helper to create connected WebSocket with message queue
 # Each call creates a fresh scope to avoid singleton caching issues
@@ -47,25 +48,26 @@ sub create_ws {
 
 subtest 'stash provides per-connection storage' => sub {
     my ($ws) = create_ws();
+    my $stash = PAGI::Stash->new($ws);
 
-    is(ref($ws->stash), 'HASH', 'stash returns hashref');
-    is($ws->stash, {}, 'stash starts empty');
+    is(ref($stash->data), 'HASH', 'stash returns hashref');
+    is($stash->data, {}, 'stash starts empty');
 
-    $ws->stash->{user} = 'alice';
-    $ws->stash->{room} = 'lobby';
+    $stash->set(user => 'alice', room => 'lobby');
 
-    is($ws->stash->{user}, 'alice', 'can store user');
-    is($ws->stash->{room}, 'lobby', 'can store room');
+    is($stash->get('user'), 'alice', 'can store user');
+    is($stash->get('room'), 'lobby', 'can store room');
 };
 
 subtest 'stash persists across calls' => sub {
     my ($ws) = create_ws();
+    my $stash = PAGI::Stash->new($ws);
 
-    $ws->stash->{counter} = 0;
-    $ws->stash->{counter}++;
-    $ws->stash->{counter}++;
+    $stash->set(counter => 0);
+    $stash->data->{counter}++;
+    $stash->data->{counter}++;
 
-    is($ws->stash->{counter}, 2, 'stash persists modifications');
+    is($stash->get('counter'), 2, 'stash persists modifications');
 };
 
 subtest 'on_error registers error callback' => sub {

@@ -3,6 +3,7 @@ use warnings;
 use Test2::V0;
 
 require PAGI::Request;
+use PAGI::Stash;
 
 subtest 'state accessor reads from scope' => sub {
     my $scope = {
@@ -46,13 +47,14 @@ subtest 'state is separate from stash' => sub {
     my $req = PAGI::Request->new($scope, sub { });
 
     # Set something in stash
-    $req->stash->{user} = 'alice';
+    my $stash = PAGI::Stash->new($req);
+    $stash->set(user => 'alice');
 
     # Verify they are separate
     is($req->state->{db}, 'connection', 'state has app data');
-    is($req->stash->{user}, 'alice', 'stash has request data');
+    is($stash->get('user'), 'alice', 'stash has request data');
     ok(!exists $req->state->{user}, 'state does not have stash data');
-    ok(!exists $req->stash->{db}, 'stash does not have state data');
+    ok(!$stash->exists('db'), 'stash does not have state data');
 };
 
 done_testing;

@@ -3,6 +3,7 @@ use warnings;
 use Test2::V0;
 
 require PAGI::WebSocket;
+use PAGI::Stash;
 
 subtest 'state accessor reads from scope' => sub {
     my $scope = {
@@ -41,10 +42,11 @@ subtest 'state is separate from stash' => sub {
 
     my $ws = PAGI::WebSocket->new($scope, sub { }, sub { });
 
-    $ws->stash->{room} = 'lobby';
+    my $stash = PAGI::Stash->new($ws);
+    $stash->set(room => 'lobby');
 
     is($ws->state->{db}, 'connection', 'state has app data');
-    is($ws->stash->{room}, 'lobby', 'stash has connection data');
+    is($stash->get('room'), 'lobby', 'stash has connection data');
     ok(!exists $ws->state->{room}, 'state does not have stash data');
 };
 

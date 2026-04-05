@@ -6,6 +6,7 @@ use Future;
 
 use lib 'lib';
 use PAGI::SSE;
+use PAGI::Stash;
 
 subtest 'constructor requires scope, receive, send' => sub {
     like(
@@ -58,7 +59,8 @@ subtest 'basic accessors' => sub {
     is($sse->query_string, 'token=abc', 'query_string accessor');
     is($sse->scheme, 'https', 'scheme accessor');
     ok($sse->scope == $scope, 'scope accessor returns same hashref');
-    ref_ok($sse->stash, 'HASH', 'stash returns hashref');
+    my $stash = PAGI::Stash->new($sse);
+    ref_ok($stash->data, 'HASH', 'stash returns hashref');
 };
 
 subtest 'header accessors' => sub {

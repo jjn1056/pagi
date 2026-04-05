@@ -815,22 +815,6 @@ sub has_content_type {
 
 sub scope { shift->{scope} }
 
-# Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
-#
-# DESIGN NOTE: Stash is intentionally scope-based, not object-based. When middleware
-# creates a shallow copy of scope ({ %$scope, key => val }), the inner 'pagi.stash'
-# hashref is preserved by reference. This means:
-#   1. All Request/Response objects created from the same scope chain share stash
-#   2. Middleware modifications to stash are visible to downstream handlers
-#   3. The stash "transcends" the middleware chain via scope, not via object identity
-#
-# This addresses a potential concern about Request objects being ephemeral - stash
-# works correctly because it lives in scope, which IS shared across the chain.
-sub stash {
-    my ($self) = @_;
-    return {} unless $self->{scope};
-    return $self->{scope}{'pagi.stash'} //= {};
-}
 
 sub is_sent {
     my ($self) = @_;
