@@ -17,6 +17,7 @@ use PAGI::App::File;
 use PAGI::App::Router;
 use PAGI::Middleware::AccessLog;
 use PAGI::Response;
+use PAGI::Stash;
 
 #---------------------------------------------------------
 # HTTP Endpoint - REST API for messages
@@ -103,7 +104,7 @@ package MessageEvents {
         my ($self, $sse) = @_;
         my $id = ++$sub_id;
         $subscribers{$id} = $sse;
-        $sse->stash->{sub_id} = $id;
+        PAGI::Stash->new($sse)->set(sub_id => $id);
 
         await $sse->send_event(
             event => 'connected',
@@ -113,8 +114,9 @@ package MessageEvents {
 
     sub on_disconnect {
         my ($self, $sse) = @_;
-        my $id = $sse->stash->{sub_id} // 'unknown'; 
-        delete $subscribers{$sse->stash->{sub_id}};
+        my $stash = PAGI::Stash->new($sse);
+        my $id = $stash->get('sub_id', 'unknown');
+        delete $subscribers{$id};
     }
 }
 
