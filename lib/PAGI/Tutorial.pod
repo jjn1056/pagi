@@ -1794,7 +1794,7 @@ Create reusable middleware by extending L<PAGI::Middleware>:
           if ($auth && $auth =~ /^Bearer (.+)/) {
               my $token = $1;
               my $user = verify_token($token, $self->{secret});
-              $scope->{'pagi.stash'}{user} = $user if $user;
+              PAGI::Stash->new($scope)->set(user => $user) if $user;
           }
 
           # Call next middleware/app
@@ -1843,7 +1843,7 @@ Add data for downstream handlers:
       my ($self, $app) = @_;
       return async sub {
           my ($scope, $receive, $send) = @_;
-          $scope->{'pagi.stash'}{custom_data} = 'value';
+          PAGI::Stash->new($scope)->set(custom_data => 'value');
           await $app->($scope, $receive, $send);
       };
   }

@@ -117,7 +117,7 @@ PAGI::Endpoint::WebSocket - Class-based WebSocket endpoint handler
 
     sub on_disconnect {
         my ($self, $ws, $code) = @_;
-        cleanup_user($ws->stash->{user_id});
+        cleanup_user(PAGI::Stash->new($ws)->get('user_id'));
     }
 
     # Use with PAGI server

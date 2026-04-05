@@ -83,7 +83,7 @@ PAGI::Endpoint::SSE - Class-based Server-Sent Events endpoint handler
 
     async sub on_connect {
         my ($self, $sse) = @_;
-        my $user_id = $sse->stash->{user_id};
+        my $user_id = PAGI::Stash->new($sse)->get('user_id');
 
         # Send welcome event
         await $sse->send_event(
@@ -105,7 +105,7 @@ PAGI::Endpoint::SSE - Class-based Server-Sent Events endpoint handler
 
     sub on_disconnect {
         my ($self, $sse) = @_;
-        unsubscribe($sse->stash->{user_id});
+        unsubscribe(PAGI::Stash->new($sse)->get('user_id'));
     }
 
     # Use with PAGI server
@@ -214,7 +214,7 @@ between workers.
         my ($self, $sse) = @_;
         my $id = ++$sub_id;
         $subscribers{$id} = $sse;
-        $sse->stash->{sub_id} = $id;
+        PAGI::Stash->new($sse)->set(sub_id => $id);
 
         await $sse->send_event(
             event => 'connected',
@@ -224,7 +224,7 @@ between workers.
 
     sub on_disconnect {
         my ($self, $sse) = @_;
-        delete $subscribers{$sse->stash->{sub_id}};
+        delete $subscribers{PAGI::Stash->new($sse)->get('sub_id')};
     }
 
 Now when any worker calls C<broadcast()>, the message goes to Redis, and

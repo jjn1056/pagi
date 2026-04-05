@@ -121,12 +121,12 @@ callbacks and injects shared application state into request scopes.
 =item L<PAGI::Request>
 
 Convenience wrapper for HTTP request handling with body parsing, headers,
-and state/stash accessors.
+and state accessors.
 
 =item L<PAGI::WebSocket>
 
 Convenience wrapper for WebSocket connections with JSON support, heartbeat,
-and state/stash accessors.
+and state accessors.
 
 =item L<PAGI::SSE>
 

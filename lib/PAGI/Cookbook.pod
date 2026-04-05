@@ -121,7 +121,7 @@ Route WebSocket connections by path:
       my $ws = PAGI::WebSocket->new($scope, $receive, $send);
 
       # Access room parameter
-      my $room = $ws->stash->{'pagi.params'}{room};
+      my $room = $scope->{path_params}{room};
 
       await $ws->accept;
       await $ws->send_text("Joined room: $room");
@@ -159,7 +159,7 @@ Route Server-Sent Events by path:
       my $sse = PAGI::SSE->new($scope, $receive, $send);
 
       # Access channel parameter
-      my $channel = $sse->stash->{'pagi.params'}{channel};
+      my $channel = $scope->{path_params}{channel};
 
       await $sse->start;
       await $sse->send_event("Subscribed to: $channel");
@@ -852,7 +852,7 @@ Use L<PAGI::Middleware::Session> for session management:
       my $res = PAGI::Response->new($scope, $send);
 
       # User data from validated token
-      my $user = $req->stash->{user};
+      my $user = PAGI::Stash->new($req)->get('user');
 
       await $res->json({ user => $user });
   });

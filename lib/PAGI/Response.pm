@@ -174,24 +174,22 @@ httponly, samesite.
 
 Delete a cookie by setting it with Max-Age=0.
 
-=head2 stash
+=head2 scope
 
-    my $user = $res->stash->{user};
+    my $scope = $res->scope;
 
-Returns the per-request stash hashref. This is the same stash accessible via
-C<< $req->stash >>, C<< $ws->stash >>, and C<< $sse->stash >> - it lives in
-C<< $scope->{'pagi.stash'} >> and is shared across all objects in the request
-chain.
+Returns the raw PAGI scope hashref. Useful for constructing helper
+objects like L<PAGI::Stash> and L<PAGI::Session>:
 
-This allows handlers to read values set by middleware:
+    my $stash = PAGI::Stash->new($res);
 
-    async sub handler {
-        my ($self, $req, $res) = @_;
-        my $user = $res->stash->{user};  # Set by auth middleware
-        await $res->json({ greeting => "Hello, $user->{name}" });
-    }
+=head2 Per-Request Shared State
 
-See L<PAGI::Request/stash> for detailed documentation on how stash works.
+See L<PAGI::Stash> for per-request shared state. Construct from a
+Response object or from the shared scope:
+
+    use PAGI::Stash;
+    my $stash = PAGI::Stash->new($res);
 
 =head2 is_sent
 
