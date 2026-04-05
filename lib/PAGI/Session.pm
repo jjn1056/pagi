@@ -12,10 +12,13 @@ PAGI::Session - Standalone helper object for session data access
 
     use PAGI::Session;
 
-    # Construct from raw session data, scope, or request object
-    my $session = PAGI::Session->new($scope->{'pagi.session'});
+    # Construct from scope or request object
     my $session = PAGI::Session->new($scope);
     my $session = PAGI::Session->new($req);  # any object with ->scope
+    my $session = PAGI::Session->new(@_);    # extra args ignored
+
+    # Test convenience — wrap raw data directly
+    my $session = PAGI::Session->from_data({ _id => 'test', user_id => 42 });
 
     # Strict get - dies if key doesn't exist (catches typos)
     my $user_id = $session->get('user_id');
@@ -49,38 +52,53 @@ for keys that may or may not be present.
 
 =head2 new
 
-    my $session = PAGI::Session->new($data_hashref);
     my $session = PAGI::Session->new($scope);
-    my $session = PAGI::Session->new($request);
+    my $session = PAGI::Session->new($request);   # any object with ->scope
+    my $session = PAGI::Session->new(@_);          # extra args ignored
 
-Accepts raw session data (hashref), a PAGI scope (hashref with
-C<pagi.session> key), or any object with a C<scope()> method
-(e.g., L<PAGI::Request>). The helper stores a reference to the
-underlying hash, so mutations via C<set()> and C<delete()> are
-visible to the session middleware.
+Scope-based constructor. Resolves to the C<< $scope->{'pagi.session'} >>
+hashref. Accepts a scope hashref directly, or any blessed object with a
+C<scope()> method. Extra positional arguments (C<$receive>, C<$send>) are
+silently ignored, so you can write C<< PAGI::Session->new(@_) >> in a
+handler.
+
+Dies if the scope does not contain a C<pagi.session> key (session
+middleware must run first).
+
+=head2 from_data
+
+    my $session = PAGI::Session->from_data({ _id => 'test', user_id => 42 });
+
+Test convenience constructor. Wraps a raw hashref directly as the backing
+data, bypassing scope resolution. The returned object behaves identically
+to one created via C<new()>.
 
 =cut
 
 sub new {
-    my ($class, $arg) = @_;
+    my ($class, @args) = @_;
 
-    my $data;
+    my $arg = $args[0];
+
+    # Object with ->scope method (e.g., PAGI::Request, PAGI::SSE)
     if (blessed($arg) && $arg->can('scope')) {
-        # Duck-typed object with scope method (e.g., PAGI::Request, PAGI::SSE)
-        $data = $arg->scope->{'pagi.session'};
-    }
-    elsif (ref $arg eq 'HASH' && exists $arg->{'pagi.session'}) {
-        # Scope hashref
-        $data = $arg->{'pagi.session'};
-    }
-    elsif (ref $arg eq 'HASH') {
-        # Raw session data hashref
-        $data = $arg;
+        my $scope = $arg->scope;
+        die "PAGI::Session requires scope hashref with 'pagi.session' key\n"
+            unless ref $scope eq 'HASH' && exists $scope->{'pagi.session'};
+        return bless { _data => $scope->{'pagi.session'} }, $class;
     }
 
-    die "PAGI::Session requires session data (hashref, scope, or object with ->scope)\n"
-        unless ref $data eq 'HASH';
+    # Scope hashref — must have pagi.session key
+    if (ref $arg eq 'HASH' && exists $arg->{'pagi.session'}) {
+        return bless { _data => $arg->{'pagi.session'} }, $class;
+    }
 
+    die "PAGI::Session requires a scope hashref (with 'pagi.session' key) or object with ->scope method\n";
+}
+
+sub from_data {
+    my ($class, $data) = @_;
+    die "from_data() requires a hashref\n" unless ref $data eq 'HASH';
     return bless { _data => $data }, $class;
 }
 
