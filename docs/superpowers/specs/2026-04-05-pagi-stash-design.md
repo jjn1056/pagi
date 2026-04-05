@@ -92,25 +92,23 @@ same underlying `$scope->{'pagi.stash'}` hashref.
 ```perl
 my $val  = $stash->get('user');                # strict: dies if missing
 my $val  = $stash->get('theme', 'dark');       # permissive: returns default
-my @vals = $stash->get('user', 'role');        # multi-key strict: dies on first missing
 ```
 
-**Single key, no default:** Dies if key does not exist. Error message
-lists available keys if 10 or fewer, otherwise reports the count.
+**One arg:** Dies if key does not exist. Error message lists available
+keys if 10 or fewer, otherwise reports the count.
 
-**Single key with default:** Returns the default if the key is missing.
-The two-argument form is distinguished from multi-key by context: if
-exactly two args are passed, it is **always** treated as
-`($key, $default)`. There is no way to do a strict multi-key get of
-exactly two keys in a single call. Use two separate `get` calls or
-`slice` instead. This is a deliberate trade-off: the `($key, $default)`
-form is far more common than two-key batch gets, and Session already
-established this convention.
+**Two args:** Returns the default if the key is missing (even if the
+default is `undef`).
 
-**Three or more args:** Multi-key strict get. Returns a list of values
-in the order of keys passed. Dies on the first missing key.
+Dies if called with zero or more than two arguments.
 
-This matches PAGI::Session's `get` conventions.
+For multi-key retrieval, use `slice`:
+
+```perl
+my %subset = $stash->slice('user', 'role');    # skip missing
+```
+
+This matches PAGI::Session's `get` signature exactly.
 
 #### set
 
@@ -120,8 +118,8 @@ $stash->set(user => $u, role => 'admin', debug => 1);
 $stash->set(user => $u)->set(role => 'admin');
 ```
 
-Accepts key-value pairs. Dies on odd number of args. Returns `$self`
-for chaining.
+Accepts key-value pairs. Returns `$self` for chaining. No-ops on zero
+args (returns `$self`). Dies on odd number of args.
 
 #### exists
 
@@ -225,7 +223,7 @@ Remove the `stash` method and its design-note comments from:
 
 ### Align PAGI::Session with PAGI::Stash conventions
 
-Four changes to PAGI::Session:
+Six changes to PAGI::Session:
 
 **1. Constructor rewritten to shared convention.** Remove the current
 three-way detection (raw hashref / scope hashref / object). Replace
@@ -258,6 +256,36 @@ sub set { ... return $self; }
 ```
 
 **4. `delete` returns `$self`** for chaining consistency with Stash.
+
+**5. `get` error messages aligned.** Session's strict `get` currently
+dies with `"No session key '$key'"` — no context. Align with Stash's
+pattern: list available user keys (filtered, excluding `_` internals)
+if 10 or fewer, otherwise report the count.
+
+```
+# Before
+No session key 'user'
+
+# After (few keys)
+Session key 'user' does not exist. Available keys: cart_count, role, theme
+
+# After (many keys)
+Session key 'user' does not exist (session has 47 user keys)
+```
+
+**6. `set` validation fixed.** Session currently checks
+`@args > 2 && @args % 2` which misses the single-arg case
+(`$session->set('key')` falls through silently). Fix to properly
+validate: no-op on zero args, die on any odd count.
+
+```perl
+# Before (buggy)
+die "set() requires key => value pairs\n" if @args > 2 && @args % 2;
+
+# After
+return $self unless @args;
+die "set() requires key => value pairs\n" if @args % 2;
+```
 
 ### Update tests
 
@@ -298,6 +326,9 @@ sub set { ... return $self; }
   visible through `get`/`set`).
 - Add tests for Session `set` chaining.
 - Add tests for Session `delete` chaining.
+- Add tests for Session `get` improved error messages (available keys
+  listing, key count for large sessions).
+- Add tests for Session `set` zero-args no-op and single-arg die.
 - Verify `PAGI::Session->new(@_)` works with extra args ignored.
 
 **Integration tests:**
@@ -350,9 +381,8 @@ Both helpers follow the same constructor and accessor conventions:
 | `new($obj_with_scope)` | duck-typed | duck-typed (changed) |
 | `new(@_)` extras ignored | yes | yes (changed) |
 | `from_data($href)` | test convenience | test convenience (changed) |
-| `get($key)` | strict, dies | strict, dies |
+| `get($key)` | strict, dies w/ context | strict, dies w/ context (changed) |
 | `get($key, $default)` | permissive | permissive |
-| `get(@keys)` (3+) | multi-key strict | not yet (could add) |
 | `set(k => v, ...)` | multi-pair, chains | multi-pair, chains (changed) |
 | `exists($key)` | boolean | boolean |
 | `delete(@keys)` | multi-key, chains | multi-key, chains (changed) |
