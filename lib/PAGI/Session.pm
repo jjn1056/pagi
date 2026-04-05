@@ -117,6 +117,21 @@ sub id {
     return $self->{_data}{_id};
 }
 
+=head2 data
+
+    my $href = $session->data;
+    $href->{key} = $value;  # direct mutation
+
+Returns the raw backing hashref. Mutations are visible through
+C<get()>/C<set()> since they operate on the same reference.
+
+=cut
+
+sub data {
+    my ($self) = @_;
+    return $self->{_data};
+}
+
 =head2 get
 
     my $value = $session->get('key');           # dies if missing
@@ -130,10 +145,20 @@ default is C<undef>).
 =cut
 
 sub get {
-    my ($self, $key, @rest) = @_;
+    my ($self, @args) = @_;
+    die "get() requires 1 or 2 arguments\n" if @args == 0 || @args > 2;
+    my ($key, @rest) = @args;
     if (!exists $self->{_data}{$key}) {
         return $rest[0] if @rest;
-        die "No session key '$key'\n";
+        my @user_keys = sort grep { !/^_/ } keys %{$self->{_data}};
+        if (@user_keys <= 10) {
+            die "Session key '$key' does not exist. Available keys: "
+                . join(', ', @user_keys) . "\n";
+        }
+        else {
+            die "Session key '$key' does not exist (session has "
+                . scalar(@user_keys) . " user keys)\n";
+        }
     }
     return $self->{_data}{$key};
 }
@@ -142,23 +167,21 @@ sub get {
 
     $session->set('key', $value);
     $session->set(user_id => 42, role => 'admin', email => 'john@example.com');
+    $session->set('a', 1)->set('b', 2);  # chaining
 
-Sets one or more keys in the session data. With two arguments, sets a
-single key. With more arguments, treats them as key-value pairs.
-Dies if given an odd number of arguments greater than one.
+Sets one or more keys in the session data. Accepts key-value pairs.
+Returns C<$self> for method chaining. With zero arguments, acts as a
+no-op returning C<$self>. Dies if given an odd number of arguments.
 
 =cut
 
 sub set {
     my ($self, @args) = @_;
-    die "set() requires key => value pairs\n" if @args > 2 && @args % 2;
-    if (@args == 2) {
-        $self->{_data}{$args[0]} = $args[1];
-    }
-    else {
-        my %pairs = @args;
-        $self->{_data}{$_} = $pairs{$_} for CORE::keys %pairs;
-    }
+    return $self unless @args;
+    die "set() requires key => value pairs\n" if @args % 2;
+    my %pairs = @args;
+    $self->{_data}{$_} = $pairs{$_} for CORE::keys %pairs;
+    return $self;
 }
 
 =head2 exists
@@ -178,14 +201,17 @@ sub exists {
 
     $session->delete('key');
     $session->delete('k1', 'k2', 'k3');
+    $session->delete('a')->delete('b');  # chaining
 
-Removes one or more keys from the session data.
+Removes one or more keys from the session data. Returns C<$self> for
+method chaining.
 
 =cut
 
 sub delete {
     my ($self, @keys) = @_;
     delete $self->{_data}{$_} for @keys;
+    return $self;
 }
 
 =head2 keys

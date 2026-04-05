@@ -370,6 +370,101 @@ subtest 'new dies on invalid argument' => sub {
     like(dies { PAGI::Session->new() }, qr/requires/, 'dies on no args');
 };
 
+# ===================
+# data method
+# ===================
+
+subtest 'data returns raw backing hashref' => sub {
+    my $data = { _id => 'raw', user_id => 42, role => 'admin' };
+    my $session = PAGI::Session->from_data($data);
+    my $raw = $session->data;
+    is($raw, $data, 'data returns same reference');
+    is($raw->{user_id}, 42, 'can read through raw hashref');
+};
+
+subtest 'data mutations visible through get/set' => sub {
+    my $session = PAGI::Session->from_data({ _id => 'dm' });
+    $session->data->{color} = 'blue';
+    is($session->get('color'), 'blue', 'direct mutation visible via get');
+
+    $session->set('size', 'large');
+    is($session->data->{size}, 'large', 'set visible via data');
+};
+
+# ===================
+# set returns $self (chaining)
+# ===================
+
+subtest 'set returns self for chaining' => sub {
+    my $session = PAGI::Session->from_data({ _id => 'ch' });
+    my $result = $session->set('a', 1);
+    ok($result == $session, 'set returns $self');
+
+    # Chaining
+    $session->set('x', 1)->set('y', 2)->set('z', 3);
+    is($session->get('x'), 1, 'chained x');
+    is($session->get('y'), 2, 'chained y');
+    is($session->get('z'), 3, 'chained z');
+};
+
+# ===================
+# delete returns $self (chaining)
+# ===================
+
+subtest 'delete returns self for chaining' => sub {
+    my $session = PAGI::Session->from_data({ _id => 'dc', a => 1, b => 2, c => 3 });
+    my $result = $session->delete('a');
+    ok($result == $session, 'delete returns $self');
+
+    # Chaining
+    $session->delete('b')->delete('c');
+    ok(!$session->exists('a'), 'a deleted');
+    ok(!$session->exists('b'), 'b deleted');
+    ok(!$session->exists('c'), 'c deleted');
+};
+
+# ===================
+# get error messages aligned with Stash
+# ===================
+
+subtest 'get error lists available keys when few' => sub {
+    my $session = PAGI::Session->from_data({ _id => 's', role => 'admin', theme => 'dark' });
+    my $err = dies { $session->get('missing') };
+    like($err, qr/Session key 'missing' does not exist/, 'error message format');
+    like($err, qr/Available keys:/, 'lists available keys');
+    like($err, qr/role/, 'mentions role');
+    like($err, qr/theme/, 'mentions theme');
+};
+
+subtest 'get error reports count when many keys' => sub {
+    my %data = (_id => 'big');
+    $data{"key_$_"} = $_ for 1..15;
+    my $session = PAGI::Session->from_data(\%data);
+    my $err = dies { $session->get('nope') };
+    like($err, qr/Session key 'nope' does not exist/, 'error message format');
+    like($err, qr/session has 15 user keys/, 'reports count');
+};
+
+# ===================
+# set validation: zero args no-op, single arg dies
+# ===================
+
+subtest 'set with zero args is no-op returning self' => sub {
+    my $session = PAGI::Session->from_data({ _id => 'noop' });
+    my $result = $session->set();
+    ok($result == $session, 'zero-arg set returns $self');
+};
+
+subtest 'set with single arg dies' => sub {
+    my $session = PAGI::Session->from_data({ _id => 'x' });
+    ok(dies { $session->set('lonely') }, 'dies on single arg');
+};
+
+subtest 'set with three args dies' => sub {
+    my $session = PAGI::Session->from_data({ _id => 'x' });
+    ok(dies { $session->set('a', 'b', 'c') }, 'dies on odd args');
+};
+
 # Fake request class for duck-typing test
 package FakeRequest;
 sub scope { shift->{_scope} }
