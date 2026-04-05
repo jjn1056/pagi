@@ -34,17 +34,25 @@ Middleware that shallow-copies scope (`{ %$scope, key => val }`)
 preserves the stash hashref by reference. This is unchanged from
 current behavior.
 
-## PAGI::Stash
+## Shared Constructor Convention
 
-### Constructor
+Both PAGI::Stash and PAGI::Session follow the same two-constructor
+pattern. This eliminates the ambiguity of trying to distinguish a scope
+hashref from a raw data hashref (both are `ref eq 'HASH'`).
+
+### `new` — scope-based (normal usage)
 
 ```perl
-my $stash = PAGI::Stash->new($scope);        # scope hashref
-my $stash = PAGI::Stash->new($req);          # object with ->scope
-my $stash = PAGI::Stash->new(@_);            # in a handler ($scope, $receive, $send)
+my $obj = PAGI::Stash->new($scope);          # scope hashref
+my $obj = PAGI::Stash->new($req);            # object with ->scope
+my $obj = PAGI::Stash->new(@_);              # in a handler ($scope, $receive, $send)
+
+my $obj = PAGI::Session->new($scope);        # scope hashref
+my $obj = PAGI::Session->new($req);          # object with ->scope
+my $obj = PAGI::Session->new(@_);            # in a handler
 ```
 
-Smart detection with extra args ignored:
+Resolution rules (same for both classes):
 
 1. If the first arg is blessed and has a `scope` method, use
    `$arg->scope` to get the scope hashref.
@@ -53,9 +61,29 @@ Smart detection with extra args ignored:
    ignored.
 4. Dies if no valid scope hashref can be resolved.
 
-Each call creates a fresh wrapper object. No singleton caching. All
-instances sharing the same scope point at the same underlying
-`$scope->{'pagi.stash'}` hashref.
+Stash accesses `$scope->{'pagi.stash'}` (lazily created).
+Session accesses `$scope->{'pagi.session'}` (must exist, set by
+middleware).
+
+### `from_data` — raw data (testing convenience)
+
+```perl
+my $stash   = PAGI::Stash->from_data({ user => 'alice' });
+my $session = PAGI::Session->from_data({ user_id => 42 });
+```
+
+Wraps a raw hashref directly as the backing data, bypassing scope
+resolution. Intended for unit tests where constructing a full scope is
+unnecessary overhead. The returned object behaves identically — all
+methods work the same.
+
+## PAGI::Stash
+
+### Instance Lifecycle
+
+Each call to `new` or `from_data` creates a fresh wrapper object. No
+singleton caching. All instances sharing the same scope point at the
+same underlying `$scope->{'pagi.stash'}` hashref.
 
 ### Methods
 
@@ -192,7 +220,18 @@ Remove the `stash` method and its design-note comments from:
 
 ### Align PAGI::Session with PAGI::Stash conventions
 
-**`set` returns `$self`** for chaining consistency:
+Three changes to PAGI::Session:
+
+**1. Constructor rewritten to shared convention.** Remove the current
+three-way detection (raw hashref / scope hashref / object). Replace
+with the shared `new` (scope-based) + `from_data` (raw hashref)
+pattern described in "Shared Constructor Convention" above.
+
+The current raw-data path (`PAGI::Session->new({})`) is replaced by
+`PAGI::Session->from_data({})`. The `new` constructor now always
+resolves to scope and accesses `$scope->{'pagi.session'}`.
+
+**2. `set` returns `$self`** for chaining consistency:
 
 ```perl
 # Before
@@ -202,51 +241,102 @@ sub set { ... }  # returns nothing
 sub set { ... return $self; }
 ```
 
-**Constructor tolerates extra args** so `PAGI::Session->new(@_)` works
-in handlers (matching Stash ergonomics). Extra args beyond the first
-are silently ignored.
+**3. `delete` returns `$self`** for chaining consistency with Stash.
 
 ### Update tests
 
-- Remove or rewrite tests that call `$req->stash`, `$res->stash`,
-  `$ws->stash`, `$sse->stash`.
-- Add comprehensive PAGI::Stash test suite covering: constructor
-  variants, get strict/permissive/multi-key, set single/multi/chaining,
-  exists, delete, keys, slice, data, error messages, scope sharing
-  across multiple Stash instances.
-- Add tests for new `scope` accessor on Request and Response.
-- Update Session tests to verify `set` chaining.
+**PAGI::Stash (new):**
+
+- Add comprehensive test suite (`t/stash/` or `t/stash.t`) covering:
+  constructor via scope hashref, constructor via object with `->scope`,
+  constructor via `@_` with extras ignored, `from_data`, get
+  strict/permissive/multi-key, set single/multi/chaining, exists,
+  delete, keys, slice, data, error messages (few keys vs many keys),
+  scope sharing across multiple Stash instances, independence across
+  different scopes.
+
+**Stash removal from helpers:**
+
+- `t/request-stash.t` — rewrite to test PAGI::Stash constructed from
+  Request (via `->scope`), or remove if fully superseded by new Stash
+  tests.
+- `t/request/06-stash.t` — same treatment.
+- `t/websocket/11-stash-and-callbacks.t` — rewrite stash subtests to
+  use PAGI::Stash; callback subtests are unaffected.
+- `t/websocket-state.t`, `t/sse-router-support.t`,
+  `t/response-convenience.t`, `t/request-state.t` — audit for any
+  `->stash` calls and update.
+
+**Request/Response `scope` accessor:**
+
+- Add tests for `$req->scope` and `$res->scope` returning the scope
+  hashref.
+
+**PAGI::Session changes:**
+
+- `t/middleware/session/helper.t` — ~25 calls to
+  `PAGI::Session->new({...})` must change to
+  `PAGI::Session->from_data({...})`. The scope-based and object-based
+  constructor tests remain on `new`.
+- Add tests for Session `set` chaining.
+- Add tests for Session `delete` chaining.
+- Verify `PAGI::Session->new(@_)` works with extra args ignored.
+
+**Integration tests:**
+
+- `t/endpoint-router.t`, `t/sse/10-integration.t` — audit for
+  `->stash` usage and update to use PAGI::Stash.
 
 ### Update documentation
 
-Remove `stash` references from POD in:
+**Remove `stash` accessor references from POD in:**
 
-- PAGI::Request
-- PAGI::Response
-- PAGI::WebSocket
-- PAGI::SSE
-- PAGI::Endpoint::Router
-- PAGI::Endpoint::WebSocket
-- PAGI::Endpoint::SSE
-- PAGI::Cookbook
-- PAGI::Tutorial
-- PAGI (main module)
+- `PAGI::Request` — remove `stash` method docs and stash examples
+- `PAGI::Response` — remove `stash` method docs
+- `PAGI::WebSocket` — remove `stash` method docs, update feature list
+- `PAGI::SSE` — remove `stash` method docs, update feature list
+- `PAGI::Endpoint::Router` — rewrite "stash" section to reference
+  PAGI::Stash, update middleware/handler examples
+- `PAGI::Endpoint::WebSocket` — update stash examples
+- `PAGI::Endpoint::SSE` — update stash examples
+- `PAGI::Cookbook` — update all `->stash` usage examples
+- `PAGI::Tutorial` — update `$scope->{'pagi.stash'}` examples to show
+  PAGI::Stash helper usage
+- `PAGI` (main module) — update "state/stash accessors" references
 
-Add cross-references to PAGI::Stash where stash was previously
-documented.
+**Add cross-references** to PAGI::Stash where stash was previously
+documented. Each removed `stash` section should note:
+"See L<PAGI::Stash> for per-request shared state."
+
+**Update PAGI::Session POD:**
+
+- Rewrite SYNOPSIS to show `new($scope)` and `from_data({})` forms
+- Update CONSTRUCTOR section to document both `new` and `from_data`
+- Remove the raw-hashref constructor form from examples
+- Document `set` and `delete` chaining in method docs
+
+**Update PAGI::Middleware::Session POD:**
+
+- Update PAGI::Session helper section to show `new($scope)` form
+- Update inline example (`$s = PAGI::Session->new($scope->{'pagi.session'})`)
+  to `$s = PAGI::Session->new($scope)`
 
 ## API Comparison: Stash vs Session
 
-Both helpers follow the same conventions:
+Both helpers follow the same constructor and accessor conventions:
 
-| Method | Stash | Session |
-|--------|-------|---------|
+| Feature | Stash | Session |
+|---------|-------|---------|
+| `new($scope)` | scope-based | scope-based (changed) |
+| `new($obj_with_scope)` | duck-typed | duck-typed (changed) |
+| `new(@_)` extras ignored | yes | yes (changed) |
+| `from_data($href)` | test convenience | test convenience (changed) |
 | `get($key)` | strict, dies | strict, dies |
 | `get($key, $default)` | permissive | permissive |
 | `get(@keys)` (3+) | multi-key strict | not yet (could add) |
 | `set(k => v, ...)` | multi-pair, chains | multi-pair, chains (changed) |
 | `exists($key)` | boolean | boolean |
-| `delete(@keys)` | multi-key, chains | multi-key |
+| `delete(@keys)` | multi-key, chains | multi-key, chains (changed) |
 | `keys` | all keys | user keys (filters `_` prefix) |
 | `slice(@keys)` | skip missing | skip missing |
 | `data` | raw hashref | n/a (internal `_data`) |
