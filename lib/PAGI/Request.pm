@@ -361,6 +361,8 @@ sub path_param {
     return $params->{$name};
 }
 
+sub scope { shift->{scope} }
+
 # Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
 #
 # DESIGN NOTE: Stash is intentionally scope-based, not object-based. When middleware

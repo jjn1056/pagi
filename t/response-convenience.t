@@ -15,6 +15,12 @@ my $send = sub {
 
 my $scope = { type => 'http' };
 
+subtest 'scope accessor returns scope hashref' => sub {
+    my $test_scope = { type => 'http' };
+    my $res = PAGI::Response->new($test_scope, $send);
+    ok($res->scope == $test_scope, 'scope returns same hashref');
+};
+
 subtest 'stash accessor' => sub {
     my $scope_with_stash = {
         type => 'http',

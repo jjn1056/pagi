@@ -813,6 +813,8 @@ sub has_content_type {
     return exists $self->{_content_type} ? 1 : 0;
 }
 
+sub scope { shift->{scope} }
+
 # Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
 #
 # DESIGN NOTE: Stash is intentionally scope-based, not object-based. When middleware

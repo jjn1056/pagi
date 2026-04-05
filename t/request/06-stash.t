@@ -6,6 +6,12 @@ use Test2::V0;
 use lib 'lib';
 use PAGI::Request;
 
+subtest 'scope accessor returns scope hashref' => sub {
+    my $scope = { type => 'http', method => 'GET', headers => [] };
+    my $req = PAGI::Request->new($scope);
+    ok($req->scope == $scope, 'scope returns same hashref');
+};
+
 subtest 'stash basic usage' => sub {
     my $scope = { type => 'http', method => 'GET', headers => [] };
     my $req = PAGI::Request->new($scope);
