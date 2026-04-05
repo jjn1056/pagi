@@ -166,9 +166,14 @@ $href->{user} = $val;         # direct mutation
 ```
 
 Returns the raw `$scope->{'pagi.stash'}` hashref (lazily created).
-This is the escape hatch for code that wants unguarded hashref access.
-Mutations to this hashref are visible through `get`/`set`/etc. since
-they operate on the same reference.
+Provides direct hashref access in the style Perl web developers expect
+from Catalyst/Mojolicious. Mutations to this hashref are visible
+through `get`/`set`/etc. since they operate on the same reference.
+
+Session gets the same method — `$session->data` returns the raw
+`$scope->{'pagi.session'}` hashref. This is consistent and no more
+dangerous than `$scope->{'pagi.session'}` which is already documented
+and accessible.
 
 ### Error Messages
 
@@ -220,7 +225,7 @@ Remove the `stash` method and its design-note comments from:
 
 ### Align PAGI::Session with PAGI::Stash conventions
 
-Three changes to PAGI::Session:
+Four changes to PAGI::Session:
 
 **1. Constructor rewritten to shared convention.** Remove the current
 three-way detection (raw hashref / scope hashref / object). Replace
@@ -231,7 +236,18 @@ The current raw-data path (`PAGI::Session->new({})`) is replaced by
 `PAGI::Session->from_data({})`. The `new` constructor now always
 resolves to scope and accesses `$scope->{'pagi.session'}`.
 
-**2. `set` returns `$self`** for chaining consistency:
+**2. Add `data` method.** Returns the raw `$scope->{'pagi.session'}`
+hashref, matching Stash's `data` method. Provides direct hashref
+access for users who want `$session->data->{key}` style.
+
+```perl
+sub data {
+    my ($self) = @_;
+    return $self->{_data};
+}
+```
+
+**3. `set` returns `$self`** for chaining consistency:
 
 ```perl
 # Before
@@ -241,7 +257,7 @@ sub set { ... }  # returns nothing
 sub set { ... return $self; }
 ```
 
-**3. `delete` returns `$self`** for chaining consistency with Stash.
+**4. `delete` returns `$self`** for chaining consistency with Stash.
 
 ### Update tests
 
@@ -278,6 +294,8 @@ sub set { ... return $self; }
   `PAGI::Session->new({...})` must change to
   `PAGI::Session->from_data({...})`. The scope-based and object-based
   constructor tests remain on `new`.
+- Add tests for Session `data` method (returns raw hashref, mutations
+  visible through `get`/`set`).
 - Add tests for Session `set` chaining.
 - Add tests for Session `delete` chaining.
 - Verify `PAGI::Session->new(@_)` works with extra args ignored.
@@ -313,6 +331,7 @@ documented. Each removed `stash` section should note:
 - Rewrite SYNOPSIS to show `new($scope)` and `from_data({})` forms
 - Update CONSTRUCTOR section to document both `new` and `from_data`
 - Remove the raw-hashref constructor form from examples
+- Document new `data` method
 - Document `set` and `delete` chaining in method docs
 
 **Update PAGI::Middleware::Session POD:**
@@ -339,7 +358,7 @@ Both helpers follow the same constructor and accessor conventions:
 | `delete(@keys)` | multi-key, chains | multi-key, chains (changed) |
 | `keys` | all keys | user keys (filters `_` prefix) |
 | `slice(@keys)` | skip missing | skip missing |
-| `data` | raw hashref | n/a (internal `_data`) |
+| `data` | raw hashref | raw hashref (added) |
 | `id` | n/a | session ID |
 | `regenerate` | n/a | session lifecycle |
 | `destroy` | n/a | session lifecycle |
@@ -349,12 +368,42 @@ Both helpers follow the same constructor and accessor conventions:
 
 PAGI::Context will compose Stash, Session, and other helpers into a
 single framework-level object. This is out of scope for this spec but
-informs the design: Stash must work standalone and compose cleanly.
+informs the design: Stash and Session must work standalone and compose
+cleanly.
+
+Context's `stash` method will provide Catalyst/Mojolicious-style
+ergonomics by overloading based on arguments:
 
 ```perl
 # Future (not part of this work)
 my $ctx = PAGI::Context->new(@_);
-$ctx->stash->get('user');
-$ctx->session->get('user_id');
-$ctx->request->method;
+
+# Hashref access — no args returns raw hashref (like Catalyst)
+$ctx->stash->{user} = $val;
+
+# Setter — key-value args (like Mojo)
+$ctx->stash(user => $val, role => 'admin');
+
+# Getter — single string arg (like Mojo)
+my $user = $ctx->stash('user');
+
+# Access the underlying PAGI::Stash object for strict methods
+$ctx->stash_object->get('user');       # dies if missing
+$ctx->stash_object->set(user => $u);   # chaining, validation
 ```
+
+Context's `stash()` delegates to the PAGI::Stash object's `data`
+method for raw hashref access. The structured API (`get`/`set`/etc.)
+lives on the Stash object.
+
+**Important:** PAGI::Stash is fully usable without Context. Users who
+only want stash functionality get a complete, ergonomic API:
+
+```perl
+my $stash = PAGI::Stash->new(@_);
+$stash->data->{user} = $val;          # direct hashref (Perl convention)
+$stash->set(user => $val);            # structured, chainable
+$stash->get('user');                   # strict, catches typos
+```
+
+Context adds Catalyst/Mojo sugar on top but is not required.
