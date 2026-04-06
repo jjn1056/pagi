@@ -583,6 +583,14 @@ Override to define routes. The C<$r> parameter is a route builder.
 
 Mount another PAGI app at a prefix. L<PAGI::Stash> data flows through to mounted apps.
 
+=head2 route_table
+
+    my $table = $router->route_table;
+
+Returns an arrayref of route information hashrefs from the internal
+L<PAGI::App::Router>. See L<PAGI::App::Router/route_table> for the
+entry format.
+
 =head1 SEE ALSO
 
 L<PAGI::Context>, L<PAGI::Stash>, L<PAGI::App::Router>, L<PAGI::Request>,

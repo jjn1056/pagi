@@ -925,6 +925,15 @@ and 405 for unmatched HTTP methods. Lifespan events are automatically ignored.
 
 Register a route for the given HTTP method. Returns C<$self> for chaining.
 
+=head2 HEAD Request Handling
+
+HEAD requests are automatically matched to GET routes. When a HEAD request
+matches a GET route, the response body is stripped (replaced with empty
+string) while preserving all headers including Content-Length, per RFC 9110.
+
+Routes registered explicitly with C<head()> are NOT wrapped — those handlers
+are responsible for their own response.
+
 =head2 any
 
     $router->any('/health' => $app);                              # all methods
@@ -1257,6 +1266,30 @@ Croaks if the route name is unknown or if a required path parameter is missing.
     my $routes = $router->named_routes;
 
 Returns a hashref of all named routes for inspection.
+
+=head2 route_table
+
+    my $table = $router->route_table;
+
+Returns an arrayref of hashrefs describing every registered route and mount.
+Useful for debugging, testing, and building tooling around the router.
+
+Each entry contains:
+
+    {
+        type        => 'http',              # 'http', 'websocket', 'sse', or 'mount'
+        method      => 'GET',               # HTTP routes only (string, arrayref, or '*')
+        path        => '/users/:id',        # the route pattern as registered
+        name        => 'get_user',          # undef if not named
+        params      => ['id'],              # parameter names from the path
+        constraints => { id => qr/\d+/ },   # merged inline and chained constraints
+        middleware  => 2,                    # count of middleware on this route
+    }
+
+Mount entries use C<type =E<gt> 'mount'> and do not include a C<method> key.
+
+Routes are ordered: HTTP routes first, then WebSocket, SSE, and mounts last.
+Within each type, routes appear in registration order.
 
 =head2 as
 
