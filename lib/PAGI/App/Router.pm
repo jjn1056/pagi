@@ -443,6 +443,87 @@ sub named_routes {
     return { %{$self->{_named_routes}} };
 }
 
+sub route_table {
+    my ($self) = @_;
+
+    my @table;
+
+    # HTTP routes
+    for my $route (@{$self->{routes}}) {
+        my %constraints;
+        for my $c (@{$route->{constraints} // []}) {
+            $constraints{$c->[0]} = qr/$c->[1]/;
+        }
+        for my $c (@{$route->{_user_constraints} // []}) {
+            $constraints{$c->[0]} = $c->[1];
+        }
+
+        push @table, {
+            type        => 'http',
+            method      => $route->{method},
+            path        => $route->{path},
+            name        => $route->{name},
+            params      => [@{$route->{names}}],
+            constraints => \%constraints,
+            middleware  => scalar @{$route->{middleware} // []},
+        };
+    }
+
+    # WebSocket routes
+    for my $route (@{$self->{websocket_routes}}) {
+        my %constraints;
+        for my $c (@{$route->{constraints} // []}) {
+            $constraints{$c->[0]} = qr/$c->[1]/;
+        }
+        for my $c (@{$route->{_user_constraints} // []}) {
+            $constraints{$c->[0]} = $c->[1];
+        }
+
+        push @table, {
+            type        => 'websocket',
+            path        => $route->{path},
+            name        => $route->{name},
+            params      => [@{$route->{names}}],
+            constraints => \%constraints,
+            middleware  => scalar @{$route->{middleware} // []},
+        };
+    }
+
+    # SSE routes
+    for my $route (@{$self->{sse_routes}}) {
+        my %constraints;
+        for my $c (@{$route->{constraints} // []}) {
+            $constraints{$c->[0]} = qr/$c->[1]/;
+        }
+        for my $c (@{$route->{_user_constraints} // []}) {
+            $constraints{$c->[0]} = $c->[1];
+        }
+
+        push @table, {
+            type        => 'sse',
+            path        => $route->{path},
+            name        => $route->{name},
+            params      => [@{$route->{names}}],
+            constraints => \%constraints,
+            middleware  => scalar @{$route->{middleware} // []},
+        };
+    }
+
+    # Mounts
+    for my $m (@{$self->{mounts}}) {
+        push @table, {
+            type        => 'mount',
+            path        => $m->{prefix},
+            name        => undef,
+            params      => [],
+            constraints => {},
+            middleware  => scalar @{$m->{middleware} // []},
+        };
+    }
+
+    return \@table;
+}
+
 sub uri_for {
     my ($self, $name, $path_params, $query_params) = @_;
 
