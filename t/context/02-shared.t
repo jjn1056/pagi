@@ -46,6 +46,17 @@ subtest 'session dies without middleware' => sub {
     ok(dies { $ctx->session }, 'session dies when pagi.session missing');
 };
 
+subtest 'has_session' => sub {
+    my $ctx_no = PAGI::Context->new({ type => 'http', headers => [] }, sub {}, sub {});
+    ok(!$ctx_no->has_session, 'has_session false without middleware');
+
+    my $ctx_yes = PAGI::Context->new(
+        { type => 'http', headers => [], 'pagi.session' => { _id => 'x' } },
+        sub {}, sub {},
+    );
+    ok($ctx_yes->has_session, 'has_session true with session data');
+};
+
 subtest 'state accessor' => sub {
     my $scope = {
         type    => 'http',

@@ -261,6 +261,15 @@ Lazy-constructed and cached.
 
 Returns a L<PAGI::Session> wrapping C<< $scope->{'pagi.session'} >>.
 Lazy-constructed and cached. Dies if session middleware has not run.
+Use C<has_session> to check availability first.
+
+=head2 has_session
+
+    if ($ctx->has_session) {
+        my $user_id = $ctx->session->get('user_id');
+    }
+
+Returns true if session middleware has populated C<< $scope->{'pagi.session'} >>.
 
 =head2 state
 
@@ -284,6 +293,11 @@ sub session {
         require PAGI::Session;
         PAGI::Session->new($self->{scope});
     };
+}
+
+sub has_session {
+    my ($self) = @_;
+    return exists $self->{scope}{'pagi.session'} ? 1 : 0;
 }
 
 sub state {
