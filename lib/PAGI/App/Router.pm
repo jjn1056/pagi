@@ -736,6 +736,15 @@ sub to_app {
         my @method_matches;
         my $get_fallback;  # For HEAD requests: save GET match as fallback
 
+        # RFC 9110: HEAD responses must have no body — wrapper strips body events
+        my $head_send = sub {
+            my ($event) = @_;
+            if ($event->{type} eq 'http.response.body') {
+                $event = { %$event, body => '' };
+            }
+            $send->($event);
+        };
+
         for my $route (@routes) {
             if (my @captures = ($path =~ $route->{regex})) {
 
@@ -773,16 +782,7 @@ sub to_app {
                     };
 
                     # RFC 9110: HEAD responses must have no body
-                    my $actual_send = $send;
-                    if ($method eq 'HEAD' && $route->{method} ne 'HEAD') {
-                        $actual_send = sub {
-                            my ($event) = @_;
-                            if ($event->{type} eq 'http.response.body') {
-                                $event = { %$event, body => '' };
-                            }
-                            $send->($event);
-                        };
-                    }
+                    my $actual_send = ($method eq 'HEAD' && !$is_exact) ? $head_send : $send;
 
                     await $route->{_handler}->($new_scope, $receive, $actual_send);
                     return;
@@ -805,16 +805,7 @@ sub to_app {
                 'pagi.router' => { route => $route->{path} },
             };
 
-            # Wrap $send to strip body from GET handler response
-            my $actual_send = sub {
-                my ($event) = @_;
-                if ($event->{type} eq 'http.response.body') {
-                    $event = { %$event, body => '' };
-                }
-                $send->($event);
-            };
-
-            await $route->{_handler}->($new_scope, $receive, $actual_send);
+            await $route->{_handler}->($new_scope, $receive, $head_send);
             return;
         }
 
