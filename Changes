@@ -1,5 +1,41 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001022 - 2026-04-06
+  [New Features — PAGI::Context]
+  - New PAGI::Context factory + base class with protocol-specific subclasses
+    (PAGI::Context::HTTP, PAGI::Context::WebSocket, PAGI::Context::SSE)
+  - Factory inspects $scope->{type} and returns the appropriate subclass
+  - Extensible via overridable _type_map and _resolve_class methods
+  - Shared methods on all context types: scope accessors, stash, session,
+    state, connection state, header lookup, path_params/path_param
+  - has_session method for safe session availability checks
+  - HTTP context: lazy request/response accessors, method accessor
+  - WebSocket context: lazy websocket accessor
+  - SSE context: lazy sse accessor
+  - Shortcut aliases: req (request), resp (response), ws (websocket)
+  - receive/send raw protocol escape hatches with POD examples
+
+  [Breaking Changes — Endpoint Handler Signatures]
+  - PAGI::Endpoint::Router now injects $ctx instead of ($req, $res) / ($ws) / ($sse)
+  - PAGI::Endpoint::HTTP verb methods now receive ($self, $ctx) instead of ($self, $req, $res)
+  - PAGI::Endpoint::WebSocket callbacks now receive ($self, $ctx, ...) instead of ($self, $ws, ...)
+  - PAGI::Endpoint::SSE callbacks now receive ($self, $ctx, ...) instead of ($self, $sse, ...)
+  - Endpoint middleware receives ($self, $ctx, $next) instead of ($self, $req, $res, $next)
+  - request_class/response_class/websocket_class/sse_class replaced by context_class
+  - context_class method on all endpoint types (defaults to 'PAGI::Context')
+
+  [New Features — PAGI::Stash]
+  - New PAGI::Stash standalone helper for per-request shared state
+  - Strict get() that dies on missing keys with helpful error messages
+  - Scope-based constructor works with any object that has ->scope method
+  - Removed stash method from protocol helpers in favor of PAGI::Stash
+
+  [Improvements — PAGI::Session]
+  - Constructor refactored: new (scope-only) and from_data (raw hashref)
+  - Added data method for raw hashref access
+  - Chaining support on set/delete methods
+  - Aligned error messages with PAGI::Stash conventions
+
 0.001021 - 2026-04-01
   [New Features — Unix Domain Socket Support (Experimental)]
   - Unix domain socket listening via `socket` constructor option or --socket CLI flag
