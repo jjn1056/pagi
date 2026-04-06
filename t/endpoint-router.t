@@ -42,14 +42,14 @@ subtest 'HTTP route with method handler' => sub {
         }
 
         async sub say_hello {
-            my ($self, $req, $res) = @_;
-            await $res->text('Hello!');
+            my ($self, $ctx) = @_;
+            await $ctx->response->text('Hello!');
         }
 
         async sub get_user {
-            my ($self, $req, $res) = @_;
-            my $id = $req->path_param('id');
-            await $res->json({ id => $id });
+            my ($self, $ctx) = @_;
+            my $id = $ctx->request->path_param('id');
+            await $ctx->response->json({ id => $id });
         }
     }
 
@@ -106,9 +106,9 @@ subtest 'WebSocket route with method handler' => sub {
         }
 
         async sub echo_handler {
-            my ($self, $ws) = @_;
+            my ($self, $ctx) = @_;
 
-            # Check we got a PAGI::WebSocket
+            my $ws = $ctx->websocket;
             die "Expected PAGI::WebSocket" unless $ws->isa('PAGI::WebSocket');
 
             # Check route params work
@@ -150,8 +150,9 @@ subtest 'SSE route with method handler' => sub {
         }
 
         async sub events_handler {
-            my ($self, $sse) = @_;
+            my ($self, $ctx) = @_;
 
+            my $sse = $ctx->sse;
             die "Expected PAGI::SSE" unless $sse->isa('PAGI::SSE');
 
             my $channel = $sse->path_param('channel');
@@ -197,12 +198,12 @@ subtest 'state accessible in handlers' => sub {
         }
 
         async sub test_handler {
-            my ($self, $req, $res) = @_;
+            my ($self, $ctx) = @_;
             # Access state via $self->state
             $state_value = $self->state->{db};
-            # Also accessible via $req->state
-            $req_state_value = $req->state->{db};
-            await $res->text('ok');
+            # Also accessible via $ctx->state
+            $req_state_value = $ctx->state->{db};
+            await $ctx->response->text('ok');
         }
     }
 
@@ -217,7 +218,7 @@ subtest 'state accessible in handlers' => sub {
                      $receive, $send);
 
         is($TestApp::State::state_value, 'connected', 'state accessible via $self->state');
-        is($TestApp::State::req_state_value, 'connected', 'state accessible via $req->state');
+        is($TestApp::State::req_state_value, 'connected', 'state accessible via $ctx->state');
     })->()->get;
 };
 
@@ -238,33 +239,33 @@ subtest 'middleware as method names' => sub {
         }
 
         async sub require_auth {
-            my ($self, $req, $res, $next) = @_;
+            my ($self, $ctx, $next) = @_;
             $auth_called = 1;
 
-            my $token = $req->header('authorization');
+            my $token = $ctx->header('authorization');
             if ($token && $token eq 'Bearer valid') {
-                PAGI::Stash->new($req)->set(user => { id => 1 });
+                $ctx->stash->set(user => { id => 1 });
                 await $next->();
             } else {
-                await $res->status(401)->json({ error => 'Unauthorized' });
+                await $ctx->response->status(401)->json({ error => 'Unauthorized' });
             }
         }
 
         async sub log_request {
-            my ($self, $req, $res, $next) = @_;
+            my ($self, $ctx, $next) = @_;
             $log_called = 1;
             await $next->();
         }
 
         async sub public_handler {
-            my ($self, $req, $res) = @_;
-            await $res->text('public');
+            my ($self, $ctx) = @_;
+            await $ctx->response->text('public');
         }
 
         async sub protected_handler {
-            my ($self, $req, $res) = @_;
-            my $user = PAGI::Stash->new($req)->get('user');
-            await $res->json({ user_id => $user->{id} });
+            my ($self, $ctx) = @_;
+            my $user = $ctx->stash->get('user');
+            await $ctx->response->json({ user_id => $user->{id} });
         }
     }
 
@@ -352,15 +353,15 @@ subtest 'stash flows through middleware to handler' => sub {
         }
 
         async sub set_user {
-            my ($self, $req, $res, $next) = @_;
-            PAGI::Stash->new($req)->set(user => 'alice');
+            my ($self, $ctx, $next) = @_;
+            $ctx->stash->set(user => 'alice');
             await $next->();
         }
 
         async sub check_user {
-            my ($self, $req, $res) = @_;
-            $handler_saw_user = PAGI::Stash->new($req)->get('user');
-            await $res->text('ok');
+            my ($self, $ctx) = @_;
+            $handler_saw_user = $ctx->stash->get('user');
+            await $ctx->response->text('ok');
         }
     }
 
