@@ -24,6 +24,12 @@ Inherits all shared methods from L<PAGI::Context>.
 
 Returns a L<PAGI::WebSocket> instance. Lazy-constructed and cached.
 
+=head2 ws
+
+    my $ws = $ctx->ws;
+
+Alias for C<websocket>.
+
 =cut
 
 sub websocket {
@@ -33,6 +39,8 @@ sub websocket {
         PAGI::WebSocket->new($self->{scope}, $self->{receive}, $self->{send});
     };
 }
+
+sub ws { shift->websocket }
 
 1;
 

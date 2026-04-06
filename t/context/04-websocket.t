@@ -14,6 +14,7 @@ subtest 'WebSocket context has correct methods' => sub {
     );
 
     ok($ctx->can('websocket'), 'has websocket');
+    ok($ctx->can('ws'), 'has ws alias');
     ok(!$ctx->can('request'), 'no request method');
     ok(!$ctx->can('response'), 'no response method');
     ok(!$ctx->can('method'), 'no method method');
@@ -40,6 +41,9 @@ subtest 'websocket accessor' => sub {
     # Cached
     my $ws2 = $ctx->websocket;
     ok($ws == $ws2, 'websocket is cached');
+
+    # Alias
+    ok($ctx->ws == $ws, 'ws alias returns same object');
 };
 
 subtest 'shared methods work on WebSocket context' => sub {

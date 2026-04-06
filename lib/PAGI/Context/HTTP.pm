@@ -37,6 +37,18 @@ Returns a L<PAGI::Response> instance. Lazy-constructed and cached.
 
 Returns the HTTP method from the scope.
 
+=head2 req
+
+    my $req = $ctx->req;
+
+Alias for C<request>.
+
+=head2 resp
+
+    my $res = $ctx->resp;
+
+Alias for C<response>.
+
 =cut
 
 sub request {
@@ -56,6 +68,9 @@ sub response {
 }
 
 sub method { shift->{scope}{method} }
+
+sub req  { shift->request }
+sub resp { shift->response }
 
 1;
 

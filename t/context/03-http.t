@@ -16,6 +16,8 @@ subtest 'HTTP context has correct methods' => sub {
     ok($ctx->can('request'), 'has request');
     ok($ctx->can('response'), 'has response');
     ok($ctx->can('method'), 'has method');
+    ok($ctx->can('req'), 'has req alias');
+    ok($ctx->can('resp'), 'has resp alias');
 
     # Should NOT have protocol-specific methods from other subclasses
     ok(!$ctx->can('websocket'), 'no websocket method');
@@ -88,6 +90,19 @@ subtest 'request and response share scope' => sub {
 
     my $req_stash = PAGI::Stash->new($ctx->request);
     is($req_stash->get('user'), 'alice', 'stash flows from context to request');
+};
+
+subtest 'req and resp aliases' => sub {
+    my $scope = {
+        type    => 'http',
+        method  => 'GET',
+        path    => '/test',
+        headers => [],
+    };
+    my $ctx = PAGI::Context->new($scope, sub {}, sub { Future->done });
+
+    ok($ctx->req == $ctx->request, 'req returns same object as request');
+    ok($ctx->resp == $ctx->response, 'resp returns same object as response');
 };
 
 subtest 'full HTTP round-trip' => sub {
