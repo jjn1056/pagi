@@ -12,20 +12,22 @@ PAGI::Stash - Standalone helper for per-request shared state
 
     use PAGI::Stash;
 
-    # In a handler
-    my $stash = PAGI::Stash->new(@_);    # ($scope, $receive, $send)
-    $stash->set(user => $current_user, role => 'admin');
-    my $user = $stash->get('user');       # strict: dies if missing
-    my $theme = $stash->get('theme', 'dark');  # permissive: returns default
+    # Middleware sets shared state for downstream handlers
+    my $auth_middleware = sub ($app) {
+        async sub ($scope, $receive, $send) {
+            my $stash = PAGI::Stash->new($scope);
+            $stash->set(user => authenticate($scope));
+            await $app->($scope, $receive, $send);
+        };
+    };
 
-    # Direct hashref access (Perl convention)
-    $stash->data->{user} = $val;
-
-    # From a Request/Response/WebSocket/SSE object
-    my $stash = PAGI::Stash->new($req);
-
-    # For testing
-    my $stash = PAGI::Stash->from_data({ user => 'alice' });
+    # Handler reads what middleware stored
+    async sub ($scope, $receive, $send) {
+        my $stash = PAGI::Stash->new($scope);
+        my $user  = $stash->get('user');           # dies if missing
+        my $theme = $stash->get('theme', 'dark');  # default if missing
+        ...
+    };
 
 =head1 DESCRIPTION
 
