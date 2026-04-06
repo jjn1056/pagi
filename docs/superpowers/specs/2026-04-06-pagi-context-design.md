@@ -368,16 +368,6 @@ sub auth_check ($self, $req, $res, $next) { ... }
 sub auth_check ($self, $ctx, $next) { ... }
 ```
 
-### Backward Compatibility
-
-The `Endpoint::Router` switches to the `($ctx)` signature with no
-backward-compat shim. Existing endpoint subclasses must update their handler
-signatures from `($req, $res)` / `($ws)` / `($sse)` to `($ctx)`. This is
-a clean break at the Endpoint layer only.
-
-Raw PAGI apps using `($scope, $receive, $send)` directly are unaffected.
-Direct use of `PAGI::Request`, `PAGI::Response`, etc. continues to work.
-
 ## App Framework Extension Example
 
 An application framework building on PAGI can subclass Context to provide
