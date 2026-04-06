@@ -5,19 +5,16 @@ use warnings;
 
 use Future::AsyncAwait;
 use Carp qw(croak);
-use Module::Load qw(load);
-
 
 # Factory class method - override in subclass for customization
-sub websocket_class { 'PAGI::WebSocket' }
+sub context_class { 'PAGI::Context' }
 
 # Encoding: 'text', 'bytes', or 'json'
 sub encoding { 'text' }
 
 sub to_app {
     my ($class) = @_;
-    my $ws_class = $class->websocket_class;
-    load($ws_class);
+    my $context_class = $class->context_class;
 
     return async sub {
         my ($scope, $receive, $send) = @_;
@@ -25,10 +22,11 @@ sub to_app {
         my $type = $scope->{type} // '';
         croak "Expected websocket scope, got '$type'" unless $type eq 'websocket';
 
+        require PAGI::Context;
         my $endpoint = $class->new;
-        my $ws = $ws_class->new($scope, $receive, $send);
+        my $ctx = $context_class->new($scope, $receive, $send);
 
-        await $endpoint->handle($ws, $scope, $send);
+        await $endpoint->handle($ctx);
     };
 }
 
@@ -38,11 +36,12 @@ sub new {
 }
 
 async sub handle {
-    my ($self, $ws, $scope, $send) = @_;
+    my ($self, $ctx) = @_;
+    my $ws = $ctx->websocket;
 
     # Call on_connect if defined
     if ($self->can('on_connect')) {
-        await $self->on_connect($ws);
+        await $self->on_connect($ctx);
     } else {
         # Default: accept the connection
         await $ws->accept;
@@ -52,7 +51,7 @@ async sub handle {
     if ($self->can('on_disconnect')) {
         $ws->on_close(sub {
             my ($code, $reason) = @_;
-            $self->on_disconnect($ws, $code, $reason);
+            $self->on_disconnect($ctx, $code, $reason);
         });
     }
 
@@ -64,18 +63,18 @@ async sub handle {
             if ($encoding eq 'json') {
                 await $ws->each_json(async sub {
                     my ($data) = @_;
-                    await $self->on_receive($ws, $data);
+                    await $self->on_receive($ctx, $data);
                 });
             } elsif ($encoding eq 'bytes') {
                 await $ws->each_bytes(async sub {
                     my ($data) = @_;
-                    await $self->on_receive($ws, $data);
+                    await $self->on_receive($ctx, $data);
                 });
             } else {
                 # Default: text
                 await $ws->each_text(async sub {
                     my ($data) = @_;
-                    await $self->on_receive($ws, $data);
+                    await $self->on_receive($ctx, $data);
                 });
             }
         } else {
@@ -103,21 +102,19 @@ PAGI::Endpoint::WebSocket - Class-based WebSocket endpoint handler
     sub encoding { 'json' }  # or 'text', 'bytes'
 
     async sub on_connect {
-        my ($self, $ws) = @_;
-        await $ws->accept;
-        await $ws->send_json({ type => 'welcome' });
+        my ($self, $ctx) = @_;
+        await $ctx->websocket->accept;
+        await $ctx->websocket->send_json({ type => 'welcome' });
     }
 
     async sub on_receive {
-        my ($self, $ws, $data) = @_;
-        # $data is auto-decoded from JSON (per encoding above)
-        # For sending, explicitly choose: send_json, send_text, send_bytes
-        await $ws->send_json({ type => 'echo', message => $data });
+        my ($self, $ctx, $data) = @_;
+        await $ctx->websocket->send_json({ type => 'echo', message => $data });
     }
 
     sub on_disconnect {
-        my ($self, $ws, $code) = @_;
-        cleanup_user(PAGI::Stash->new($ws)->get('user_id'));
+        my ($self, $ctx, $code) = @_;
+        cleanup_user($ctx->stash->get('user_id'));
     }
 
     # Use with PAGI server
@@ -133,18 +130,18 @@ approach to handling WebSocket connections with lifecycle hooks.
 =head2 on_connect
 
     async sub on_connect {
-        my ($self, $ws) = @_;
-        await $ws->accept;
+        my ($self, $ctx) = @_;
+        await $ctx->websocket->accept;
     }
 
-Called when a client connects. You should call C<< $ws->accept >>
+Called when a client connects. You should call C<< $ctx->websocket->accept >>
 to accept the connection. If not defined, connection is auto-accepted.
 
 =head2 on_receive
 
     async sub on_receive {
-        my ($self, $ws, $data) = @_;
-        await $ws->send_text("Got: $data");
+        my ($self, $ctx, $data) = @_;
+        await $ctx->websocket->send_text("Got: $data");
     }
 
 Called for each message received. The C<$data> format depends on
@@ -153,7 +150,7 @@ the C<encoding()> setting.
 =head2 on_disconnect
 
     sub on_disconnect {
-        my ($self, $ws, $code, $reason) = @_;
+        my ($self, $ctx, $code, $reason) = @_;
         # Cleanup
     }
 
@@ -187,13 +184,13 @@ B<Example - JSON encoding:>
     sub encoding { 'json' }  # Incoming messages auto-decoded from JSON
 
     async sub on_receive {
-        my ($self, $ws, $data) = @_;
+        my ($self, $ctx, $data) = @_;
         # $data is already a Perl hashref/arrayref (decoded from JSON)
         my $name = $data->{name};
 
         # For sending, you still explicitly choose the method:
-        await $ws->send_json({ greeting => "Hello, $name" });
-        await $ws->send_text("Raw text message");
+        await $ctx->websocket->send_json({ greeting => "Hello, $name" });
+        await $ctx->websocket->send_text("Raw text message");
     }
 
 B<Example - Text encoding:>
@@ -201,19 +198,19 @@ B<Example - Text encoding:>
     sub encoding { 'text' }  # Incoming messages as raw strings
 
     async sub on_receive {
-        my ($self, $ws, $text) = @_;
+        my ($self, $ctx, $text) = @_;
         # $text is a plain string, decode JSON yourself if needed
         my $data = JSON::MaybeXS::decode_json($text);
-        await $ws->send_text("Echo: $text");
+        await $ctx->websocket->send_text("Echo: $text");
     }
 
 This follows the same pattern as L<Starlette's WebSocketEndpoint|https://www.starlette.io/endpoints/>.
 
-=head2 websocket_class
+=head2 context_class
 
-    sub websocket_class { 'PAGI::WebSocket' }
+    sub context_class { 'PAGI::Context' }
 
-Override to use a custom WebSocket wrapper.
+Override to use a custom context class.
 
 =head2 to_app
 
@@ -223,6 +220,7 @@ Returns a PAGI-compatible async coderef.
 
 =head1 SEE ALSO
 
-L<PAGI::WebSocket>, L<PAGI::Endpoint::HTTP>, L<PAGI::Endpoint::SSE>
+L<PAGI::Context>, L<PAGI::WebSocket>, L<PAGI::Endpoint::HTTP>,
+L<PAGI::Endpoint::SSE>
 
 =cut
