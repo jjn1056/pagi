@@ -760,7 +760,19 @@ sub to_app {
                         'pagi.router' => { route => $route->{path} },
                     };
 
-                    await $route->{_handler}->($new_scope, $receive, $send);
+                    # RFC 9110: HEAD responses must have no body
+                    my $actual_send = $send;
+                    if ($method eq 'HEAD' && $route->{method} ne 'HEAD') {
+                        $actual_send = sub {
+                            my ($event) = @_;
+                            if ($event->{type} eq 'http.response.body') {
+                                $event = { %$event, body => '' };
+                            }
+                            $send->($event);
+                        };
+                    }
+
+                    await $route->{_handler}->($new_scope, $receive, $actual_send);
                     return;
                 }
 
