@@ -174,13 +174,39 @@ sub header {
 
     my $receive = $ctx->receive;
 
-Returns the raw C<$receive> coderef.
+Returns the raw C<$receive> coderef. Calling it returns a L<Future> that
+resolves to the next protocol event hashref from the client.
+
+    # Read an HTTP request body event
+    my $event = await $ctx->receive->();
+    # $event = { type => 'http.request', body => '...' }
+
+    # Read a WebSocket message
+    my $msg = await $ctx->receive->();
+    # $msg = { type => 'websocket.receive', text => 'hello' }
+
+Most users should prefer the protocol helpers (C<< $ctx->request >>,
+C<< $ctx->websocket >>, C<< $ctx->sse >>) which handle the event
+protocol internally. Use C<receive> only for raw protocol access.
 
 =head2 send
 
     my $send = $ctx->send;
 
-Returns the raw C<$send> coderef.
+Returns the raw C<$send> coderef. Calling it with an event hashref
+returns a L<Future> that resolves when the event has been sent.
+
+    # Send an HTTP response (two events: start + body)
+    await $ctx->send->({ type => 'http.response.start', status => 200,
+                         headers => [['content-type', 'text/plain']] });
+    await $ctx->send->({ type => 'http.response.body', body => 'Hello' });
+
+    # Accept a WebSocket connection
+    await $ctx->send->({ type => 'websocket.accept' });
+
+Most users should prefer the protocol helpers (C<< $ctx->response >>,
+C<< $ctx->websocket >>, C<< $ctx->sse >>) which build and send events
+for you. Use C<send> only for raw protocol access.
 
 =cut
 
