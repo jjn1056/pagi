@@ -7,55 +7,7 @@ use Future;
 
 use lib 'lib';
 use PAGI::Endpoint::SSE;
-
-# Mock SSE
-package MockSSE {
-    use Future::AsyncAwait;
-
-    sub new {
-        my ($class) = @_;
-        bless {
-            sent => [],
-            started => 0,
-            keepalive => 0,
-            closed => 0,
-        }, $class;
-    }
-    async sub start {
-        my ($self) = @_;
-        $self->{started} = 1;
-        return $self;
-    }
-    sub keepalive {
-        my ($self, $interval) = @_;
-        $self->{keepalive} = $interval;
-        return $self;
-    }
-    sub on_close {
-        my ($self, $cb) = @_;
-        $self->{on_close_cb} = $cb;
-        return $self;
-    }
-    async sub send_event {
-        my ($self, %opts) = @_;
-        push @{$self->{sent}}, \%opts;
-    }
-    async sub run {
-        my ($self) = @_;
-        # Simulate disconnect
-        if ($self->{on_close_cb}) {
-            $self->{on_close_cb}->();
-        }
-    }
-    sub sent {
-        my ($self) = @_;
-        $self->{sent};
-    }
-    sub last_event_id {
-        my ($self) = @_;
-        undef;
-    }
-}
+use PAGI::Context;
 
 package MetricsEndpoint {
     use parent 'PAGI::Endpoint::SSE';
@@ -66,50 +18,82 @@ package MetricsEndpoint {
     our @log;
 
     async sub on_connect {
-        my ($self, $sse) = @_;
+        my ($self, $ctx) = @_;
         push @log, 'connect';
-        await $sse->send_event(event => 'connected', data => { ok => 1 });
+        await $ctx->sse->send_event(event => 'connected', data => { ok => 1 });
     }
 
     sub on_disconnect {
-        my ($self, $sse) = @_;
+        my ($self, $ctx) = @_;
         push @log, 'disconnect';
     }
 }
 
-subtest 'lifecycle methods are called' => sub {
+subtest 'lifecycle via to_app' => sub {
     @MetricsEndpoint::log = ();
 
-    my $sse = MockSSE->new;
-    my $endpoint = MetricsEndpoint->new;
+    my $app = MetricsEndpoint->to_app;
+    my @sent;
+    my $send = sub { push @sent, $_[0]; Future->done };
+    my $receive = sub { Future->done({ type => 'sse.disconnect' }) };
 
-    $endpoint->handle($sse)->get;
+    my $scope = {
+        type    => 'sse',
+        path    => '/events',
+        headers => [],
+    };
+
+    $app->($scope, $receive, $send)->get;
 
     is($MetricsEndpoint::log[0], 'connect', 'on_connect called');
     is($MetricsEndpoint::log[1], 'disconnect', 'on_disconnect called');
 };
 
-subtest 'keepalive is configured' => sub {
-    my $sse = MockSSE->new;
-    my $endpoint = MetricsEndpoint->new;
+subtest 'events are sent' => sub {
+    @MetricsEndpoint::log = ();
 
-    $endpoint->handle($sse)->get;
+    my $app = MetricsEndpoint->to_app;
+    my @sent;
+    my $send = sub { push @sent, $_[0]; Future->done };
+    my $receive = sub { Future->done({ type => 'sse.disconnect' }) };
 
-    is($sse->{keepalive}, 25, 'keepalive interval set');
+    $app->({ type => 'sse', path => '/events', headers => [] },
+           $receive, $send)->get;
+
+    ok(scalar @sent > 0, 'events were sent');
 };
 
-subtest 'events are sent' => sub {
-    my $sse = MockSSE->new;
-    my $endpoint = MetricsEndpoint->new;
+subtest 'context_class defaults to PAGI::Context' => sub {
+    is(MetricsEndpoint->context_class, 'PAGI::Context', 'default context class');
+};
 
-    $endpoint->handle($sse)->get;
+subtest 'on_connect receives PAGI::Context::SSE' => sub {
+    {
+        package CheckSSECtx;
+        use parent 'PAGI::Endpoint::SSE';
+        use Future::AsyncAwait;
 
-    is($sse->sent->[0]{event}, 'connected', 'event sent');
+        our $ctx_class;
+
+        async sub on_connect {
+            my ($self, $ctx) = @_;
+            $ctx_class = ref($ctx);
+        }
+    }
+
+    my $app = CheckSSECtx->to_app;
+    my @sent;
+    my $send = sub { push @sent, $_[0]; Future->done };
+    my $receive = sub { Future->done({ type => 'sse.disconnect' }) };
+
+    $app->({ type => 'sse', path => '/events', headers => [] },
+           $receive, $send)->get;
+
+    is($CheckSSECtx::ctx_class, 'PAGI::Context::SSE', 'ctx is SSE context');
 };
 
 subtest 'to_app returns PAGI-compatible coderef' => sub {
     my $app = MetricsEndpoint->to_app;
-
     ref_ok($app, 'CODE', 'to_app returns coderef');
 };
 
