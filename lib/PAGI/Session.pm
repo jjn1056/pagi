@@ -12,10 +12,13 @@ PAGI::Session - Standalone helper object for session data access
 
     use PAGI::Session;
 
-    # Construct from raw session data, scope, or request object
-    my $session = PAGI::Session->new($scope->{'pagi.session'});
+    # Construct from scope or request object
     my $session = PAGI::Session->new($scope);
     my $session = PAGI::Session->new($req);  # any object with ->scope
+    my $session = PAGI::Session->new(@_);    # extra args ignored
+
+    # Test convenience — wrap raw data directly
+    my $session = PAGI::Session->from_data({ _id => 'test', user_id => 42 });
 
     # Strict get - dies if key doesn't exist (catches typos)
     my $user_id = $session->get('user_id');
@@ -49,38 +52,53 @@ for keys that may or may not be present.
 
 =head2 new
 
-    my $session = PAGI::Session->new($data_hashref);
     my $session = PAGI::Session->new($scope);
-    my $session = PAGI::Session->new($request);
+    my $session = PAGI::Session->new($request);   # any object with ->scope
+    my $session = PAGI::Session->new(@_);          # extra args ignored
 
-Accepts raw session data (hashref), a PAGI scope (hashref with
-C<pagi.session> key), or any object with a C<scope()> method
-(e.g., L<PAGI::Request>). The helper stores a reference to the
-underlying hash, so mutations via C<set()> and C<delete()> are
-visible to the session middleware.
+Scope-based constructor. Resolves to the C<< $scope->{'pagi.session'} >>
+hashref. Accepts a scope hashref directly, or any blessed object with a
+C<scope()> method. Extra positional arguments (C<$receive>, C<$send>) are
+silently ignored, so you can write C<< PAGI::Session->new(@_) >> in a
+handler.
+
+Dies if the scope does not contain a C<pagi.session> key (session
+middleware must run first).
+
+=head2 from_data
+
+    my $session = PAGI::Session->from_data({ _id => 'test', user_id => 42 });
+
+Test convenience constructor. Wraps a raw hashref directly as the backing
+data, bypassing scope resolution. The returned object behaves identically
+to one created via C<new()>.
 
 =cut
 
 sub new {
-    my ($class, $arg) = @_;
+    my ($class, @args) = @_;
 
-    my $data;
+    my $arg = $args[0];
+
+    # Object with ->scope method (e.g., PAGI::Request, PAGI::SSE)
     if (blessed($arg) && $arg->can('scope')) {
-        # Duck-typed object with scope method (e.g., PAGI::Request, PAGI::SSE)
-        $data = $arg->scope->{'pagi.session'};
-    }
-    elsif (ref $arg eq 'HASH' && exists $arg->{'pagi.session'}) {
-        # Scope hashref
-        $data = $arg->{'pagi.session'};
-    }
-    elsif (ref $arg eq 'HASH') {
-        # Raw session data hashref
-        $data = $arg;
+        my $scope = $arg->scope;
+        die "PAGI::Session requires scope hashref with 'pagi.session' key\n"
+            unless ref $scope eq 'HASH' && exists $scope->{'pagi.session'};
+        return bless { _data => $scope->{'pagi.session'} }, $class;
     }
 
-    die "PAGI::Session requires session data (hashref, scope, or object with ->scope)\n"
-        unless ref $data eq 'HASH';
+    # Scope hashref — must have pagi.session key
+    if (ref $arg eq 'HASH' && exists $arg->{'pagi.session'}) {
+        return bless { _data => $arg->{'pagi.session'} }, $class;
+    }
 
+    die "PAGI::Session requires a scope hashref (with 'pagi.session' key) or object with ->scope method\n";
+}
+
+sub from_data {
+    my ($class, $data) = @_;
+    die "from_data() requires a hashref\n" unless ref $data eq 'HASH';
     return bless { _data => $data }, $class;
 }
 
@@ -99,6 +117,21 @@ sub id {
     return $self->{_data}{_id};
 }
 
+=head2 data
+
+    my $href = $session->data;
+    $href->{key} = $value;  # direct mutation
+
+Returns the raw backing hashref. Mutations are visible through
+C<get()>/C<set()> since they operate on the same reference.
+
+=cut
+
+sub data {
+    my ($self) = @_;
+    return $self->{_data};
+}
+
 =head2 get
 
     my $value = $session->get('key');           # dies if missing
@@ -112,10 +145,20 @@ default is C<undef>).
 =cut
 
 sub get {
-    my ($self, $key, @rest) = @_;
+    my ($self, @args) = @_;
+    die "get() requires 1 or 2 arguments\n" if @args == 0 || @args > 2;
+    my ($key, @rest) = @args;
     if (!exists $self->{_data}{$key}) {
         return $rest[0] if @rest;
-        die "No session key '$key'\n";
+        my @user_keys = sort grep { !/^_/ } keys %{$self->{_data}};
+        if (@user_keys <= 10) {
+            die "Session key '$key' does not exist. Available keys: "
+                . join(', ', @user_keys) . "\n";
+        }
+        else {
+            die "Session key '$key' does not exist (session has "
+                . scalar(@user_keys) . " user keys)\n";
+        }
     }
     return $self->{_data}{$key};
 }
@@ -124,23 +167,21 @@ sub get {
 
     $session->set('key', $value);
     $session->set(user_id => 42, role => 'admin', email => 'john@example.com');
+    $session->set('a', 1)->set('b', 2);  # chaining
 
-Sets one or more keys in the session data. With two arguments, sets a
-single key. With more arguments, treats them as key-value pairs.
-Dies if given an odd number of arguments greater than one.
+Sets one or more keys in the session data. Accepts key-value pairs.
+Returns C<$self> for method chaining. With zero arguments, acts as a
+no-op returning C<$self>. Dies if given an odd number of arguments.
 
 =cut
 
 sub set {
     my ($self, @args) = @_;
-    die "set() requires key => value pairs\n" if @args > 2 && @args % 2;
-    if (@args == 2) {
-        $self->{_data}{$args[0]} = $args[1];
-    }
-    else {
-        my %pairs = @args;
-        $self->{_data}{$_} = $pairs{$_} for CORE::keys %pairs;
-    }
+    return $self unless @args;
+    die "set() requires key => value pairs\n" if @args % 2;
+    my %pairs = @args;
+    $self->{_data}{$_} = $pairs{$_} for CORE::keys %pairs;
+    return $self;
 }
 
 =head2 exists
@@ -160,14 +201,17 @@ sub exists {
 
     $session->delete('key');
     $session->delete('k1', 'k2', 'k3');
+    $session->delete('a')->delete('b');  # chaining
 
-Removes one or more keys from the session data.
+Removes one or more keys from the session data. Returns C<$self> for
+method chaining.
 
 =cut
 
 sub delete {
     my ($self, @keys) = @_;
     delete $self->{_data}{$_} for @keys;
+    return $self;
 }
 
 =head2 keys

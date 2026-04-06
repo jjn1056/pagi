@@ -4,6 +4,7 @@ use Test2::V0;
 use Future::AsyncAwait;
 
 use PAGI::Request;
+use PAGI::Stash;
 
 my $receive = sub { Future->done({ type => 'http.request', body => '' }) };
 
@@ -17,13 +18,14 @@ subtest 'stash accessor' => sub {
     };
 
     my $req = PAGI::Request->new($scope, $receive);
+    my $stash = PAGI::Stash->new($req);
 
     # Default stash is empty hashref
-    is($req->stash, {}, 'stash returns empty hashref by default');
+    is($stash->data, {}, 'stash returns empty hashref by default');
 
     # Can set values
-    $req->stash->{user} = { id => 1, name => 'test' };
-    is($req->stash->{user}{id}, 1, 'stash values persist');
+    $stash->set(user => { id => 1, name => 'test' });
+    is($stash->get('user')->{id}, 1, 'stash values persist');
 };
 
 subtest 'stash lives in scope' => sub {
@@ -36,12 +38,12 @@ subtest 'stash lives in scope' => sub {
     };
 
     my $req = PAGI::Request->new($scope, $receive);
+    my $stash = PAGI::Stash->new($req);
 
-    $req->stash->{db} = 'connection';
-    $req->stash->{config} = { debug => 1 };
+    $stash->set(db => 'connection', config => { debug => 1 });
 
-    is($req->stash->{db}, 'connection', 'stash sets values');
-    is($req->stash->{config}{debug}, 1, 'nested values work');
+    is($stash->get('db'), 'connection', 'stash sets values');
+    is($stash->get('config')->{debug}, 1, 'nested values work');
     is($scope->{'pagi.stash'}{db}, 'connection', 'stash lives in scope');
 };
 
@@ -56,11 +58,11 @@ subtest 'stash shared via scope enables middleware data sharing' => sub {
 
     # Simulate middleware setting a value
     my $req1 = PAGI::Request->new($scope, $receive);
-    $req1->stash->{user} = { id => 42, role => 'admin' };
+    PAGI::Stash->new($req1)->set(user => { id => 42, role => 'admin' });
 
     # Simulate handler reading middleware-set value (same scope)
     my $req2 = PAGI::Request->new($scope, $receive);
-    my $user = $req2->stash->{user};
+    my $user = PAGI::Stash->new($req2)->get('user');
 
     is($user->{id}, 42, 'handler sees middleware-set value');
     is($user->{role}, 'admin', 'full structure accessible');

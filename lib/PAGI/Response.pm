@@ -174,24 +174,22 @@ httponly, samesite.
 
 Delete a cookie by setting it with Max-Age=0.
 
-=head2 stash
+=head2 scope
 
-    my $user = $res->stash->{user};
+    my $scope = $res->scope;
 
-Returns the per-request stash hashref. This is the same stash accessible via
-C<< $req->stash >>, C<< $ws->stash >>, and C<< $sse->stash >> - it lives in
-C<< $scope->{'pagi.stash'} >> and is shared across all objects in the request
-chain.
+Returns the raw PAGI scope hashref. Useful for constructing helper
+objects like L<PAGI::Stash> and L<PAGI::Session>:
 
-This allows handlers to read values set by middleware:
+    my $stash = PAGI::Stash->new($res);
 
-    async sub handler {
-        my ($self, $req, $res) = @_;
-        my $user = $res->stash->{user};  # Set by auth middleware
-        await $res->json({ greeting => "Hello, $user->{name}" });
-    }
+=head2 Per-Request Shared State
 
-See L<PAGI::Request/stash> for detailed documentation on how stash works.
+See L<PAGI::Stash> for per-request shared state. Construct from a
+Response object or from the shared scope:
+
+    use PAGI::Stash;
+    my $stash = PAGI::Stash->new($res);
 
 =head2 is_sent
 
@@ -813,22 +811,8 @@ sub has_content_type {
     return exists $self->{_content_type} ? 1 : 0;
 }
 
-# Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
-#
-# DESIGN NOTE: Stash is intentionally scope-based, not object-based. When middleware
-# creates a shallow copy of scope ({ %$scope, key => val }), the inner 'pagi.stash'
-# hashref is preserved by reference. This means:
-#   1. All Request/Response objects created from the same scope chain share stash
-#   2. Middleware modifications to stash are visible to downstream handlers
-#   3. The stash "transcends" the middleware chain via scope, not via object identity
-#
-# This addresses a potential concern about Request objects being ephemeral - stash
-# works correctly because it lives in scope, which IS shared across the chain.
-sub stash {
-    my ($self) = @_;
-    return {} unless $self->{scope};
-    return $self->{scope}{'pagi.stash'} //= {};
-}
+sub scope { shift->{scope} }
+
 
 sub is_sent {
     my ($self) = @_;

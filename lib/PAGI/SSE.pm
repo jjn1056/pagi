@@ -126,12 +126,6 @@ sub http_version { shift->{scope}{http_version} // '1.1' }
 sub client       { shift->{scope}{client} }
 sub server       { shift->{scope}{server} }
 
-# Per-connection storage - lives in scope, shared across Request/Response/WebSocket/SSE
-# See PAGI::Request for detailed design notes on why stash is scope-based.
-sub stash {
-    my ($self) = @_;
-    return $self->{scope}{'pagi.stash'} //= {};
-}
 
 # Application state (injected by PAGI::Lifespan, read-only)
 sub state {
@@ -632,10 +626,14 @@ PAGI::SSE - Convenience wrapper for PAGI Server-Sent Events connections
         # Enable keepalive for proxy compatibility
         await $sse->keepalive(25);
 
+        # Per-connection state
+        use PAGI::Stash;
+        my $stash = PAGI::Stash->new($sse);
+
         # Cleanup on disconnect - with reason for logging
         $sse->on_close(sub {
             my ($sse, $reason) = @_;
-            remove_subscriber($sse->stash->{sub_id});
+            remove_subscriber($stash->get('sub_id'));
             log_disconnect($reason);  # 'client_closed', 'write_error', etc.
         });
 
@@ -648,10 +646,10 @@ PAGI::SSE - Convenience wrapper for PAGI Server-Sent Events connections
         }
 
         # Subscribe to updates
-        $sse->stash->{sub_id} = add_subscriber(sub {
+        $stash->set(sub_id => add_subscriber(sub {
             my ($event) = @_;
             $sse->try_send_json($event);
-        });
+        }));
 
         # Wait for disconnect
         await $sse->run;
@@ -679,7 +677,7 @@ boilerplate and provides:
 
 =item * Iteration helper (each)
 
-=item * Per-connection storage (stash)
+=item * Per-connection storage (via L<PAGI::Stash>)
 
 =back
 
@@ -728,17 +726,14 @@ the same scope.
 Returns the Last-Event-ID header sent by reconnecting clients.
 Use this to replay missed events.
 
-=head2 stash
+=head2 Per-Connection Shared State
 
-    $sse->stash->{client_id} = $id;
-    my $user = $sse->stash->{user};
+See L<PAGI::Stash> for per-connection shared state:
 
-Returns the per-request stash hashref. The stash lives in the request
-scope and is shared across all middleware, handlers, and subrouters
-processing the same request.
+    use PAGI::Stash;
+    my $stash = PAGI::Stash->new($sse);
 
-B<Note:> For worker-level state (database connections, config), use
-C<< $sse->state >> to access application state injected by PAGI::Lifespan.
+=cut
 
 =head2 path_param
 

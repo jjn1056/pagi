@@ -4,6 +4,7 @@ use Test2::V0;
 use Future::AsyncAwait;
 
 use PAGI::SSE;
+use PAGI::Stash;
 
 my @sent;
 my $send = sub {
@@ -28,11 +29,12 @@ subtest 'stash accessor' => sub {
         headers => [],
     };
     my $sse = PAGI::SSE->new($scope, $receive, $send);
+    my $stash = PAGI::Stash->new($sse);
 
-    is($sse->stash, {}, 'stash returns empty hashref by default');
+    is($stash->data, {}, 'stash returns empty hashref by default');
 
-    $sse->stash->{counter} = 0;
-    is($sse->stash->{counter}, 0, 'stash values persist');
+    $stash->set(counter => 0);
+    is($stash->get('counter'), 0, 'stash values persist');
 };
 
 subtest 'stash lives in scope' => sub {
@@ -42,9 +44,10 @@ subtest 'stash lives in scope' => sub {
         headers => [],
     };
     my $sse = PAGI::SSE->new($scope, $receive, $send);
+    my $stash = PAGI::Stash->new($sse);
 
-    $sse->stash->{metrics} = { requests => 100 };
-    is($sse->stash->{metrics}{requests}, 100, 'stash persists values');
+    $stash->set(metrics => { requests => 100 });
+    is($stash->get('metrics')->{requests}, 100, 'stash persists values');
     is($scope->{'pagi.stash'}{metrics}{requests}, 100, 'stash lives in scope');
 };
 

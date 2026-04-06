@@ -361,21 +361,8 @@ sub path_param {
     return $params->{$name};
 }
 
-# Per-request storage - lives in scope, shared across Request/Response/WebSocket/SSE
-#
-# DESIGN NOTE: Stash is intentionally scope-based, not object-based. When middleware
-# creates a shallow copy of scope ({ %$scope, key => val }), the inner 'pagi.stash'
-# hashref is preserved by reference. This means:
-#   1. All Request/Response objects created from the same scope chain share stash
-#   2. Middleware modifications to stash are visible to downstream handlers
-#   3. The stash "transcends" the middleware chain via scope, not via object identity
-#
-# This addresses a potential concern about Request objects being ephemeral - stash
-# works correctly because it lives in scope, which IS shared across the chain.
-sub stash {
-    my $self = shift;
-    return $self->{scope}{'pagi.stash'} //= {};
-}
+sub scope { shift->{scope} }
+
 
 # Application state (injected by PAGI::Lifespan, read-only)
 sub state {
@@ -659,8 +646,10 @@ PAGI::Request - Convenience wrapper for PAGI request scope
         my $token = $req->bearer_token;
         my ($user, $pass) = $req->basic_auth;
 
-        # Per-request storage
-        $req->stash->{user} = $current_user;
+        # Per-request shared state
+        use PAGI::Stash;
+        my $stash = PAGI::Stash->new($req);
+        $stash->set(user => $current_user);
     }
 
 =head1 DESCRIPTION
@@ -1166,62 +1155,25 @@ Extract Bearer token from Authorization header.
 
 Decode Basic auth credentials.
 
-=head1 STASH
+=head2 scope
 
-=head2 stash
+    my $scope = $req->scope;
 
-    $req->stash->{user} = $current_user;
-    my $user = $req->stash->{user};
+Returns the raw PAGI scope hashref. Useful for constructing helper
+objects like L<PAGI::Stash> and L<PAGI::Session>:
 
-Returns the per-request stash hashref for sharing data between middleware
-and handlers. The stash is also accessible via C<< $res->stash >>,
-C<< $ws->stash >>, and C<< $sse->stash >> for consistency.
+    my $stash = PAGI::Stash->new($req);
 
-=head3 How Stash Works
+=head2 Per-Request Shared State
 
-The stash lives in C<< $scope->{'pagi.stash'} >>, not in the Request object
-itself. This is an important design choice:
+See L<PAGI::Stash> for per-request shared state between middleware
+and handlers. Construct from a Request object or scope:
 
-=over 4
+    use PAGI::Stash;
+    my $stash = PAGI::Stash->new($req);
+    $stash->set(user => $current_user);
 
-=item * B<Scope-based, not object-based> - Request/Response objects are
-ephemeral (each middleware/handler may create its own), but stash persists
-because it lives in scope.
-
-=item * B<Survives shallow copies> - When middleware creates a modified scope
-(C<< { %$scope, key => val } >>), the stash hashref is preserved by reference.
-All objects in the chain see the same stash.
-
-=item * B<Shared across the chain> - Middleware sets values, handlers read them,
-subrouters inherit them. The stash "flows through" via scope sharing.
-
-=back
-
-=head3 Example
-
-    # In auth middleware
-    async sub require_auth {
-        my ($self, $req, $res, $next) = @_;
-        $req->stash->{user} = verify_token($req->bearer_token);
-        await $next->();
-    }
-
-    # In handler - sees the user (even though it's a different $req object)
-    async sub get_profile {
-        my ($self, $req, $res) = @_;
-        my $user = $req->stash->{user};  # Set by middleware
-        await $res->json($user);
-    }
-
-    # Can also read via Response
-    async sub another_handler {
-        my ($self, $req, $res) = @_;
-        my $user = $res->stash->{user};  # Same stash!
-        await $res->json($user);
-    }
-
-B<Note:> For worker-level state (database connections, config), see
-the C<state> method below.
+=cut
 
 =head2 state
 
@@ -1232,7 +1184,7 @@ Returns the application state hashref injected by L<PAGI::Lifespan>.
 This contains worker-level shared state like database connections
 and configuration. Returns empty hashref if no state was injected.
 
-B<Key differences from stash:>
+B<Key differences from L<PAGI::Stash>:>
 
 =over 4
 
@@ -1240,12 +1192,12 @@ B<Key differences from stash:>
 
 =item * C<state> is shared across all requests in a worker
 
-=item * C<stash> is per-request, writable by middleware/handlers
+=item * L<PAGI::Stash> is per-request, writable by middleware/handlers
 
 =back
 
 =head1 SEE ALSO
 
-L<PAGI::Request::Upload>, L<PAGI::Request::BodyStream>, L<Hash::MultiValue>
+L<PAGI::Stash>, L<PAGI::Request::Upload>, L<PAGI::Request::BodyStream>, L<Hash::MultiValue>
 
 =cut

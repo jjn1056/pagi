@@ -45,7 +45,7 @@ PAGI::Middleware::Session - Session management middleware with pluggable State/S
 
         # Or use the PAGI::Session helper
         use PAGI::Session;
-        my $s = PAGI::Session->new($scope->{'pagi.session'});
+        my $s = PAGI::Session->new($scope);
         $s->set('user_id', 123);
         my $uid = $s->get('user_id');  # dies if key missing
     }
@@ -172,11 +172,11 @@ and C<delete($id)> (returning Futures) can be used.
 
 =head1 PAGI::Session HELPER
 
-L<PAGI::Session> is a standalone helper object that wraps the raw session
-data hashref with a clean accessor interface.
+L<PAGI::Session> is a standalone helper object that wraps the session
+data with a clean accessor interface.
 
     use PAGI::Session;
-    my $session = PAGI::Session->new($scope->{'pagi.session'});
+    my $session = PAGI::Session->new($scope);
 
 Key methods:
 

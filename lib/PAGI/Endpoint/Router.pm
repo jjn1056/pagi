@@ -344,14 +344,14 @@ PAGI::Endpoint::Router - Class-based router with wrapped handlers
     async sub require_auth {
         my ($self, $req, $res, $next) = @_;
         my $user = verify_token($req->bearer_token);
-        $req->stash->{user} = $user;  # Flows to handler and subrouters!
+        PAGI::Stash->new($req)->set(user => $user);  # Flows to handler and subrouters!
         await $next->();
     }
 
     async sub list_users {
         my ($self, $req, $res) = @_;
-        my $db = $self->state->{db};           # Worker state via $self
-        my $user = $req->stash->{user};        # Set by middleware
+        my $db = $self->state->{db};                     # Worker state via $self
+        my $user = PAGI::Stash->new($req)->get('user');  # Set by middleware
         my $users = $db->get_users;
         await $res->json($users);
     }
@@ -396,8 +396,8 @@ to building PAGI applications. It combines:
 =item * B<Wrapped objects> - Handlers receive C<PAGI::Request>/C<PAGI::Response>
 for HTTP, C<PAGI::WebSocket> for WebSocket, C<PAGI::SSE> for SSE
 
-=item * B<Middleware as methods> - Define middleware that can set stash values
-visible to all downstream handlers
+=item * B<Middleware as methods> - Define middleware that can set L<PAGI::Stash>
+values visible to all downstream handlers
 
 =item * B<Worker-local state> - C<$self-E<gt>state> hashref for storing resources
 like database connections, accessible via C<$req-E<gt>state>
@@ -445,19 +445,20 @@ use external storage:
 
 =back
 
-=head2 stash - Per-Request Shared Scratch Space
+=head2 Per-Request Shared State (PAGI::Stash)
 
-    $req->stash->{user} = $current_user;
+    use PAGI::Stash;
+    PAGI::Stash->new($req)->set(user => $current_user);
 
-The C<stash> lives in the request scope and is shared across ALL
-handlers, middleware, and subrouters processing the same request.
+L<PAGI::Stash> provides per-request shared state that is accessible across
+all handlers, middleware, and subrouters processing the same request.
 
     Middleware A
-        sets $req->stash->{user}
+        sets PAGI::Stash->new($req)->set(user => ...)
             Middleware B
-                reads $req->stash->{user}
+                reads PAGI::Stash->new($req)->get('user')
                     Subrouter Handler
-                        reads $req->stash->{user}  <-- Still visible!
+                        reads PAGI::Stash->new($req)->get('user')  <-- Still visible!
 
 This enables middleware to pass data downstream:
 
@@ -465,14 +466,14 @@ This enables middleware to pass data downstream:
     async sub require_auth {
         my ($self, $req, $res, $next) = @_;
         my $user = verify_token($req->header('Authorization'));
-        $req->stash->{user} = $user;  # Available to ALL downstream
+        PAGI::Stash->new($req)->set(user => $user);  # Available to ALL downstream
         await $next->();
     }
 
     # Handler in subrouter - sees stash from parent middleware
     async sub get_profile {
         my ($self, $req, $res) = @_;
-        my $user = $req->stash->{user};  # Set by middleware above
+        my $user = PAGI::Stash->new($req)->get('user');  # Set by middleware above
         await $res->json($user);
     }
 
@@ -548,11 +549,11 @@ Override to define routes. The C<$r> parameter is a route builder.
 
     $r->mount($prefix => $other_app);
 
-Mount another PAGI app at a prefix. Stash flows through to mounted apps.
+Mount another PAGI app at a prefix. L<PAGI::Stash> data flows through to mounted apps.
 
 =head1 SEE ALSO
 
-L<PAGI::App::Router>, L<PAGI::Request>, L<PAGI::Response>,
+L<PAGI::Stash>, L<PAGI::App::Router>, L<PAGI::Request>, L<PAGI::Response>,
 L<PAGI::WebSocket>, L<PAGI::SSE>
 
 =cut

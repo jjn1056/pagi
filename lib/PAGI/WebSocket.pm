@@ -57,12 +57,6 @@ sub subprotocols { shift->{scope}{subprotocols} // [] }
 sub client       { shift->{scope}{client} }
 sub server       { shift->{scope}{server} }
 
-# Per-connection storage - lives in scope, shared across Request/Response/WebSocket/SSE
-# See PAGI::Request for detailed design notes on why stash is scope-based.
-sub stash {
-    my $self = shift;
-    return $self->{scope}{'pagi.stash'} //= {};
-}
 
 # Application state (injected by PAGI::Lifespan, read-only)
 sub state {
@@ -670,7 +664,8 @@ PAGI::WebSocket - Convenience wrapper for PAGI WebSocket connections
         my $ws = PAGI::WebSocket->new($scope, $receive, $send);
         await $ws->accept;
 
-        $ws->stash->{user} = 'anonymous';
+        my $stash = PAGI::Stash->new($ws);
+        $stash->set(user => 'anonymous');
 
         $ws->on(message => sub {
             my ($data) = @_;
@@ -709,7 +704,7 @@ protocol boilerplate and provides:
 
 =item * Callback-based event handling (on, run)
 
-=item * Per-connection storage (stash)
+=item * Per-connection storage (via L<PAGI::Stash>)
 
 =back
 
@@ -769,13 +764,14 @@ Client and server address info.
 
 Case-insensitive header access.
 
-=head2 stash
+=head2 Per-Connection Shared State
 
-    $ws->stash->{user} = $user;
-    my $room = $ws->stash->{current_room};
+See L<PAGI::Stash> for per-connection shared state:
 
-Per-connection storage hashref. Useful for storing user data
-without external variables.
+    use PAGI::Stash;
+    my $stash = PAGI::Stash->new($ws);
+
+=cut
 
 =head2 state
 
@@ -785,7 +781,7 @@ without external variables.
 Application state hashref injected by PAGI::Lifespan. Read-only access
 to shared application state. Returns empty hashref if not set.
 
-Note: This is separate from C<stash> (per-connection data) and
+Note: This is separate from L<PAGI::Stash> (per-connection data) and
 C<connection_state> (internal WebSocket state).
 
 =head2 path_param

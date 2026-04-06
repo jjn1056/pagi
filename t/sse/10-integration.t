@@ -7,6 +7,7 @@ use Future;
 
 use lib 'lib';
 use PAGI::SSE;
+use PAGI::Stash;
 
 subtest 'complete SSE session' => sub {
     my @events = (
@@ -34,8 +35,9 @@ subtest 'complete SSE session' => sub {
     $sse->on_close(sub { $cleanup_ran = 1 });
 
     # Store data in stash
-    $sse->stash->{user_id} = 42;
-    is($sse->stash->{user_id}, 42, 'stash works');
+    my $stash = PAGI::Stash->new($sse);
+    $stash->set(user_id => 42);
+    is($stash->get('user_id'), 42, 'stash works');
 
     # Start and send events
     $sse->start->get;
