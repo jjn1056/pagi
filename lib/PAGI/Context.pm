@@ -137,6 +137,41 @@ sub client       { shift->{scope}{client} }
 sub server       { shift->{scope}{server} }
 sub headers      { shift->{scope}{headers} }
 
+=head2 Path Parameters
+
+    my $params = $ctx->path_params;           # hashref
+    my $id     = $ctx->path_param('id');      # strict: dies if missing
+    my $id     = $ctx->path_param('id', strict => 0);  # returns undef
+
+C<path_params> returns the C<< $scope->{path_params} >> hashref (set by
+the router), defaulting to C<{}> if not present.
+
+C<path_param> returns a single parameter by name. By default it dies if
+the key is not found (strict mode). Pass C<< strict => 0 >> to return
+C<undef> for missing keys instead.
+
+=cut
+
+sub path_params {
+    my ($self) = @_;
+    return $self->{scope}{path_params} // {};
+}
+
+sub path_param {
+    my ($self, $name, %opts) = @_;
+    my $strict = exists $opts{strict} ? $opts{strict} : 1;
+    my $params = $self->path_params;
+
+    if ($strict && !exists $params->{$name}) {
+        my @available = sort keys %$params;
+        die "path_param '$name' not found. "
+            . (@available ? "Available: " . join(', ', @available) : "No path params set")
+            . "\n";
+    }
+
+    return $params->{$name};
+}
+
 =head2 Protocol Introspection
 
     $ctx->is_http;        # true if type eq 'http'

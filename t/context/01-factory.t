@@ -141,6 +141,56 @@ subtest 'header lookup' => sub {
     is($ctx->header('nonexistent'), undef, 'missing header returns undef');
 };
 
+subtest 'path_params and path_param' => sub {
+    my $scope = {
+        type        => 'http',
+        method      => 'GET',
+        path        => '/users/42',
+        headers     => [],
+        path_params => { id => '42', format => 'json' },
+    };
+    my $ctx = PAGI::Context->new($scope, sub {}, sub {});
+
+    is($ctx->path_params, { id => '42', format => 'json' }, 'path_params returns hashref');
+    is($ctx->path_param('id'), '42', 'path_param returns value');
+    is($ctx->path_param('format'), 'json', 'path_param second key');
+};
+
+subtest 'path_param strict mode' => sub {
+    my $scope = {
+        type        => 'http',
+        headers     => [],
+        path_params => { id => '42' },
+    };
+    my $ctx = PAGI::Context->new($scope, sub {}, sub {});
+
+    like(
+        dies { $ctx->path_param('missing') },
+        qr/path_param 'missing' not found/,
+        'strict mode dies on missing key'
+    );
+
+    is($ctx->path_param('missing', strict => 0), undef, 'non-strict returns undef');
+};
+
+subtest 'path_params defaults to empty hashref' => sub {
+    my $ctx = PAGI::Context->new({ type => 'http', headers => [] }, sub {}, sub {});
+    is($ctx->path_params, {}, 'defaults to empty hashref');
+    is($ctx->path_param('x', strict => 0), undef, 'non-strict on missing params');
+};
+
+subtest 'path_param works on WebSocket context' => sub {
+    my $scope = {
+        type        => 'websocket',
+        path        => '/ws/echo/lobby',
+        headers     => [],
+        path_params => { room => 'lobby' },
+    };
+    my $ctx = PAGI::Context->new($scope, sub {}, sub {});
+
+    is($ctx->path_param('room'), 'lobby', 'path_param works on WebSocket');
+};
+
 subtest 'receive and send accessors' => sub {
     my $receive = sub { 'receive' };
     my $send = sub { 'send' };
