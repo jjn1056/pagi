@@ -734,6 +734,7 @@ sub to_app {
         my $match_method = $method eq 'HEAD' ? 'GET' : $method;
 
         my @method_matches;
+        my $get_fallback;  # For HEAD requests: save GET match as fallback
 
         for my $route (@routes) {
             if (my @captures = ($path =~ $route->{regex})) {
@@ -754,6 +755,17 @@ sub to_app {
                     : ($route_method eq '*' || $route_method eq $match_method || $route_method eq $method);
 
                 if ($method_match) {
+                    # For HEAD requests, prefer explicit HEAD route over GET fallback
+                    my $is_exact = ref($route_method) eq 'ARRAY'
+                        ? (grep { $_ eq $method } @$route_method)
+                        : ($route_method eq '*' || $route_method eq $method);
+
+                    if ($method eq 'HEAD' && !$is_exact && !$get_fallback) {
+                        # Save GET match as fallback, keep looking for explicit HEAD
+                        $get_fallback = { route => $route, params => \%params };
+                        next;
+                    }
+
                     my $new_scope = {
                         %$scope,
                         path_params => \%params,
@@ -782,6 +794,28 @@ sub to_app {
                     push @method_matches, $route->{method};
                 }
             }
+        }
+
+        # Use GET fallback for HEAD request if no explicit HEAD route was found
+        if ($get_fallback) {
+            my $route = $get_fallback->{route};
+            my $new_scope = {
+                %$scope,
+                path_params => $get_fallback->{params},
+                'pagi.router' => { route => $route->{path} },
+            };
+
+            # Wrap $send to strip body from GET handler response
+            my $actual_send = sub {
+                my ($event) = @_;
+                if ($event->{type} eq 'http.response.body') {
+                    $event = { %$event, body => '' };
+                }
+                $send->($event);
+            };
+
+            await $route->{_handler}->($new_scope, $receive, $actual_send);
+            return;
         }
 
         # Path matched but method didn't - 405
