@@ -17,7 +17,7 @@ use PAGI::App::File;
 use PAGI::App::Router;
 use PAGI::Middleware::AccessLog;
 use PAGI::Response;
-use PAGI::Stash;
+
 
 #---------------------------------------------------------
 # HTTP Endpoint - REST API for messages
@@ -33,20 +33,20 @@ package MessageAPI {
     my $next_id = 3;
 
     async sub get {
-        my ($self, $req, $res) = @_;
-        await $res->json(\@messages);
+        my ($self, $ctx) = @_;
+        await $ctx->response->json(\@messages);
     }
 
     async sub post {
-        my ($self, $req, $res) = @_;
-        my $data = await $req->json;
+        my ($self, $ctx) = @_;
+        my $data = await $ctx->request->json;
         my $message = { id => $next_id++, text => $data->{text} };
         push @messages, $message;
 
         # Notify SSE subscribers
         MessageEvents::broadcast($message);
 
-        await $res->status(201)->json($message);
+        await $ctx->response->status(201)->json($message);
     }
 }
 
@@ -61,14 +61,15 @@ package EchoWS {
     sub ping_interval { 25 }  # Keep connection alive
 
     async sub on_connect {
-        my ($self, $ws) = @_;
+        my ($self, $ctx) = @_;
+        my $ws = $ctx->websocket;
         await $ws->accept;
         await $ws->send_json({ type => 'connected', message => 'Welcome!' });
     }
 
     async sub on_receive {
-        my ($self, $ws, $data) = @_;
-        await $ws->send_json({
+        my ($self, $ctx, $data) = @_;
+        await $ctx->websocket->send_json({
             type => 'echo',
             original => $data,
             timestamp => time(),
@@ -76,7 +77,7 @@ package EchoWS {
     }
 
     sub on_disconnect {
-        my ($self, $ws, $code) = @_;
+        my ($self, $ctx, $code) = @_;
         print STDERR "WebSocket client disconnected: $code\n";
     }
 }
@@ -101,10 +102,11 @@ package MessageEvents {
     }
 
     async sub on_connect {
-        my ($self, $sse) = @_;
+        my ($self, $ctx) = @_;
+        my $sse = $ctx->sse;
         my $id = ++$sub_id;
         $subscribers{$id} = $sse;
-        PAGI::Stash->new($sse)->set(sub_id => $id);
+        $ctx->stash->set(sub_id => $id);
 
         await $sse->send_event(
             event => 'connected',
@@ -113,9 +115,8 @@ package MessageEvents {
     }
 
     sub on_disconnect {
-        my ($self, $sse) = @_;
-        my $stash = PAGI::Stash->new($sse);
-        my $id = $stash->get('sub_id', 'unknown');
+        my ($self, $ctx) = @_;
+        my $id = $ctx->stash->get('sub_id', 'unknown');
         delete $subscribers{$id};
     }
 }
