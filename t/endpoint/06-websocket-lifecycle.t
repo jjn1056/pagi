@@ -8,83 +8,7 @@ use JSON::MaybeXS;
 
 use lib 'lib';
 use PAGI::Endpoint::WebSocket;
-
-# Mock WebSocket
-package MockWebSocket {
-    use Future::AsyncAwait;
-
-    sub new {
-        my ($class, $events) = @_;
-        bless {
-            events => $events,
-            idx => 0,
-            sent => [],
-            accepted => 0,
-            closed => 0,
-        }, $class;
-    }
-    async sub accept {
-        my ($self) = @_;
-        $self->{accepted} = 1;
-    }
-    sub is_accepted {
-        my ($self) = @_;
-        $self->{accepted};
-    }
-    async sub send_text {
-        my ($self, $data) = @_;
-        push @{$self->{sent}}, { type => 'text', data => $data };
-    }
-    async sub send_json {
-        my ($self, $data) = @_;
-        push @{$self->{sent}}, { type => 'json', data => $data };
-    }
-    sub sent {
-        my ($self) = @_;
-        $self->{sent};
-    }
-    sub on_close {
-        my ($self, $cb) = @_;
-        $self->{on_close_cb} = $cb;
-    }
-    async sub each_text {
-        my ($self, $cb) = @_;
-        for my $event (@{$self->{events}}) {
-            await $cb->($event);
-        }
-        # After processing all messages, simulate disconnect
-        if ($self->{on_close_cb}) {
-            $self->{on_close_cb}->(1000, 'normal');
-        }
-    }
-    async sub each_json {
-        my ($self, $cb) = @_;
-        for my $event (@{$self->{events}}) {
-            await $cb->(JSON::MaybeXS::decode_json($event));
-        }
-        # After processing all messages, simulate disconnect
-        if ($self->{on_close_cb}) {
-            $self->{on_close_cb}->(1000, 'normal');
-        }
-    }
-    async sub each_bytes {
-        my ($self, $cb) = @_;
-        for my $event (@{$self->{events}}) {
-            await $cb->($event);
-        }
-        # After processing all messages, simulate disconnect
-        if ($self->{on_close_cb}) {
-            $self->{on_close_cb}->(1000, 'normal');
-        }
-    }
-    async sub run {
-        my ($self) = @_;
-        # Simulate disconnect
-        if ($self->{on_close_cb}) {
-            $self->{on_close_cb}->(1000, 'normal');
-        }
-    }
-}
+use PAGI::Context;
 
 package EchoEndpoint {
     use parent 'PAGI::Endpoint::WebSocket';
@@ -93,46 +17,84 @@ package EchoEndpoint {
     our @log;
 
     async sub on_connect {
-        my ($self, $ws) = @_;
+        my ($self, $ctx) = @_;
         push @log, 'connect';
-        await $ws->accept;
+        await $ctx->websocket->accept;
     }
 
     async sub on_receive {
-        my ($self, $ws, $data) = @_;
+        my ($self, $ctx, $data) = @_;
         push @log, "receive:$data";
-        await $ws->send_text("echo:$data");
+        await $ctx->websocket->send_text("echo:$data");
     }
 
     sub on_disconnect {
-        my ($self, $ws, $code, $reason) = @_;
+        my ($self, $ctx, $code, $reason) = @_;
         push @log, "disconnect:$code";
     }
 }
 
-subtest 'lifecycle methods are called in order' => sub {
+subtest 'lifecycle via to_app' => sub {
     @EchoEndpoint::log = ();
 
-    my $ws = MockWebSocket->new(['hello', 'world']);
-    my $endpoint = EchoEndpoint->new;
+    my $app = EchoEndpoint->to_app;
+    my @sent;
+    my $send = sub { push @sent, $_[0]; Future->done };
 
-    $endpoint->handle($ws)->get;
+    # Simulate: connect, send "hello", send "world", disconnect
+    my @events = (
+        { type => 'websocket.receive', text => 'hello' },
+        { type => 'websocket.receive', text => 'world' },
+        { type => 'websocket.disconnect', code => 1000 },
+    );
+    my $idx = 0;
+    my $receive = sub { Future->done($events[$idx++]) };
 
-    is($EchoEndpoint::log[0], 'connect', 'on_connect called first');
-    is($EchoEndpoint::log[1], 'receive:hello', 'first message received');
-    is($EchoEndpoint::log[2], 'receive:world', 'second message received');
-    like($EchoEndpoint::log[3], qr/disconnect/, 'on_disconnect called last');
+    my $scope = {
+        type    => 'websocket',
+        path    => '/ws/echo',
+        headers => [],
+    };
+
+    $app->($scope, $receive, $send)->get;
+
+    is($EchoEndpoint::log[0], 'connect', 'on_connect called');
+    is($EchoEndpoint::log[1], 'receive:hello', 'first message');
+    is($EchoEndpoint::log[2], 'receive:world', 'second message');
+    like($EchoEndpoint::log[3], qr/disconnect/, 'on_disconnect called');
+
+    # Check accept was sent
+    ok((grep { ($_->{type} // '') eq 'websocket.accept' } @sent), 'accept sent');
 };
 
-subtest 'messages are echoed' => sub {
-    @EchoEndpoint::log = ();
+subtest 'context_class defaults to PAGI::Context' => sub {
+    is(EchoEndpoint->context_class, 'PAGI::Context', 'default context class');
+};
 
-    my $ws = MockWebSocket->new(['test']);
-    my $endpoint = EchoEndpoint->new;
+subtest 'on_connect receives PAGI::Context::WebSocket' => sub {
+    {
+        package CheckCtxEndpoint;
+        use parent 'PAGI::Endpoint::WebSocket';
+        use Future::AsyncAwait;
 
-    $endpoint->handle($ws)->get;
+        our $captured_ctx_class;
 
-    is($ws->sent->[0]{data}, 'echo:test', 'message echoed');
+        async sub on_connect {
+            my ($self, $ctx) = @_;
+            $captured_ctx_class = ref($ctx);
+            await $ctx->websocket->accept;
+        }
+    }
+
+    my $app = CheckCtxEndpoint->to_app;
+    my @sent;
+    my $send = sub { push @sent, $_[0]; Future->done };
+    my $receive = sub { Future->done({ type => 'websocket.disconnect', code => 1000 }) };
+
+    $app->({ type => 'websocket', path => '/ws', headers => [] },
+           $receive, $send)->get;
+
+    is($CheckCtxEndpoint::captured_ctx_class, 'PAGI::Context::WebSocket', 'ctx is WebSocket context');
 };
 
 done_testing;

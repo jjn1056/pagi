@@ -22,6 +22,9 @@ sub state {
     return $self->{_state};
 }
 
+# Override in subclass to use a custom context class
+sub context_class { 'PAGI::Context' }
+
 # Override in subclass to define routes
 sub routes {
     my ($self, $r) = @_;
@@ -125,6 +128,7 @@ sub _wrap_http_handler {
     my ($self, $handler) = @_;
 
     my $endpoint = $self->{endpoint};
+    my $context_class = $endpoint->context_class;
 
     # If handler is a string, it's a method name
     if (!ref($handler)) {
@@ -135,13 +139,11 @@ sub _wrap_http_handler {
         return async sub {
             my ($scope, $receive, $send) = @_;
 
-            require PAGI::Request;
-            require PAGI::Response;
+            require PAGI::Context;
 
-            my $req = PAGI::Request->new($scope, $receive);
-            my $res = PAGI::Response->new($scope, $send);
+            my $ctx = $context_class->new($scope, $receive, $send);
 
-            await $endpoint->$method($req, $res);
+            await $endpoint->$method($ctx);
         };
     }
 
@@ -149,13 +151,11 @@ sub _wrap_http_handler {
     return async sub {
         my ($scope, $receive, $send) = @_;
 
-        require PAGI::Request;
-        require PAGI::Response;
+        require PAGI::Context;
 
-        my $req = PAGI::Request->new($scope, $receive);
-        my $res = PAGI::Response->new($scope, $send);
+        my $ctx = $context_class->new($scope, $receive, $send);
 
-        await $handler->($req, $res);
+        await $handler->($ctx);
     };
 }
 
@@ -175,6 +175,7 @@ sub _wrap_websocket_handler {
     my ($self, $handler) = @_;
 
     my $endpoint = $self->{endpoint};
+    my $context_class = $endpoint->context_class;
 
     if (!ref($handler)) {
         my $method_name = $handler;
@@ -184,22 +185,22 @@ sub _wrap_websocket_handler {
         return async sub {
             my ($scope, $receive, $send) = @_;
 
-            require PAGI::WebSocket;
+            require PAGI::Context;
 
-            my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+            my $ctx = $context_class->new($scope, $receive, $send);
 
-            await $endpoint->$method($ws);
+            await $endpoint->$method($ctx);
         };
     }
 
     return async sub {
         my ($scope, $receive, $send) = @_;
 
-        require PAGI::WebSocket;
+        require PAGI::Context;
 
-        my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+        my $ctx = $context_class->new($scope, $receive, $send);
 
-        await $handler->($ws);
+        await $handler->($ctx);
     };
 }
 
@@ -219,6 +220,7 @@ sub _wrap_sse_handler {
     my ($self, $handler) = @_;
 
     my $endpoint = $self->{endpoint};
+    my $context_class = $endpoint->context_class;
 
     if (!ref($handler)) {
         my $method_name = $handler;
@@ -228,22 +230,22 @@ sub _wrap_sse_handler {
         return async sub {
             my ($scope, $receive, $send) = @_;
 
-            require PAGI::SSE;
+            require PAGI::Context;
 
-            my $sse = PAGI::SSE->new($scope, $receive, $send);
+            my $ctx = $context_class->new($scope, $receive, $send);
 
-            await $endpoint->$method($sse);
+            await $endpoint->$method($ctx);
         };
     }
 
     return async sub {
         my ($scope, $receive, $send) = @_;
 
-        require PAGI::SSE;
+        require PAGI::Context;
 
-        my $sse = PAGI::SSE->new($scope, $receive, $send);
+        my $ctx = $context_class->new($scope, $receive, $send);
 
-        await $handler->($sse);
+        await $handler->($ctx);
     };
 }
 
@@ -251,6 +253,7 @@ sub _wrap_middleware {
     my ($self, $mw) = @_;
 
     my $endpoint = $self->{endpoint};
+    my $context_class = $endpoint->context_class;
 
     # String = method name
     if (!ref($mw)) {
@@ -260,13 +263,11 @@ sub _wrap_middleware {
         return async sub {
             my ($scope, $receive, $send, $next) = @_;
 
-            require PAGI::Request;
-            require PAGI::Response;
+            require PAGI::Context;
 
-            my $req = PAGI::Request->new($scope, $receive);
-            my $res = PAGI::Response->new($scope, $send);
+            my $ctx = $context_class->new($scope, $receive, $send);
 
-            await $endpoint->$method($req, $res, $next);
+            await $endpoint->$method($ctx, $next);
         };
     }
 
@@ -342,28 +343,29 @@ PAGI::Endpoint::Router - Class-based router with wrapped handlers
 
     # Middleware sets stash - visible to ALL downstream handlers
     async sub require_auth {
-        my ($self, $req, $res, $next) = @_;
-        my $user = verify_token($req->bearer_token);
-        PAGI::Stash->new($req)->set(user => $user);  # Flows to handler and subrouters!
+        my ($self, $ctx, $next) = @_;
+        my $user = verify_token($ctx->header('Authorization'));
+        $ctx->stash->set(user => $user);  # Flows to handler and subrouters!
         await $next->();
     }
 
     async sub list_users {
-        my ($self, $req, $res) = @_;
-        my $db = $self->state->{db};                     # Worker state via $self
-        my $user = PAGI::Stash->new($req)->get('user');  # Set by middleware
+        my ($self, $ctx) = @_;
+        my $db = $self->state->{db};                 # Worker state via $self
+        my $user = $ctx->stash->get('user');          # Set by middleware
         my $users = $db->get_users;
-        await $res->json($users);
+        await $ctx->response->json($users);
     }
 
     async sub get_user {
-        my ($self, $req, $res) = @_;
-        my $id = $req->path_param('id');       # Route parameter
-        await $res->json({ id => $id });
+        my ($self, $ctx) = @_;
+        my $id = $ctx->request->path_param('id');    # Route parameter
+        await $ctx->response->json({ id => $id });
     }
 
     async sub chat_handler {
-        my ($self, $ws) = @_;
+        my ($self, $ctx) = @_;
+        my $ws = $ctx->websocket;
         await $ws->accept;
         await $ws->keepalive(25);
         await $ws->each_json(async sub {
@@ -393,14 +395,14 @@ to building PAGI applications. It combines:
 
 =item * B<Method-based handlers> - Define handlers as class methods
 
-=item * B<Wrapped objects> - Handlers receive C<PAGI::Request>/C<PAGI::Response>
-for HTTP, C<PAGI::WebSocket> for WebSocket, C<PAGI::SSE> for SSE
+=item * B<Context objects> - Handlers receive a L<PAGI::Context> with
+protocol-specific accessors (request/response, websocket, sse)
 
 =item * B<Middleware as methods> - Define middleware that can set L<PAGI::Stash>
 values visible to all downstream handlers
 
 =item * B<Worker-local state> - C<$self-E<gt>state> hashref for storing resources
-like database connections, accessible via C<$req-E<gt>state>
+like database connections, accessible via C<$ctx-E<gt>state>
 
 =back
 
@@ -447,54 +449,57 @@ use external storage:
 
 =head2 Per-Request Shared State (PAGI::Stash)
 
-    use PAGI::Stash;
-    PAGI::Stash->new($req)->set(user => $current_user);
+    $ctx->stash->set(user => $current_user);
 
 L<PAGI::Stash> provides per-request shared state that is accessible across
 all handlers, middleware, and subrouters processing the same request.
 
     Middleware A
-        sets PAGI::Stash->new($req)->set(user => ...)
+        sets $ctx->stash->set(user => ...)
             Middleware B
-                reads PAGI::Stash->new($req)->get('user')
+                reads $ctx->stash->get('user')
                     Subrouter Handler
-                        reads PAGI::Stash->new($req)->get('user')  <-- Still visible!
+                        reads $ctx->stash->get('user')  <-- Still visible!
 
 This enables middleware to pass data downstream:
 
     # Auth middleware
     async sub require_auth {
-        my ($self, $req, $res, $next) = @_;
-        my $user = verify_token($req->header('Authorization'));
-        PAGI::Stash->new($req)->set(user => $user);  # Available to ALL downstream
+        my ($self, $ctx, $next) = @_;
+        my $user = verify_token($ctx->header('Authorization'));
+        $ctx->stash->set(user => $user);  # Available to ALL downstream
         await $next->();
     }
 
     # Handler in subrouter - sees stash from parent middleware
     async sub get_profile {
-        my ($self, $req, $res) = @_;
-        my $user = PAGI::Stash->new($req)->get('user');  # Set by middleware above
-        await $res->json($user);
+        my ($self, $ctx) = @_;
+        my $user = $ctx->stash->get('user');  # Set by middleware above
+        await $ctx->response->json($user);
     }
 
 =head1 HANDLER SIGNATURES
 
-Handlers receive different wrapped objects based on route type:
+All handlers receive a L<PAGI::Context> as the second argument.
+The context subclass depends on route type:
 
     # HTTP routes: get, post, put, patch, delete, head, options
-    async sub handler ($self, $req, $res) { }
-    # $req = PAGI::Request, $res = PAGI::Response
+    async sub handler ($self, $ctx) { }
+    # $ctx isa PAGI::Context::HTTP
+    # $ctx->request, $ctx->response
 
     # WebSocket routes
-    async sub handler ($self, $ws) { }
-    # $ws = PAGI::WebSocket
+    async sub handler ($self, $ctx) { }
+    # $ctx isa PAGI::Context::WebSocket
+    # $ctx->websocket
 
     # SSE routes
-    async sub handler ($self, $sse) { }
-    # $sse = PAGI::SSE
+    async sub handler ($self, $ctx) { }
+    # $ctx isa PAGI::Context::SSE
+    # $ctx->sse
 
     # Middleware
-    async sub middleware ($self, $req, $res, $next) { }
+    async sub middleware ($self, $ctx, $next) { }
 
 =head1 METHODS
 
@@ -505,13 +510,21 @@ Handlers receive different wrapped objects based on route type:
 Returns a PAGI application coderef. Creates a single instance that
 persists for the worker lifetime.
 
+=head2 context_class
+
+    sub context_class { 'MyApp::Context' }
+
+Returns the class name used to construct context objects for handlers.
+Defaults to C<'PAGI::Context'>. Override in a subclass to use a custom
+context class (must be a subclass of L<PAGI::Context>).
+
 =head2 state
 
     $self->state->{db} = $connection;
 
 Returns the worker-local state hashref. Initialize resources in the
 C<routes> method or via C<PAGI::Lifespan> wrapper. Access via
-C<$self-E<gt>state> in handlers or C<$req-E<gt>state> in wrapped objects.
+C<$self-E<gt>state> in handlers or C<$ctx-E<gt>state> in context objects.
 
 B<Note:> This is NOT shared across workers. See L</STATE VS STASH>.
 
@@ -553,7 +566,7 @@ Mount another PAGI app at a prefix. L<PAGI::Stash> data flows through to mounted
 
 =head1 SEE ALSO
 
-L<PAGI::Stash>, L<PAGI::App::Router>, L<PAGI::Request>, L<PAGI::Response>,
-L<PAGI::WebSocket>, L<PAGI::SSE>
+L<PAGI::Context>, L<PAGI::Stash>, L<PAGI::App::Router>, L<PAGI::Request>,
+L<PAGI::Response>, L<PAGI::WebSocket>, L<PAGI::SSE>
 
 =cut

@@ -19,12 +19,12 @@ sub routes {
 }
 
 async sub get_info {
-    my ($self, $req, $res) = @_;
-    $req->state->{metrics}{requests}++;
+    my ($self, $ctx) = @_;
+    $ctx->state->{metrics}{requests}++;
 
-    my $config = $req->state->{config};
+    my $config = $ctx->state->{config};
 
-    await $res->json({
+    await $ctx->response->json({
         app     => $config->{app_name},
         version => $config->{version},
         api     => 'v1',
@@ -32,30 +32,30 @@ async sub get_info {
 }
 
 async sub list_users {
-    my ($self, $req, $res) = @_;
-    $req->state->{metrics}{requests}++;
-    await $res->json(\@USERS);
+    my ($self, $ctx) = @_;
+    $ctx->state->{metrics}{requests}++;
+    await $ctx->response->json(\@USERS);
 }
 
 async sub get_user {
-    my ($self, $req, $res) = @_;
-    $req->state->{metrics}{requests}++;
+    my ($self, $ctx) = @_;
+    $ctx->state->{metrics}{requests}++;
 
-    my $id = $req->path_param('id');
+    my $id = $ctx->request->path_param('id');
     my ($user) = grep { $_->{id} == $id } @USERS;
 
     if ($user) {
-        await $res->json($user);
+        await $ctx->response->json($user);
     } else {
-        await $res->status(404)->json({ error => 'User not found' });
+        await $ctx->response->status(404)->json({ error => 'User not found' });
     }
 }
 
 async sub create_user {
-    my ($self, $req, $res) = @_;
-    $req->state->{metrics}{requests}++;
+    my ($self, $ctx) = @_;
+    $ctx->state->{metrics}{requests}++;
 
-    my $data = await $req->json;
+    my $data = await $ctx->request->json;
 
     my $new_user = {
         id    => scalar(@USERS) + 1,
@@ -64,7 +64,7 @@ async sub create_user {
     };
     push @USERS, $new_user;
 
-    await $res->status(201)->json($new_user);
+    await $ctx->response->status(201)->json($new_user);
 }
 
 1;

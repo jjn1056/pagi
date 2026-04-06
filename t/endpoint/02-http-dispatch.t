@@ -7,101 +7,72 @@ use Future;
 
 use lib 'lib';
 use PAGI::Endpoint::HTTP;
-
-# Mock request that returns method
-package MockRequest {
-    sub new {
-        my ($class, $method) = @_;
-        bless { method => $method }, $class;
-    }
-    sub method {
-        my ($self) = @_;
-        $self->{method};
-    }
-}
-
-# Mock response that captures what was sent
-package MockResponse {
-    use Future::AsyncAwait;
-    sub new {
-        my ($class) = @_;
-        bless { sent => undef, status => 200, headers => [] }, $class;
-    }
-    sub status {
-        my ($self, $s) = @_;
-        $self->{status} = $s if defined $s;
-        return $self;
-    }
-    sub header {
-        my ($self, $name, $value) = @_;
-        push @{$self->{headers}}, [$name, $value];
-        return $self;
-    }
-    async sub text {
-        my ($self, $body, %opts) = @_;
-        $self->{sent} = $body;
-        $self->{status} = $opts{status} if $opts{status};
-        return $self;
-    }
-    sub sent {
-        my ($self) = @_;
-        $self->{sent};
-    }
-}
+use PAGI::Context;
 
 package TestEndpoint {
     use parent 'PAGI::Endpoint::HTTP';
     use Future::AsyncAwait;
 
     async sub get {
-        my ($self, $req, $res) = @_;
-        await $res->text("GET response");
+        my ($self, $ctx) = @_;
+        await $ctx->response->text("GET response");
     }
 
     async sub post {
-        my ($self, $req, $res) = @_;
-        await $res->text("POST response");
+        my ($self, $ctx) = @_;
+        await $ctx->response->text("POST response");
     }
 }
 
+my $make_ctx = sub {
+    my ($method) = @_;
+    my @sent;
+    my $send = sub { push @sent, $_[0]; Future->done };
+    my $receive = sub { Future->done({ type => 'http.request', body => '' }) };
+    my $scope = {
+        type    => 'http',
+        method  => $method,
+        path    => '/test',
+        headers => [],
+    };
+    my $ctx = PAGI::Context->new($scope, $receive, $send);
+    return ($ctx, \@sent);
+};
+
 subtest 'dispatches GET to get method' => sub {
+    my ($ctx, $sent) = $make_ctx->('GET');
     my $endpoint = TestEndpoint->new;
-    my $req = MockRequest->new('GET');
-    my $res = MockResponse->new;
 
-    $endpoint->dispatch($req, $res)->get;
+    $endpoint->dispatch($ctx)->get;
 
-    is($res->sent, 'GET response', 'GET dispatched correctly');
+    is($sent->[1]{body}, 'GET response', 'GET dispatched correctly');
 };
 
 subtest 'dispatches POST to post method' => sub {
+    my ($ctx, $sent) = $make_ctx->('POST');
     my $endpoint = TestEndpoint->new;
-    my $req = MockRequest->new('POST');
-    my $res = MockResponse->new;
 
-    $endpoint->dispatch($req, $res)->get;
+    $endpoint->dispatch($ctx)->get;
 
-    is($res->sent, 'POST response', 'POST dispatched correctly');
+    is($sent->[1]{body}, 'POST response', 'POST dispatched correctly');
 };
 
 subtest 'returns 405 for unimplemented method' => sub {
-    my $endpoint = TestEndpoint->new;  # No PUT method defined
-    my $req = MockRequest->new('PUT');
-    my $res = MockResponse->new;
+    my ($ctx, $sent) = $make_ctx->('PUT');
+    my $endpoint = TestEndpoint->new;
 
-    $endpoint->dispatch($req, $res)->get;
+    $endpoint->dispatch($ctx)->get;
 
-    like($res->sent, qr/405|Method Not Allowed/i, '405 for unimplemented');
+    is($sent->[0]{status}, 405, '405 status for unimplemented');
 };
 
 subtest 'HEAD dispatches to get if no head method' => sub {
+    my ($ctx, $sent) = $make_ctx->('HEAD');
     my $endpoint = TestEndpoint->new;
-    my $req = MockRequest->new('HEAD');
-    my $res = MockResponse->new;
 
-    $endpoint->dispatch($req, $res)->get;
+    $endpoint->dispatch($ctx)->get;
 
-    is($res->sent, 'GET response', 'HEAD falls back to GET');
+    is($sent->[1]{body}, 'GET response', 'HEAD falls back to GET');
 };
 
 done_testing;

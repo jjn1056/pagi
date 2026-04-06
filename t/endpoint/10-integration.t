@@ -16,18 +16,18 @@ package MyApp::UserAPI {
     use Future::AsyncAwait;
 
     async sub get {
-        my ($self, $req, $res) = @_;
-        await $res->json({ users => ['alice', 'bob'] });
+        my ($self, $ctx) = @_;
+        await $ctx->response->json({ users => ['alice', 'bob'] });
     }
 
     async sub post {
-        my ($self, $req, $res) = @_;
-        await $res->status(201)->json({ created => 1 });
+        my ($self, $ctx) = @_;
+        await $ctx->response->status(201)->json({ created => 1 });
     }
 
     async sub delete {
-        my ($self, $req, $res) = @_;
-        await $res->status(204)->empty;
+        my ($self, $ctx) = @_;
+        await $ctx->response->status(204)->empty;
     }
 }
 
@@ -38,14 +38,15 @@ package MyApp::ChatWS {
     sub encoding { 'json' }
 
     async sub on_connect {
-        my ($self, $ws) = @_;
+        my ($self, $ctx) = @_;
+        my $ws = $ctx->websocket;
         await $ws->accept;
         await $ws->send_json({ type => 'welcome' });
     }
 
     async sub on_receive {
-        my ($self, $ws, $data) = @_;
-        await $ws->send_json({ type => 'echo', data => $data });
+        my ($self, $ctx, $data) = @_;
+        await $ctx->websocket->send_json({ type => 'echo', data => $data });
     }
 }
 
@@ -56,7 +57,8 @@ package MyApp::EventsSSE {
     sub keepalive_interval { 30 }
 
     async sub on_connect {
-        my ($self, $sse) = @_;
+        my ($self, $ctx) = @_;
+        my $sse = $ctx->sse;
         await $sse->send_event(
             event => 'connected',
             data  => { server_time => time() },

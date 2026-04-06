@@ -30,13 +30,13 @@ sub routes {
 }
 
 async sub home {
-    my ($self, $req, $res) = @_;
+    my ($self, $ctx) = @_;
 
     # Count HTTP requests
-    $req->state->{metrics}{requests}++;
+    $ctx->state->{metrics}{requests}++;
 
-    # Access config via $req->state (populated by Lifespan startup)
-    my $config = $req->state->{config};
+    # Access config via $ctx->state (populated by Lifespan startup)
+    my $config = $ctx->state->{config};
 
     my $html = <<"HTML";
 <!DOCTYPE html>
@@ -267,17 +267,18 @@ async sub home {
 </html>
 HTML
 
-    await $res->html($html);
+    await $ctx->response->html($html);
 }
 
 async sub ws_echo {
-    my ($self, $ws) = @_;
+    my ($self, $ctx) = @_;
+    my $ws = $ctx->websocket;
 
     await $ws->accept;
     await $ws->keepalive(25);
 
-    # Access metrics via $ws->state (populated by Lifespan startup)
-    my $metrics = $ws->state->{metrics};
+    # Access metrics via $ctx->state (populated by Lifespan startup)
+    my $metrics = $ctx->state->{metrics};
     $metrics->{requests}++;      # Count the WebSocket upgrade request
     $metrics->{ws_active}++;
     $metrics->{ws_messages} //= 0;
@@ -296,10 +297,11 @@ async sub ws_echo {
 }
 
 async sub sse_metrics {
-    my ($self, $sse) = @_;
+    my ($self, $ctx) = @_;
+    my $sse = $ctx->sse;
 
-    # Access metrics via $sse->state (populated by Lifespan startup)
-    my $metrics = $sse->state->{metrics};
+    # Access metrics via $ctx->state (populated by Lifespan startup)
+    my $metrics = $ctx->state->{metrics};
 
     # Track sequence number for reconnection detection
     # In production, you'd store this per-client or use timestamps

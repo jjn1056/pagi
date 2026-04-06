@@ -5,12 +5,9 @@ use warnings;
 
 use Future::AsyncAwait;
 use Carp qw(croak);
-use Module::Load qw(load);
 
-
-# Factory class methods - override in subclass for customization
-sub request_class  { 'PAGI::Request' }
-sub response_class { 'PAGI::Response' }
+# Factory class method - override in subclass for customization
+sub context_class { 'PAGI::Context' }
 
 sub new {
     my ($class, %args) = @_;
@@ -34,16 +31,16 @@ sub allowed_methods {
 }
 
 async sub dispatch {
-    my ($self, $req, $res) = @_;
-    my $http_method = lc($req->method // 'GET');
+    my ($self, $ctx) = @_;
+    my $http_method = lc($ctx->method // 'GET');
 
     # OPTIONS - return allowed methods
     if ($http_method eq 'options') {
         if ($self->can('options')) {
-            return await $self->options($req, $res);
+            return await $self->options($ctx);
         }
         my $allow = join(', ', $self->allowed_methods);
-        await $res->header('Allow', $allow)->empty;
+        await $ctx->response->header('Allow', $allow)->empty;
         return;
     }
 
@@ -54,23 +51,19 @@ async sub dispatch {
 
     # Check if we have a handler for this method
     if ($self->can($http_method)) {
-        return await $self->$http_method($req, $res);
+        return await $self->$http_method($ctx);
     }
 
     # 405 Method Not Allowed
     my $allow = join(', ', $self->allowed_methods);
-    await $res->header('Allow', $allow)
+    await $ctx->response->header('Allow', $allow)
               ->status(405)
               ->text("405 Method Not Allowed");
 }
 
 sub to_app {
     my ($class) = @_;
-    # Load the request/response classes
-    my $req_class = $class->request_class;
-    my $res_class = $class->response_class;
-    load($req_class);
-    load($res_class);
+    my $context_class = $class->context_class;
 
     return async sub {
         my ($scope, $receive, $send) = @_;
@@ -78,11 +71,11 @@ sub to_app {
         my $type = $scope->{type} // 'http';
         croak "Expected http scope, got '$type'" unless $type eq 'http';
 
+        require PAGI::Context;
         my $endpoint = $class->new;
-        my $req = $req_class->new($scope, $receive);
-        my $res = $res_class->new($scope, $send);
+        my $ctx = $context_class->new($scope, $receive, $send);
 
-        await $endpoint->dispatch($req, $res);
+        await $endpoint->dispatch($ctx);
     };
 }
 
@@ -101,23 +94,23 @@ PAGI::Endpoint::HTTP - Class-based HTTP endpoint handler
     use Future::AsyncAwait;
 
     async sub get {
-        my ($self, $req, $res) = @_;
+        my ($self, $ctx) = @_;
         my $users = get_all_users();
-        await $res->json($users);
+        await $ctx->response->json($users);
     }
 
     async sub post {
-        my ($self, $req, $res) = @_;
-        my $data = await $req->json;
+        my ($self, $ctx) = @_;
+        my $data = await $ctx->request->json;
         my $user = create_user($data);
-        await $res->status(201)->json($user);
+        await $ctx->response->status(201)->json($user);
     }
 
     async sub delete {
-        my ($self, $req, $res) = @_;
-        my $id = $req->path_param('id');
+        my ($self, $ctx) = @_;
+        my $id = $ctx->request->path_param('id');
         delete_user($id);
-        await $res->status(204)->empty;
+        await $ctx->response->status(204)->empty;
     }
 
     # Use with PAGI server
@@ -142,7 +135,7 @@ dispatches to them.
 
 =item * HEAD falls back to GET if not defined
 
-=item * Factory methods for framework customization
+=item * Customizable context class for framework integration
 
 =back
 
@@ -150,13 +143,13 @@ dispatches to them.
 
 Define any of these async methods to handle requests:
 
-    async sub get { my ($self, $req, $res) = @_; ... }
-    async sub post { my ($self, $req, $res) = @_; ... }
-    async sub put { my ($self, $req, $res) = @_; ... }
-    async sub patch { my ($self, $req, $res) = @_; ... }
-    async sub delete { my ($self, $req, $res) = @_; ... }
-    async sub head { my ($self, $req, $res) = @_; ... }
-    async sub options { my ($self, $req, $res) = @_; ... }
+    async sub get { my ($self, $ctx) = @_; ... }
+    async sub post { my ($self, $ctx) = @_; ... }
+    async sub put { my ($self, $ctx) = @_; ... }
+    async sub patch { my ($self, $ctx) = @_; ... }
+    async sub delete { my ($self, $ctx) = @_; ... }
+    async sub head { my ($self, $ctx) = @_; ... }
+    async sub options { my ($self, $ctx) = @_; ... }
 
 Each receives:
 
@@ -164,11 +157,12 @@ Each receives:
 
 =item C<$self> - The endpoint instance
 
-=item C<$req> - A L<PAGI::Request> object (or custom request class)
-
-=item C<$res> - A L<PAGI::Response> object (or custom response class)
+=item C<$ctx> - A L<PAGI::Context::HTTP> instance
 
 =back
+
+Use C<< $ctx->request >> for request data and C<< $ctx->response >> for
+building responses.
 
 =head1 CLASS METHODS
 
@@ -179,23 +173,17 @@ Each receives:
 Returns a PAGI-compatible async coderef that can be used directly
 with PAGI::Server or composed with middleware.
 
-=head2 request_class
+=head2 context_class
 
-    sub request_class { 'PAGI::Request' }
+    sub context_class { 'PAGI::Context' }
 
-Override to use a custom request class.
-
-=head2 response_class
-
-    sub response_class { 'PAGI::Response' }
-
-Override to use a custom response class.
+Override to use a custom context class.
 
 =head1 INSTANCE METHODS
 
 =head2 dispatch
 
-    await $endpoint->dispatch($req, $res);
+    await $endpoint->dispatch($ctx);
 
 Dispatches the request to the appropriate HTTP method handler.
 Called automatically by C<to_app>.
@@ -208,23 +196,16 @@ Returns list of HTTP methods this endpoint handles.
 
 =head1 FRAMEWORK INTEGRATION
 
-Framework designers can subclass and customize:
+Framework designers can subclass and customize via context:
 
     package MyFramework::Endpoint;
     use parent 'PAGI::Endpoint::HTTP';
 
-    sub request_class { 'MyFramework::Request' }
-    sub response_class { 'MyFramework::Response' }
-
-    # Add framework-specific helpers
-    sub db {
-        my ($self) = @_;
-        $self->{db} //= connect_db();
-    }
+    sub context_class { 'MyFramework::Context' }
 
 =head1 SEE ALSO
 
-L<PAGI::Endpoint::WebSocket>, L<PAGI::Endpoint::SSE>,
+L<PAGI::Context>, L<PAGI::Endpoint::WebSocket>, L<PAGI::Endpoint::SSE>,
 L<PAGI::Request>, L<PAGI::Response>
 
 =cut

@@ -15,8 +15,8 @@ subtest 'can create endpoint subclass' => sub {
         use Future::AsyncAwait;
 
         async sub get {
-            my ($self, $req, $res) = @_;
-            await $res->text("Hello");
+            my ($self, $ctx) = @_;
+            await $ctx->response->text("Hello");
         }
     }
 
@@ -25,23 +25,20 @@ subtest 'can create endpoint subclass' => sub {
     isa_ok($endpoint, 'MyEndpoint');
 };
 
-subtest 'factory class methods have defaults' => sub {
+subtest 'context_class has default' => sub {
     require PAGI::Endpoint::HTTP;
 
-    is(PAGI::Endpoint::HTTP->request_class, 'PAGI::Request', 'default request_class');
-    is(PAGI::Endpoint::HTTP->response_class, 'PAGI::Response', 'default response_class');
+    is(PAGI::Endpoint::HTTP->context_class, 'PAGI::Context', 'default context_class');
 };
 
-subtest 'subclass can override factory classes' => sub {
+subtest 'subclass can override context_class' => sub {
     package CustomEndpoint {
         use parent 'PAGI::Endpoint::HTTP';
 
-        sub request_class { 'My::Request' }
-        sub response_class { 'My::Response' }
+        sub context_class { 'My::Context' }
     }
 
-    is(CustomEndpoint->request_class, 'My::Request', 'custom request_class');
-    is(CustomEndpoint->response_class, 'My::Response', 'custom response_class');
+    is(CustomEndpoint->context_class, 'My::Context', 'custom context_class');
 };
 
 done_testing;

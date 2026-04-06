@@ -13,9 +13,9 @@ package SimpleWSEndpoint {
     use Future::AsyncAwait;
 
     async sub on_connect {
-        my ($self, $ws) = @_;
-        await $ws->accept;
-        await $ws->send_text("Welcome!");
+        my ($self, $ctx) = @_;
+        await $ctx->websocket->accept;
+        await $ctx->websocket->send_text("Welcome!");
     }
 }
 
@@ -35,7 +35,7 @@ subtest 'app creates WebSocket wrapper and calls handle' => sub {
     );
     my $idx = 0;
 
-    my $scope = { type => 'websocket', path => '/ws' };
+    my $scope = { type => 'websocket', path => '/ws', headers => [] };
     my $receive = sub { Future->done($events[$idx++]) };
     my $send = sub { push @sent, $_[0]; Future->done };
 

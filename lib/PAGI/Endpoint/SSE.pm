@@ -5,11 +5,9 @@ use warnings;
 
 use Future::AsyncAwait;
 use Carp qw(croak);
-use Module::Load qw(load);
-
 
 # Factory class method - override in subclass for customization
-sub sse_class { 'PAGI::SSE' }
+sub context_class { 'PAGI::Context' }
 
 # Keepalive interval in seconds (0 = disabled)
 sub keepalive_interval { 0 }
@@ -20,7 +18,8 @@ sub new {
 }
 
 async sub handle {
-    my ($self, $sse) = @_;
+    my ($self, $ctx) = @_;
+    my $sse = $ctx->sse;
 
     # Configure keepalive if specified
     my $keepalive = $self->keepalive_interval;
@@ -31,13 +30,13 @@ async sub handle {
     # Register disconnect callback
     if ($self->can('on_disconnect')) {
         $sse->on_close(sub {
-            $self->on_disconnect($sse);
+            $self->on_disconnect($ctx);
         });
     }
 
     # Call on_connect if defined
     if ($self->can('on_connect')) {
-        await $self->on_connect($sse);
+        await $self->on_connect($ctx);
     } else {
         # Default: just start the stream
         await $sse->start;
@@ -49,8 +48,7 @@ async sub handle {
 
 sub to_app {
     my ($class) = @_;
-    my $sse_class = $class->sse_class;
-    load($sse_class);
+    my $context_class = $class->context_class;
 
     return async sub {
         my ($scope, $receive, $send) = @_;
@@ -58,10 +56,11 @@ sub to_app {
         my $type = $scope->{type} // '';
         croak "Expected sse scope, got '$type'" unless $type eq 'sse';
 
+        require PAGI::Context;
         my $endpoint = $class->new;
-        my $sse = $sse_class->new($scope, $receive, $send);
+        my $ctx = $context_class->new($scope, $receive, $send);
 
-        await $endpoint->handle($sse);
+        await $endpoint->handle($ctx);
     };
 }
 
@@ -82,30 +81,18 @@ PAGI::Endpoint::SSE - Class-based Server-Sent Events endpoint handler
     sub keepalive_interval { 30 }
 
     async sub on_connect {
-        my ($self, $sse) = @_;
-        my $user_id = PAGI::Stash->new($sse)->get('user_id');
+        my ($self, $ctx) = @_;
+        my $user_id = $ctx->stash->get('user_id');
 
-        # Send welcome event
-        await $sse->send_event(
+        await $ctx->sse->send_event(
             event => 'connected',
             data  => { user_id => $user_id },
         );
-
-        # Handle reconnection
-        if (my $last_id = $sse->last_event_id) {
-            await send_missed_events($sse, $last_id);
-        }
-
-        # Subscribe to notifications
-        subscribe($user_id, sub {
-            my ($event) = @_;
-            $sse->try_send_json($event);
-        });
     }
 
     sub on_disconnect {
-        my ($self, $sse) = @_;
-        unsubscribe(PAGI::Stash->new($sse)->get('user_id'));
+        my ($self, $ctx) = @_;
+        # Cleanup subscriptions
     }
 
     # Use with PAGI server
@@ -121,8 +108,8 @@ Server-Sent Events connections with lifecycle hooks.
 =head2 on_connect
 
     async sub on_connect {
-        my ($self, $sse) = @_;
-        await $sse->send_event(data => 'Hello!');
+        my ($self, $ctx) = @_;
+        await $ctx->sse->send_event(data => 'Hello!');
     }
 
 Called when a client connects. The SSE stream is automatically
@@ -132,7 +119,7 @@ and set up subscriptions.
 =head2 on_disconnect
 
     sub on_disconnect {
-        my ($self, $sse) = @_;
+        my ($self, $ctx) = @_;
         # Cleanup subscriptions
     }
 
@@ -145,13 +132,12 @@ Called when connection closes. This is synchronous (not async).
     sub keepalive_interval { 30 }
 
 Seconds between keepalive pings. Set to 0 to disable (default).
-Keepalives prevent proxy timeouts on idle connections.
 
-=head2 sse_class
+=head2 context_class
 
-    sub sse_class { 'PAGI::SSE' }
+    sub context_class { 'PAGI::Context' }
 
-Override to use a custom SSE wrapper.
+Override to use a custom context class.
 
 =head2 to_app
 
@@ -211,10 +197,11 @@ between workers.
     my $sub_id = 0;
 
     async sub on_connect {
-        my ($self, $sse) = @_;
+        my ($self, $ctx) = @_;
+        my $sse = $ctx->sse;
         my $id = ++$sub_id;
         $subscribers{$id} = $sse;
-        PAGI::Stash->new($sse)->set(sub_id => $id);
+        $ctx->stash->set(sub_id => $id);
 
         await $sse->send_event(
             event => 'connected',
@@ -223,8 +210,8 @@ between workers.
     }
 
     sub on_disconnect {
-        my ($self, $sse) = @_;
-        delete $subscribers{PAGI::Stash->new($sse)->get('sub_id')};
+        my ($self, $ctx) = @_;
+        delete $subscribers{$ctx->stash->get('sub_id')};
     }
 
 Now when any worker calls C<broadcast()>, the message goes to Redis, and
@@ -251,6 +238,7 @@ Setup Redis in your lifespan handler:
 
 =head1 SEE ALSO
 
-L<PAGI::SSE>, L<PAGI::Endpoint::HTTP>, L<PAGI::Endpoint::WebSocket>
+L<PAGI::Context>, L<PAGI::SSE>, L<PAGI::Endpoint::HTTP>,
+L<PAGI::Endpoint::WebSocket>
 
 =cut

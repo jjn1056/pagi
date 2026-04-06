@@ -13,9 +13,9 @@ package HelloEndpoint {
     use Future::AsyncAwait;
 
     async sub get {
-        my ($self, $req, $res) = @_;
-        my $name = $req->query_param('name') // 'World';
-        await $res->text("Hello, $name");
+        my ($self, $ctx) = @_;
+        my $name = $ctx->request->query_param('name') // 'World';
+        await $ctx->response->text("Hello, $name");
     }
 }
 
@@ -41,9 +41,12 @@ subtest 'app handles full request cycle' => sub {
 
     $app->($scope, $receive, $send)->get;
 
-    # Should have response.start and response.body
     ok(@sent >= 1, 'sent response events');
     is($sent[0]{type}, 'http.response.start', 'starts with response.start');
+};
+
+subtest 'context_class defaults to PAGI::Context' => sub {
+    is(HelloEndpoint->context_class, 'PAGI::Context', 'default context class');
 };
 
 done_testing;

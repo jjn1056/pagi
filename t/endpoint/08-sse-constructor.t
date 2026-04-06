@@ -15,12 +15,12 @@ subtest 'can create SSE endpoint subclass' => sub {
         use Future::AsyncAwait;
 
         async sub on_connect {
-            my ($self, $sse) = @_;
-            await $sse->send_event(event => 'welcome', data => { time => time() });
+            my ($self, $ctx) = @_;
+            await $ctx->sse->send_event(event => 'welcome', data => { time => time() });
         }
 
         sub on_disconnect {
-            my ($self, $sse) = @_;
+            my ($self, $ctx) = @_;
             # cleanup subscriber
         }
     }
@@ -32,7 +32,7 @@ subtest 'can create SSE endpoint subclass' => sub {
 subtest 'factory class method has default' => sub {
     require PAGI::Endpoint::SSE;
 
-    is(PAGI::Endpoint::SSE->sse_class, 'PAGI::SSE', 'default sse_class');
+    is(PAGI::Endpoint::SSE->context_class, 'PAGI::Context', 'default context_class');
 };
 
 subtest 'keepalive_interval has default' => sub {
