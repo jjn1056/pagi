@@ -1,0 +1,291 @@
+package PAGI::Context;
+
+use strict;
+use warnings;
+use Scalar::Util 'blessed';
+
+=head1 NAME
+
+PAGI::Context - Per-request context with protocol-specific subclasses
+
+=head1 SYNOPSIS
+
+    use PAGI::Context;
+
+    # Factory returns the right subclass based on scope type
+    my $ctx = PAGI::Context->new($scope, $receive, $send);
+
+    # Shared methods (all protocol types)
+    my $type = $ctx->type;        # 'http', 'websocket', 'sse'
+    my $path = $ctx->path;
+    my $stash = $ctx->stash;      # PAGI::Stash
+    my $session = $ctx->session;  # PAGI::Session
+
+    # Protocol-specific (only on the appropriate subclass)
+    my $req = $ctx->request;      # HTTP only
+    my $res = $ctx->response;     # HTTP only
+    my $ws  = $ctx->websocket;    # WebSocket only
+    my $sse = $ctx->sse;          # SSE only
+
+=head1 DESCRIPTION
+
+PAGI::Context is a factory and base class that provides a unified entry
+point for per-request context. Calling C<< PAGI::Context->new(...) >>
+inspects C<< $scope->{type} >> and returns the appropriate subclass:
+L<PAGI::Context::HTTP>, L<PAGI::Context::WebSocket>, or
+L<PAGI::Context::SSE>.
+
+Shared methods (scope accessors, stash, session, connection state) live
+on the base class. Protocol-specific methods (request/response, websocket,
+sse) live on subclasses and simply do not exist on other protocol types.
+
+=head1 EXTENSIBILITY
+
+Override C<_type_map> to add or replace protocol types:
+
+    package MyApp::Context;
+    our @ISA = ('PAGI::Context');
+
+    sub _type_map {
+        my ($class) = @_;
+        return {
+            %{ $class->SUPER::_type_map },
+            grpc => 'MyApp::Context::GRPC',
+        };
+    }
+
+Override C<_resolve_class> for custom resolution logic beyond the type map.
+
+=head1 CONSTRUCTOR
+
+=head2 new
+
+    my $ctx = PAGI::Context->new($scope, $receive, $send);
+
+Factory constructor. Returns a subclass instance based on
+C<< $scope->{type} >>. Defaults to HTTP if type is missing or unknown.
+
+=cut
+
+sub new {
+    my ($class, $scope, $receive, $send) = @_;
+    my $subclass = $class->_resolve_class($scope);
+    return bless {
+        scope   => $scope,
+        receive => $receive,
+        send    => $send,
+    }, $subclass;
+}
+
+=head1 CLASS METHODS
+
+=head2 _type_map
+
+    my $map = PAGI::Context->_type_map;
+
+Returns a hashref mapping scope type strings to subclass package names.
+Override in a subclass to add or replace protocol types.
+
+=cut
+
+sub _type_map {
+    return {
+        http      => 'PAGI::Context::HTTP',
+        websocket => 'PAGI::Context::WebSocket',
+        sse       => 'PAGI::Context::SSE',
+    };
+}
+
+=head2 _resolve_class
+
+    my $class = PAGI::Context->_resolve_class($scope);
+
+Resolves the scope to a subclass package name. Looks up
+C<< $scope->{type} >> in C<_type_map>; defaults to the C<http> mapping
+if the type is missing or unknown. Override for custom resolution logic.
+
+=cut
+
+sub _resolve_class {
+    my ($class, $scope) = @_;
+    my $type = $scope->{type} // 'http';
+    return $class->_type_map->{$type} // $class->_type_map->{http};
+}
+
+=head1 METHODS
+
+=head2 Scope Accessors
+
+    $ctx->scope;          # raw $scope hashref
+    $ctx->type;           # $scope->{type}
+    $ctx->path;           # $scope->{path}
+    $ctx->raw_path;       # $scope->{raw_path} // $scope->{path}
+    $ctx->query_string;   # $scope->{query_string} // ''
+    $ctx->scheme;         # $scope->{scheme} // 'http'
+    $ctx->client;         # $scope->{client}
+    $ctx->server;         # $scope->{server}
+    $ctx->headers;        # $scope->{headers} arrayref of [name, value]
+
+=cut
+
+sub scope        { shift->{scope} }
+sub type         { shift->{scope}{type} }
+sub path         { shift->{scope}{path} }
+sub raw_path     { my $s = shift; $s->{scope}{raw_path} // $s->{scope}{path} }
+sub query_string { shift->{scope}{query_string} // '' }
+sub scheme       { shift->{scope}{scheme} // 'http' }
+sub client       { shift->{scope}{client} }
+sub server       { shift->{scope}{server} }
+sub headers      { shift->{scope}{headers} }
+
+=head2 Protocol Introspection
+
+    $ctx->is_http;        # true if type eq 'http'
+    $ctx->is_websocket;   # true if type eq 'websocket'
+    $ctx->is_sse;         # true if type eq 'sse'
+
+=cut
+
+sub is_http      { (shift->{scope}{type} // '') eq 'http' }
+sub is_websocket { (shift->{scope}{type} // '') eq 'websocket' }
+sub is_sse       { (shift->{scope}{type} // '') eq 'sse' }
+
+=head2 header
+
+    my $value = $ctx->header('Content-Type');
+
+Returns the last value for the named header (case-insensitive), or
+C<undef> if not found.
+
+=cut
+
+sub header {
+    my ($self, $name) = @_;
+    $name = lc($name);
+    my $value;
+    for my $pair (@{$self->{scope}{headers} // []}) {
+        if (lc($pair->[0]) eq $name) {
+            $value = $pair->[1];
+        }
+    }
+    return $value;
+}
+
+=head2 receive
+
+    my $receive = $ctx->receive;
+
+Returns the raw C<$receive> coderef.
+
+=head2 send
+
+    my $send = $ctx->send;
+
+Returns the raw C<$send> coderef.
+
+=cut
+
+sub receive { shift->{receive} }
+sub send    { shift->{send} }
+
+=head2 stash
+
+    my $stash = $ctx->stash;   # PAGI::Stash instance
+
+Returns a L<PAGI::Stash> wrapping C<< $scope->{'pagi.stash'} >>.
+Lazy-constructed and cached.
+
+=head2 session
+
+    my $session = $ctx->session;   # PAGI::Session instance
+
+Returns a L<PAGI::Session> wrapping C<< $scope->{'pagi.session'} >>.
+Lazy-constructed and cached. Dies if session middleware has not run.
+
+=head2 state
+
+    my $state = $ctx->state;   # hashref
+
+Returns C<< $scope->{state} >> — the app/endpoint-level shared state.
+
+=cut
+
+sub stash {
+    my ($self) = @_;
+    return $self->{_stash} //= do {
+        require PAGI::Stash;
+        PAGI::Stash->new($self->{scope});
+    };
+}
+
+sub session {
+    my ($self) = @_;
+    return $self->{_session} //= do {
+        require PAGI::Session;
+        PAGI::Session->new($self->{scope});
+    };
+}
+
+sub state {
+    my ($self) = @_;
+    return $self->{scope}{state} // {};
+}
+
+=head2 Connection State
+
+    $ctx->connection;           # PAGI::Server::ConnectionState object
+    $ctx->is_connected;         # boolean
+    $ctx->is_disconnected;      # boolean
+    $ctx->disconnect_reason;    # string or undef
+    $ctx->on_disconnect($cb);   # register callback
+
+Delegates to C<< $scope->{'pagi.connection'} >>.
+
+=cut
+
+sub connection {
+    my ($self) = @_;
+    return $self->{scope}{'pagi.connection'};
+}
+
+sub is_connected {
+    my ($self) = @_;
+    my $conn = $self->connection;
+    return 0 unless $conn;
+    return $conn->is_connected;
+}
+
+sub is_disconnected {
+    my ($self) = @_;
+    return !$self->is_connected;
+}
+
+sub disconnect_reason {
+    my ($self) = @_;
+    my $conn = $self->connection;
+    return undef unless $conn;
+    return $conn->disconnect_reason;
+}
+
+sub on_disconnect {
+    my ($self, $cb) = @_;
+    my $conn = $self->connection;
+    return unless $conn;
+    $conn->on_disconnect($cb);
+}
+
+# Load subclasses
+require PAGI::Context::HTTP;
+require PAGI::Context::WebSocket;
+require PAGI::Context::SSE;
+
+1;
+
+__END__
+
+=head1 SEE ALSO
+
+L<PAGI::Context::HTTP>, L<PAGI::Context::WebSocket>, L<PAGI::Context::SSE>,
+L<PAGI::Stash>, L<PAGI::Session>
+
+=cut
