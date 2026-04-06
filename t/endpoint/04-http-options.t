@@ -7,79 +7,57 @@ use Future;
 
 use lib 'lib';
 use PAGI::Endpoint::HTTP;
-
-package MockResponse {
-    use Future::AsyncAwait;
-
-    sub new {
-        my ($class) = @_;
-        bless { status => 200, headers => [] }, $class;
-    }
-    sub status {
-        my ($self, $s) = @_;
-        $self->{status} = $s if defined $s;
-        return $self;
-    }
-    sub header {
-        my ($self, $name, $value) = @_;
-        push @{$self->{headers}}, [$name, $value];
-        return $self;
-    }
-    async sub empty {
-        my ($self) = @_;
-        return $self;
-    }
-    async sub text {
-        my ($self, $body, %opts) = @_;
-        $self->{status} = $opts{status} if $opts{status};
-        return $self;
-    }
-    sub get_header {
-        my ($self, $name) = @_;
-        for (@{$self->{headers}}) {
-            return $_->[1] if lc($_->[0]) eq lc($name);
-        }
-        return undef;
-    }
-}
-
-package MockRequest {
-    sub new {
-        my ($class, $method) = @_;
-        bless { method => $method }, $class;
-    }
-    sub method {
-        my ($self) = @_;
-        $self->{method};
-    }
-}
+use PAGI::Context;
 
 package CRUDEndpoint {
     use parent 'PAGI::Endpoint::HTTP';
     use Future::AsyncAwait;
 
     async sub get {
-        my ($self, $req, $res) = @_;
-        await $res->empty;
+        my ($self, $ctx) = @_;
+        await $ctx->response->empty;
     }
     async sub post {
-        my ($self, $req, $res) = @_;
-        await $res->empty;
+        my ($self, $ctx) = @_;
+        await $ctx->response->empty;
     }
     async sub delete {
-        my ($self, $req, $res) = @_;
-        await $res->empty;
+        my ($self, $ctx) = @_;
+        await $ctx->response->empty;
     }
 }
 
+my $make_ctx = sub {
+    my ($method) = @_;
+    my @sent;
+    my $send = sub { push @sent, $_[0]; Future->done };
+    my $receive = sub { Future->done({ type => 'http.request', body => '' }) };
+    my $scope = {
+        type    => 'http',
+        method  => $method,
+        path    => '/test',
+        headers => [],
+    };
+    my $ctx = PAGI::Context->new($scope, $receive, $send);
+    return ($ctx, \@sent);
+};
+
 subtest 'OPTIONS returns allowed methods' => sub {
+    my ($ctx, $sent) = $make_ctx->('OPTIONS');
     my $endpoint = CRUDEndpoint->new;
-    my $req = MockRequest->new('OPTIONS');
-    my $res = MockResponse->new;
 
-    $endpoint->dispatch($req, $res)->get;
+    $endpoint->dispatch($ctx)->get;
 
-    my $allow = $res->get_header('Allow');
+    # The response.start event should have Allow header
+    my $start = $sent->[0];
+    is($start->{type}, 'http.response.start', 'got response start');
+    my $allow;
+    for my $pair (@{$start->{headers} // []}) {
+        if (lc($pair->[0]) eq 'allow') {
+            $allow = $pair->[1];
+            last;
+        }
+    }
     ok(defined $allow, 'Allow header set');
     like($allow, qr/GET/, 'includes GET');
     like($allow, qr/POST/, 'includes POST');
@@ -89,13 +67,20 @@ subtest 'OPTIONS returns allowed methods' => sub {
 };
 
 subtest '405 response includes Allow header' => sub {
+    my ($ctx, $sent) = $make_ctx->('PATCH');
     my $endpoint = CRUDEndpoint->new;
-    my $req = MockRequest->new('PATCH');  # Not implemented
-    my $res = MockResponse->new;
 
-    $endpoint->dispatch($req, $res)->get;
+    $endpoint->dispatch($ctx)->get;
 
-    my $allow = $res->get_header('Allow');
+    my $start = $sent->[0];
+    is($start->{status}, 405, '405 status for unimplemented method');
+    my $allow;
+    for my $pair (@{$start->{headers} // []}) {
+        if (lc($pair->[0]) eq 'allow') {
+            $allow = $pair->[1];
+            last;
+        }
+    }
     ok(defined $allow, 'Allow header set on 405');
 };
 
