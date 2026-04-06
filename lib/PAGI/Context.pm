@@ -2,7 +2,6 @@ package PAGI::Context;
 
 use strict;
 use warnings;
-use Scalar::Util 'blessed';
 
 =head1 NAME
 

@@ -90,9 +90,15 @@ subtest 'scope accessors work' => sub {
 subtest 'scope accessor defaults' => sub {
     my $ctx = PAGI::Context->new({ type => 'http', headers => [] }, sub {}, sub {});
 
-    is($ctx->raw_path, undef, 'raw_path undef when path undef');
+    is($ctx->raw_path, undef, 'raw_path undef when both undef');
     is($ctx->query_string, '', 'query_string defaults to empty string');
     is($ctx->scheme, 'http', 'scheme defaults to http');
+
+    # raw_path falls back to path when raw_path is absent
+    my $ctx2 = PAGI::Context->new(
+        { type => 'http', path => '/fallback', headers => [] }, sub {}, sub {},
+    );
+    is($ctx2->raw_path, '/fallback', 'raw_path falls back to path');
 };
 
 subtest 'protocol introspection' => sub {
