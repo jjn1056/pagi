@@ -88,4 +88,85 @@ subtest 'middleware count is accurate' => sub {
     is $table->[2]{middleware}, 2, 'two middleware';
 };
 
+subtest 'WebSocket and SSE routes appear in route table' => sub {
+    my $router = PAGI::App::Router->new;
+    $router->websocket('/ws/chat/:room' => sub { Future->done })->name('chat');
+    $router->sse('/events' => sub { Future->done });
+
+    my $table = $router->route_table;
+
+    is scalar @$table, 2, 'two routes';
+
+    is $table->[0]{type}, 'websocket', 'type is websocket';
+    is $table->[0]{path}, '/ws/chat/:room', 'websocket path correct';
+    is $table->[0]{name}, 'chat', 'websocket name correct';
+    is $table->[0]{params}, ['room'], 'websocket params correct';
+    ok !exists $table->[0]{method}, 'websocket has no method key';
+
+    is $table->[1]{type}, 'sse', 'type is sse';
+    is $table->[1]{path}, '/events', 'sse path correct';
+    is $table->[1]{name}, undef, 'unnamed sse route';
+    ok !exists $table->[1]{method}, 'sse has no method key';
+};
+
+subtest 'mounts appear in route table' => sub {
+    my $router = PAGI::App::Router->new;
+    my $sub_app = sub { Future->done };
+    my $mw = async sub { my ($scope, $receive, $send, $next) = @_; await $next->() };
+
+    $router->get('/top' => sub { Future->done });
+    $router->mount('/api' => $sub_app);
+    $router->mount('/admin' => [$mw] => $sub_app);
+
+    my $table = $router->route_table;
+
+    is scalar @$table, 3, 'three entries (1 route + 2 mounts)';
+
+    # HTTP route first
+    is $table->[0]{type}, 'http', 'first entry is http';
+
+    # Mounts after
+    is $table->[1]{type}, 'mount', 'second entry is mount';
+    is $table->[1]{path}, '/api', 'mount path is /api';
+    is $table->[1]{name}, undef, 'mount has no name';
+    is $table->[1]{params}, [], 'mount has no params';
+    is $table->[1]{constraints}, {}, 'mount has no constraints';
+    is $table->[1]{middleware}, 0, 'first mount has no middleware';
+    ok !exists $table->[1]{method}, 'mount has no method key';
+
+    is $table->[2]{type}, 'mount', 'third entry is mount';
+    is $table->[2]{path}, '/admin', 'mount path is /admin';
+    is $table->[2]{middleware}, 1, 'second mount has one middleware';
+};
+
+subtest 'route table ordering: http, websocket, sse, mount' => sub {
+    my $router = PAGI::App::Router->new;
+
+    # Register in mixed order
+    $router->mount('/mounted' => sub { Future->done });
+    $router->sse('/events' => sub { Future->done });
+    $router->get('/page' => sub { Future->done });
+    $router->websocket('/ws' => sub { Future->done });
+    $router->post('/data' => sub { Future->done });
+
+    my $table = $router->route_table;
+
+    is scalar @$table, 5, 'five entries';
+
+    # HTTP first (registration order within type)
+    is $table->[0]{type}, 'http', 'first is http (GET /page)';
+    is $table->[0]{path}, '/page', 'GET /page';
+    is $table->[1]{type}, 'http', 'second is http (POST /data)';
+    is $table->[1]{path}, '/data', 'POST /data';
+
+    # Then websocket
+    is $table->[2]{type}, 'websocket', 'third is websocket';
+
+    # Then SSE
+    is $table->[3]{type}, 'sse', 'fourth is sse';
+
+    # Then mounts
+    is $table->[4]{type}, 'mount', 'fifth is mount';
+};
+
 done_testing;
