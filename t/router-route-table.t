@@ -169,4 +169,48 @@ subtest 'route table ordering: http, websocket, sse, mount' => sub {
     is $table->[4]{type}, 'mount', 'fifth is mount';
 };
 
+subtest 'Endpoint::Router passes through route_table()' => sub {
+    {
+        package TestApp::RouteTable;
+        use parent 'PAGI::Endpoint::Router';
+        use Future::AsyncAwait;
+
+        sub routes {
+            my ($self, $r) = @_;
+            $r->get('/hello' => 'say_hello');
+            $r->post('/data' => 'handle_data');
+            $r->websocket('/ws' => 'ws_handler');
+        }
+
+        async sub say_hello {
+            my ($self, $ctx) = @_;
+            await $ctx->response->text('hi');
+        }
+
+        async sub handle_data {
+            my ($self, $ctx) = @_;
+            await $ctx->response->text('ok');
+        }
+
+        async sub ws_handler {
+            my ($self, $ctx) = @_;
+        }
+    }
+
+    my $router = TestApp::RouteTable->new;
+    my $table = $router->route_table;
+
+    is ref($table), 'ARRAY', 'route_table returns arrayref';
+    is scalar @$table, 3, 'three routes';
+
+    is $table->[0]{type}, 'http', 'first is http';
+    is $table->[0]{method}, 'GET', 'GET method';
+    is $table->[0]{path}, '/hello', 'path correct';
+
+    is $table->[1]{type}, 'http', 'second is http';
+    is $table->[1]{method}, 'POST', 'POST method';
+
+    is $table->[2]{type}, 'websocket', 'third is websocket';
+};
+
 done_testing;
