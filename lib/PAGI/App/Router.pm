@@ -443,73 +443,41 @@ sub named_routes {
     return { %{$self->{_named_routes}} };
 }
 
+sub _route_table_entry {
+    my ($self, $type, $route) = @_;
+
+    my %constraints;
+    for my $c (@{$route->{constraints} // []}) {
+        $constraints{$c->[0]} = qr/$c->[1]/;
+    }
+    for my $c (@{$route->{_user_constraints} // []}) {
+        $constraints{$c->[0]} = $c->[1];
+    }
+
+    my %entry = (
+        type        => $type,
+        path        => $route->{path},
+        name        => $route->{name},
+        params      => [@{$route->{names}}],
+        constraints => \%constraints,
+        middleware  => scalar @{$route->{middleware} // []},
+    );
+
+    $entry{method} = $route->{method} if $type eq 'http';
+
+    return \%entry;
+}
+
 sub route_table {
     my ($self) = @_;
 
     my @table;
 
-    # HTTP routes
-    for my $route (@{$self->{routes}}) {
-        my %constraints;
-        for my $c (@{$route->{constraints} // []}) {
-            $constraints{$c->[0]} = qr/$c->[1]/;
-        }
-        for my $c (@{$route->{_user_constraints} // []}) {
-            $constraints{$c->[0]} = $c->[1];
-        }
+    push @table, $self->_route_table_entry('http', $_) for @{$self->{routes}};
+    push @table, $self->_route_table_entry('websocket', $_) for @{$self->{websocket_routes}};
+    push @table, $self->_route_table_entry('sse', $_) for @{$self->{sse_routes}};
 
-        push @table, {
-            type        => 'http',
-            method      => $route->{method},
-            path        => $route->{path},
-            name        => $route->{name},
-            params      => [@{$route->{names}}],
-            constraints => \%constraints,
-            middleware  => scalar @{$route->{middleware} // []},
-        };
-    }
-
-    # WebSocket routes
-    for my $route (@{$self->{websocket_routes}}) {
-        my %constraints;
-        for my $c (@{$route->{constraints} // []}) {
-            $constraints{$c->[0]} = qr/$c->[1]/;
-        }
-        for my $c (@{$route->{_user_constraints} // []}) {
-            $constraints{$c->[0]} = $c->[1];
-        }
-
-        push @table, {
-            type        => 'websocket',
-            path        => $route->{path},
-            name        => $route->{name},
-            params      => [@{$route->{names}}],
-            constraints => \%constraints,
-            middleware  => scalar @{$route->{middleware} // []},
-        };
-    }
-
-    # SSE routes
-    for my $route (@{$self->{sse_routes}}) {
-        my %constraints;
-        for my $c (@{$route->{constraints} // []}) {
-            $constraints{$c->[0]} = qr/$c->[1]/;
-        }
-        for my $c (@{$route->{_user_constraints} // []}) {
-            $constraints{$c->[0]} = $c->[1];
-        }
-
-        push @table, {
-            type        => 'sse',
-            path        => $route->{path},
-            name        => $route->{name},
-            params      => [@{$route->{names}}],
-            constraints => \%constraints,
-            middleware  => scalar @{$route->{middleware} // []},
-        };
-    }
-
-    # Mounts
+    # Mounts have a different structure
     for my $m (@{$self->{mounts}}) {
         push @table, {
             type        => 'mount',
