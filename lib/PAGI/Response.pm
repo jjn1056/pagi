@@ -1095,17 +1095,20 @@ package PAGI::Response::Writer {
     use Carp qw(croak);
 
     sub new {
-        my ($class, $send) = @_;
-        return bless {
-            send => $send,
+        my ($class, $send, %opts) = @_;
+        my $self = bless {
+            send          => $send,
             bytes_written => 0,
-            closed => 0,
+            closed        => 0,
+            _on_close     => [],
         }, $class;
+        push @{$self->{_on_close}}, $opts{on_close} if $opts{on_close};
+        return $self;
     }
 
     async sub write {
         my ($self, $chunk) = @_;
-        croak("Writer already closed") if $self->{closed};
+        return Future->fail('Writer already closed') if $self->{closed};
         $self->{bytes_written} += length($chunk // '');
         await $self->{send}->({
             type => 'http.response.body',
@@ -1123,12 +1126,18 @@ package PAGI::Response::Writer {
             body => '',
             more => 0,
         });
+        $_->() for @{$self->{_on_close}};
     }
 
-    sub bytes_written {
-        my ($self) = @_;
-        return $self->{bytes_written};
+    sub on_close {
+        my ($self, $cb) = @_;
+        push @{$self->{_on_close}}, $cb;
+        return $self;
     }
+
+    sub is_closed { $_[0]->{closed} }
+
+    sub bytes_written { $_[0]->{bytes_written} }
 }
 
 1;
