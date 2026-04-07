@@ -992,6 +992,20 @@ async sub stream {
     await $writer->close() unless $writer->{closed};
 }
 
+async sub writer {
+    my ($self, %opts) = @_;
+    $self->_mark_sent;
+
+    # Send headers
+    await $self->{send}->({
+        type    => 'http.response.start',
+        status  => $self->status,
+        headers => $self->{_headers},
+    });
+
+    return PAGI::Response::Writer->new($self->{send}, %opts);
+}
+
 # Simple MIME type mapping
 my %MIME_TYPES = (
     '.html' => 'text/html',
