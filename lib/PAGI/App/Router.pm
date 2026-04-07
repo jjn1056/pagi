@@ -443,6 +443,55 @@ sub named_routes {
     return { %{$self->{_named_routes}} };
 }
 
+sub _route_table_entry {
+    my ($self, $type, $route) = @_;
+
+    my %constraints;
+    for my $c (@{$route->{constraints} // []}) {
+        $constraints{$c->[0]} = qr/$c->[1]/;
+    }
+    for my $c (@{$route->{_user_constraints} // []}) {
+        $constraints{$c->[0]} = $c->[1];
+    }
+
+    my %entry = (
+        type        => $type,
+        path        => $route->{path},
+        name        => $route->{name},
+        params      => [@{$route->{names}}],
+        constraints => \%constraints,
+        middleware  => scalar @{$route->{middleware} // []},
+    );
+
+    $entry{method} = $route->{method} if $type eq 'http';
+
+    return \%entry;
+}
+
+sub route_table {
+    my ($self) = @_;
+
+    my @table;
+
+    push @table, $self->_route_table_entry('http', $_) for @{$self->{routes}};
+    push @table, $self->_route_table_entry('websocket', $_) for @{$self->{websocket_routes}};
+    push @table, $self->_route_table_entry('sse', $_) for @{$self->{sse_routes}};
+
+    # Mounts have a different structure
+    for my $m (@{$self->{mounts}}) {
+        push @table, {
+            type        => 'mount',
+            path        => $m->{prefix},
+            name        => undef,
+            params      => [],
+            constraints => {},
+            middleware  => scalar @{$m->{middleware} // []},
+        };
+    }
+
+    return \@table;
+}
+
 sub uri_for {
     my ($self, $name, $path_params, $query_params) = @_;
 
@@ -734,6 +783,21 @@ sub to_app {
         my $match_method = $method eq 'HEAD' ? 'GET' : $method;
 
         my @method_matches;
+        my $is_head = $method eq 'HEAD';
+        my $get_fallback;  # For HEAD requests: save GET match as fallback
+
+        # RFC 9110: HEAD responses must have no body — wrapper strips body events
+        # Lazy-init to avoid closure allocation on non-HEAD requests
+        my $head_send;
+        if ($is_head) {
+            $head_send = sub {
+                my ($event) = @_;
+                if ($event->{type} eq 'http.response.body') {
+                    $event = { %$event, body => '' };
+                }
+                $send->($event);
+            };
+        }
 
         for my $route (@routes) {
             if (my @captures = ($path =~ $route->{regex})) {
@@ -754,13 +818,33 @@ sub to_app {
                     : ($route_method eq '*' || $route_method eq $match_method || $route_method eq $method);
 
                 if ($method_match) {
+                    my $strip_body = 0;
+                    if ($is_head) {
+                        # For HEAD requests, check if this is an exact HEAD match
+                        # or just a GET fallback via $match_method
+                        my $is_exact = ref($route_method) eq 'ARRAY'
+                            ? (grep { $_ eq $method } @$route_method)
+                            : ($route_method eq '*' || $route_method eq $method);
+
+                        if (!$is_exact) {
+                            if (!$get_fallback) {
+                                # Save GET match as fallback, keep looking for explicit HEAD
+                                $get_fallback = { route => $route, params => \%params };
+                                next;
+                            }
+                            $strip_body = 1;
+                        }
+                    }
+
                     my $new_scope = {
                         %$scope,
                         path_params => \%params,
                         'pagi.router' => { route => $route->{path} },
                     };
 
-                    await $route->{_handler}->($new_scope, $receive, $send);
+                    my $actual_send = $strip_body ? $head_send : $send;
+
+                    await $route->{_handler}->($new_scope, $receive, $actual_send);
                     return;
                 }
 
@@ -770,6 +854,19 @@ sub to_app {
                     push @method_matches, $route->{method};
                 }
             }
+        }
+
+        # Use GET fallback for HEAD request if no explicit HEAD route was found
+        if ($get_fallback) {
+            my $route = $get_fallback->{route};
+            my $new_scope = {
+                %$scope,
+                path_params => $get_fallback->{params},
+                'pagi.router' => { route => $route->{path} },
+            };
+
+            await $route->{_handler}->($new_scope, $receive, $head_send);
+            return;
         }
 
         # Path matched but method didn't - 405
@@ -838,6 +935,15 @@ and 405 for unmatched HTTP methods. Lifespan events are automatically ignored.
     $router->options($path => $app);
 
 Register a route for the given HTTP method. Returns C<$self> for chaining.
+
+=head2 HEAD Request Handling
+
+HEAD requests are automatically matched to GET routes. When a HEAD request
+matches a GET route, the response body is stripped (replaced with empty
+string) while preserving all headers including Content-Length, per RFC 9110.
+
+Routes registered explicitly with C<head()> are NOT wrapped — those handlers
+are responsible for their own response.
 
 =head2 any
 
@@ -1171,6 +1277,30 @@ Croaks if the route name is unknown or if a required path parameter is missing.
     my $routes = $router->named_routes;
 
 Returns a hashref of all named routes for inspection.
+
+=head2 route_table
+
+    my $table = $router->route_table;
+
+Returns an arrayref of hashrefs describing every registered route and mount.
+Useful for debugging, testing, and building tooling around the router.
+
+Each entry contains:
+
+    {
+        type        => 'http',              # 'http', 'websocket', 'sse', or 'mount'
+        method      => 'GET',               # HTTP routes only (string, arrayref, or '*')
+        path        => '/users/:id',        # the route pattern as registered
+        name        => 'get_user',          # undef if not named
+        params      => ['id'],              # parameter names from the path
+        constraints => { id => qr/\d+/ },   # merged inline and chained constraints
+        middleware  => 2,                    # count of middleware on this route
+    }
+
+Mount entries use C<type =E<gt> 'mount'> and do not include a C<method> key.
+
+Routes are ordered: HTTP routes first, then WebSocket, SSE, and mounts last.
+Within each type, routes appear in registration order.
 
 =head2 as
 

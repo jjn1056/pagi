@@ -59,6 +59,19 @@ sub to_app {
     };
 }
 
+sub route_table {
+    my ($self) = @_;
+
+    # Build internal router if not already built
+    $self = $self->new unless blessed($self);
+
+    load('PAGI::App::Router');
+    my $internal_router = PAGI::App::Router->new;
+    $self->_build_routes($internal_router);
+
+    return $internal_router->route_table;
+}
+
 sub _build_routes {
     my ($self, $r) = @_;
 
@@ -306,6 +319,12 @@ sub uri_for {
 sub named_routes {
     my ($self) = @_;
     return $self->{router}->named_routes;
+}
+
+# Pass through route_table() to internal router
+sub route_table {
+    my ($self) = @_;
+    return $self->{router}->route_table;
 }
 
 1;
@@ -563,6 +582,14 @@ Override to define routes. The C<$r> parameter is a route builder.
     $r->mount($prefix => $other_app);
 
 Mount another PAGI app at a prefix. L<PAGI::Stash> data flows through to mounted apps.
+
+=head2 route_table
+
+    my $table = $router->route_table;
+
+Returns an arrayref of route information hashrefs from the internal
+L<PAGI::App::Router>. See L<PAGI::App::Router/route_table> for the
+entry format.
 
 =head1 SEE ALSO
 
