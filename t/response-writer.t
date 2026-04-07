@@ -85,4 +85,65 @@ subtest 'write after close does not send events' => sub {
     })->get;
 };
 
+subtest 'writer() returns a Writer and sends headers' => sub {
+    my ($res, $sent) = make_response();
+
+    $res->content_type('text/plain')->status(200);
+
+    my $writer = $res->writer->get;
+
+    isa_ok $writer, 'PAGI::Response::Writer';
+
+    # Headers should already be sent
+    is scalar @$sent, 1, 'http.response.start sent';
+    is $sent->[0]{type}, 'http.response.start', 'start event sent';
+    is $sent->[0]{status}, 200, 'status correct';
+
+    # Write and close
+    $writer->write("hello")->get;
+    $writer->close->get;
+
+    is $sent->[1]{body}, 'hello', 'chunk sent';
+    is $sent->[1]{more}, 1, 'more=1 for chunk';
+    is $sent->[2]{more}, 0, 'more=0 for close';
+};
+
+subtest 'writer() with on_close option' => sub {
+    my ($res, $sent) = make_response();
+    my @fired;
+
+    my $writer = $res->writer(on_close => sub { push @fired, 'init' })->get;
+
+    $writer->on_close(sub { push @fired, 'later' });
+
+    $writer->write("data")->get;
+    $writer->close->get;
+
+    is \@fired, ['init', 'later'], 'constructor on_close fires first, then added ones';
+};
+
+subtest 'writer() prevents double send' => sub {
+    my ($res, $sent) = make_response();
+
+    $res->writer->get;
+
+    like dies { $res->writer->get }, qr/already sent/i, 'second writer() croaks';
+};
+
+subtest 'writer() chains with response methods' => sub {
+    my ($res, $sent) = make_response();
+
+    my $writer = $res
+        ->status(201)
+        ->content_type('application/x-ndjson')
+        ->header('X-Stream' => 'true')
+        ->writer
+        ->get;
+
+    is $sent->[0]{status}, 201, 'status from chain';
+    my %headers = map { $_->[0] => $_->[1] } @{$sent->[0]{headers}};
+    is $headers{'content-type'}, 'application/x-ndjson', 'content-type from chain';
+    is $headers{'X-Stream'}, 'true', 'custom header from chain';
+};
+
 done_testing;
