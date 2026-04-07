@@ -1108,7 +1108,7 @@ package PAGI::Response::Writer {
 
     async sub write {
         my ($self, $chunk) = @_;
-        return Future->fail('Writer already closed') if $self->{closed};
+        die 'Writer already closed' if $self->{closed};
         $self->{bytes_written} += length($chunk // '');
         await $self->{send}->({
             type => 'http.response.body',

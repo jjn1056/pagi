@@ -56,4 +56,33 @@ subtest 'is_closed returns correct state' => sub {
     })->get;
 };
 
+subtest 'write after close returns failed Future' => sub {
+    my ($res, $sent) = make_response();
+
+    $res->stream(async sub {
+        my ($writer) = @_;
+        await $writer->write("data");
+        await $writer->close;
+
+        my $f = $writer->write("after close");
+        ok $f->is_failed, 'write after close returns failed Future';
+        like [$f->failure]->[0], qr/closed/i, 'failure message mentions closed';
+    })->get;
+};
+
+subtest 'write after close does not send events' => sub {
+    my ($res, $sent) = make_response();
+
+    $res->stream(async sub {
+        my ($writer) = @_;
+        await $writer->write("data");
+        await $writer->close;
+
+        # Capture count before bad write
+        my $count = scalar @$sent;
+        $writer->write("should not send");  # don't await — it's failed
+        is scalar @$sent, $count, 'no new events sent after close';
+    })->get;
+};
+
 done_testing;
