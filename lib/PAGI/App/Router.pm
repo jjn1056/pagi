@@ -783,16 +783,21 @@ sub to_app {
         my $match_method = $method eq 'HEAD' ? 'GET' : $method;
 
         my @method_matches;
+        my $is_head = $method eq 'HEAD';
         my $get_fallback;  # For HEAD requests: save GET match as fallback
 
         # RFC 9110: HEAD responses must have no body — wrapper strips body events
-        my $head_send = sub {
-            my ($event) = @_;
-            if ($event->{type} eq 'http.response.body') {
-                $event = { %$event, body => '' };
-            }
-            $send->($event);
-        };
+        # Lazy-init to avoid closure allocation on non-HEAD requests
+        my $head_send;
+        if ($is_head) {
+            $head_send = sub {
+                my ($event) = @_;
+                if ($event->{type} eq 'http.response.body') {
+                    $event = { %$event, body => '' };
+                }
+                $send->($event);
+            };
+        }
 
         for my $route (@routes) {
             if (my @captures = ($path =~ $route->{regex})) {
@@ -813,15 +818,22 @@ sub to_app {
                     : ($route_method eq '*' || $route_method eq $match_method || $route_method eq $method);
 
                 if ($method_match) {
-                    # For HEAD requests, prefer explicit HEAD route over GET fallback
-                    my $is_exact = ref($route_method) eq 'ARRAY'
-                        ? (grep { $_ eq $method } @$route_method)
-                        : ($route_method eq '*' || $route_method eq $method);
+                    my $strip_body = 0;
+                    if ($is_head) {
+                        # For HEAD requests, check if this is an exact HEAD match
+                        # or just a GET fallback via $match_method
+                        my $is_exact = ref($route_method) eq 'ARRAY'
+                            ? (grep { $_ eq $method } @$route_method)
+                            : ($route_method eq '*' || $route_method eq $method);
 
-                    if ($method eq 'HEAD' && !$is_exact && !$get_fallback) {
-                        # Save GET match as fallback, keep looking for explicit HEAD
-                        $get_fallback = { route => $route, params => \%params };
-                        next;
+                        if (!$is_exact) {
+                            if (!$get_fallback) {
+                                # Save GET match as fallback, keep looking for explicit HEAD
+                                $get_fallback = { route => $route, params => \%params };
+                                next;
+                            }
+                            $strip_body = 1;
+                        }
                     }
 
                     my $new_scope = {
@@ -830,8 +842,7 @@ sub to_app {
                         'pagi.router' => { route => $route->{path} },
                     };
 
-                    # RFC 9110: HEAD responses must have no body
-                    my $actual_send = ($method eq 'HEAD' && !$is_exact) ? $head_send : $send;
+                    my $actual_send = $strip_body ? $head_send : $send;
 
                     await $route->{_handler}->($new_scope, $receive, $actual_send);
                     return;
