@@ -146,4 +146,33 @@ subtest 'writer() chains with response methods' => sub {
     is $headers{'X-Stream'}, 'true', 'custom header from chain';
 };
 
+subtest 'on_close fires on stream() auto-close' => sub {
+    my ($res, $sent) = make_response();
+    my @fired;
+
+    $res->stream(async sub {
+        my ($writer) = @_;
+        $writer->on_close(sub { push @fired, 'auto' });
+        await $writer->write("data");
+        # Do NOT call $writer->close — let stream() auto-close
+    })->get;
+
+    is \@fired, ['auto'], 'on_close fires when stream() auto-closes writer';
+};
+
+subtest 'on_close fires only once even with explicit + auto close' => sub {
+    my ($res, $sent) = make_response();
+    my $count = 0;
+
+    $res->stream(async sub {
+        my ($writer) = @_;
+        $writer->on_close(sub { $count++ });
+        await $writer->write("data");
+        await $writer->close;
+        # stream() will also try to close, but close() is idempotent
+    })->get;
+
+    is $count, 1, 'on_close fires exactly once (close is idempotent)';
+};
+
 done_testing;
