@@ -1046,7 +1046,7 @@ async sub stream {
     await $callback->($writer);
 
     # Ensure closed
-    await $writer->close() unless $writer->{closed};
+    await $writer->close() unless $writer->is_closed;
 }
 
 async sub writer {
