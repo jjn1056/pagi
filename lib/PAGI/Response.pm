@@ -373,6 +373,7 @@ with C<write($chunk)>, C<close()>, and C<bytes_written()> methods.
 
     my $writer = await $res->writer;
     my $writer = await $res->writer(on_close => sub { cleanup() });
+    my $writer = await $res->writer(on_close => async sub { await cleanup() });
 
 Returns a L<PAGI::Response::Writer> directly, sending headers immediately.
 Unlike C<stream()>, the writer is not scoped to a callback — you own it
@@ -396,7 +397,8 @@ pub/sub callbacks, timers, or other contexts outside a single function:
     }
 
 The optional C<on_close> callback is registered before headers are sent,
-eliminating any race window with fast client disconnects.
+eliminating any race window with fast client disconnects. Sync and async
+callbacks are both supported — see L</on_close> under L</WRITER OBJECT>.
 
 =head2 send_file
 
@@ -721,11 +723,35 @@ Returns the total number of bytes written so far.
 
 =head3 on_close
 
+    # Sync callback
     $writer->on_close(sub { cleanup() });
 
+    # Async callback — return value is awaited automatically
+    $writer->on_close(async sub {
+        await notify_stream_ended();
+    });
+
+    # Chaining
+    $writer->on_close(sub { ... })
+           ->on_close(sub { ... });
+
 Registers a callback to fire when the writer closes (either explicitly
-or via client disconnect). Multiple callbacks can be registered; they
-fire in registration order. Returns C<$self> for chaining.
+or via C<stream()> auto-close). Callbacks can be regular subs or async
+subs — async results are automatically awaited. Multiple callbacks run
+in registration order. Exceptions are caught and warned but do not
+prevent other callbacks from running. Returns C<$self> for chaining.
+
+B<Circular reference note:> If your callback captures the writer
+object in a closure, use C<Scalar::Util::weaken> to avoid a memory leak:
+
+    use Scalar::Util qw(weaken);
+    my $weak_writer = $writer;
+    weaken($weak_writer);
+    $writer->on_close(sub { $weak_writer->... if $weak_writer });
+
+The callback array is cleared after firing, so any cycle via a closure
+is broken when the writer closes, but C<weaken> prevents the object
+from being kept alive until that point.
 
 =head3 is_closed
 
@@ -1164,6 +1190,7 @@ package PAGI::Response::Writer {
     use warnings;
     use Future::AsyncAwait;
     use Carp qw(croak);
+    use Scalar::Util qw(blessed);
 
     sub new {
         my ($class, $send, %opts) = @_;
@@ -1197,7 +1224,20 @@ package PAGI::Response::Writer {
             body => '',
             more => 0,
         });
-        $_->() for @{$self->{_on_close}};
+        for my $cb (@{$self->{_on_close}}) {
+            eval {
+                my $r = $cb->();
+                if (blessed($r) && $r->isa('Future')) {
+                    await $r;
+                }
+            };
+            if ($@) {
+                warn "PAGI::Response::Writer on_close callback error: $@";
+            }
+        }
+
+        # Clear callback array to break any closure-based cycles
+        $self->{_on_close} = [];
     }
 
     sub on_close {

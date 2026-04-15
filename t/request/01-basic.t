@@ -293,6 +293,41 @@ subtest 'defaults and fallbacks' => sub {
     is($minimal_req->http_version, '1.1', 'minimal request: http_version defaults');
 };
 
+subtest 'on_disconnect returns $self for chaining' => sub {
+    my $scope = { type => 'http', method => 'GET', headers => [] };
+    my $req = PAGI::Request->new($scope);
+
+    # No connection — early-return path must still return $self
+    is $req->on_disconnect(sub {}), $req,
+        'on_disconnect returns $self when no connection';
+
+    # Chain on_disconnect with a sync accessor
+    my $scope2 = { type => 'http', method => 'GET', headers => [], query_string => 'x=1' };
+    my $req2 = PAGI::Request->new($scope2);
+    is $req2->on_disconnect(sub {})->query_param('x'), '1',
+        'on_disconnect chains with query_param';
+};
+
+subtest 'on_disconnect with connection returns $self' => sub {
+    {
+        package t::MockConn;
+        sub new { bless { cbs => [] }, shift }
+        sub on_disconnect {
+            my ($self, $cb) = @_;
+            push @{$self->{cbs}}, $cb;
+        }
+    }
+
+    my $conn = t::MockConn->new;
+    my $scope = { type => 'http', method => 'GET', headers => [],
+                  'pagi.connection' => $conn };
+    my $req = PAGI::Request->new($scope);
+
+    is $req->on_disconnect(sub {}), $req,
+        'on_disconnect returns $self when connection is present';
+    is scalar @{$conn->{cbs}}, 1, 'callback was delegated to connection';
+};
+
 subtest 'headers as Hash::MultiValue' => sub {
     my $scope = {
         type    => 'http',

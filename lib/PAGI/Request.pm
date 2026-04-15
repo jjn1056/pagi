@@ -259,8 +259,8 @@ sub disconnect_reason {
 sub on_disconnect {
     my ($self, $cb) = @_;
     my $conn = $self->connection;
-    return unless $conn;
-    $conn->on_disconnect($cb);
+    $conn->on_disconnect($cb) if $conn;
+    return $self;
 }
 
 # Get a Future that resolves when the client disconnects

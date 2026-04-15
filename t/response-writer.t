@@ -175,4 +175,93 @@ subtest 'on_close fires only once even with explicit + auto close' => sub {
     is $count, 1, 'on_close fires exactly once (close is idempotent)';
 };
 
+subtest 'on_close supports async callbacks' => sub {
+    my ($res, $sent) = make_response();
+    my @fired;
+
+    $res->stream(async sub {
+        my ($writer) = @_;
+        $writer->on_close(async sub {
+            push @fired, 'async-ran';
+        });
+        await $writer->close;
+    })->get;
+
+    is \@fired, ['async-ran'], 'async on_close callback is awaited';
+};
+
+subtest 'on_close async callback exception does not prevent others' => sub {
+    my ($res, $sent) = make_response();
+    my @fired;
+    my @warnings;
+
+    local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+
+    $res->stream(async sub {
+        my ($writer) = @_;
+        $writer->on_close(async sub { die "async explosion" });
+        $writer->on_close(sub { push @fired, 'second' });
+        await $writer->close;
+    })->get;
+
+    is \@fired, ['second'], 'second callback still ran';
+    is scalar @warnings, 1, 'exception was warned';
+    like $warnings[0], qr/async explosion/, 'warning contains error';
+};
+
+subtest 'on_close sync callback exception does not prevent others' => sub {
+    my ($res, $sent) = make_response();
+    my @fired;
+    my @warnings;
+
+    local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+
+    $res->stream(async sub {
+        my ($writer) = @_;
+        $writer->on_close(sub { die "sync explosion" });
+        $writer->on_close(sub { push @fired, 'second' });
+        await $writer->close;
+    })->get;
+
+    is \@fired, ['second'], 'second callback still ran';
+    is scalar @warnings, 1, 'exception was warned';
+    like $warnings[0], qr/sync explosion/, 'warning contains error';
+};
+
+subtest 'on_close array cleared after close (breaks cycles)' => sub {
+    my ($res, $sent) = make_response();
+    my $writer_ref;
+
+    $res->stream(async sub {
+        my ($writer) = @_;
+        $writer_ref = $writer;
+        $writer->on_close(sub { 1 });
+        $writer->on_close(sub { 1 });
+        await $writer->close;
+    })->get;
+
+    is scalar @{$writer_ref->{_on_close}}, 0, '_on_close array cleared after close';
+};
+
+subtest 'Writer GCd after close when callback captured object' => sub {
+    use Scalar::Util qw(weaken);
+    my @sent;
+    my $send = sub { push @sent, $_[0]; Future->done };
+    my $res  = PAGI::Response->new({}, $send);
+
+    my $weak;
+    $res->stream(async sub {
+        my ($writer) = @_;
+        weaken($weak = $writer);
+
+        # Callback captures $writer — would leak without clearing
+        $writer->on_close(sub { my $x = $writer });
+
+        await $writer->close;
+    })->get;
+    # $writer arg from callback and stream()'s lexical both gone now
+
+    is $weak, undef, 'Writer GCd after close cleared callback cycle';
+};
+
 done_testing;

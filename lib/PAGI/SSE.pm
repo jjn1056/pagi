@@ -325,8 +325,9 @@ async sub try_send {
             data => $data,
         });
     };
-    if ($@) {
+    if (my $err = $@) {
         $self->_set_closed;
+        await $self->_trigger_error($err);
         return 0;
     }
     return 1;
@@ -344,8 +345,9 @@ async sub try_send_json {
             data => $json,
         });
     };
-    if ($@) {
+    if (my $err = $@) {
         $self->_set_closed;
+        await $self->_trigger_error($err);
         return 0;
     }
     return 1;
@@ -378,8 +380,9 @@ async sub try_send_comment {
             comment => $comment,
         });
     };
-    if ($@) {
+    if (my $err = $@) {
         $self->_set_closed;
+        await $self->_trigger_error($err);
         return 0;
     }
     return 1;
@@ -407,11 +410,34 @@ async sub try_send_event {
 
         await $self->{send}->($event);
     };
-    if ($@) {
+    if (my $err = $@) {
         $self->_set_closed;
+        await $self->_trigger_error($err);
         return 0;
     }
     return 1;
+}
+
+# Internal: trigger error callbacks
+async sub _trigger_error {
+    my ($self, $error) = @_;
+
+    for my $cb (@{$self->{_on_error}}) {
+        eval {
+            my $r = $cb->($self, $error);
+            if (blessed($r) && $r->isa('Future')) {
+                await $r;
+            }
+        };
+        if ($@) {
+            warn "PAGI::SSE on_error callback error: $@";
+        }
+    }
+
+    # If no error handlers registered, warn
+    if (!@{$self->{_on_error}}) {
+        warn "PAGI::SSE error: $error";
+    }
 }
 
 # Register close callback
@@ -426,6 +452,20 @@ sub on_error {
     my ($self, $callback) = @_;
     push @{$self->{_on_error}}, $callback;
     return $self;
+}
+
+# Generic event dispatcher - dispatches to on_close or on_error
+sub on {
+    my ($self, $event, $callback) = @_;
+    if ($event eq 'close') {
+        return $self->on_close($callback);
+    }
+    elsif ($event eq 'error') {
+        return $self->on_error($callback);
+    }
+    else {
+        croak "Unknown event type: $event (expected close or error)";
+    }
 }
 
 # Internal: run all on_close callbacks
@@ -449,6 +489,10 @@ async sub _run_close_callbacks {
             warn "PAGI::SSE on_close callback error: $@";
         }
     }
+
+    # Clear all callback arrays to break any closure-based cycles
+    $self->{_on_close} = [];
+    $self->{_on_error} = [];
 }
 
 # Close the connection
@@ -977,26 +1021,48 @@ closed and on_close callbacks are run.
     $sse->on_close(sub {
         my ($sse, $reason) = @_;
         if ($reason eq 'client_closed') {
-            # Normal disconnect
             cleanup_resources();
         } else {
-            # Error condition
             log_error("Unexpected disconnect: $reason");
         }
     });
 
+    # Async callback — return value is awaited automatically
+    $sse->on_close(async sub {
+        my ($sse, $reason) = @_;
+        await cleanup_async($reason);
+    });
+
 Registers cleanup callback. Runs on disconnect or close().
-Multiple callbacks run in registration order.
+Callbacks can be regular subs or async subs — async results are
+automatically awaited. Multiple callbacks run in registration order.
+Exceptions are caught and warned but do not prevent other callbacks.
 
 Callbacks receive two arguments:
 
 =over 4
 
-=item * C<$sse> - The SSE connection object
+=item * C<$sse> - The SSE connection object (same as C<$self>)
 
 =item * C<$reason> - Why the connection closed (see L</disconnect_reason>)
 
 =back
+
+Returns C<$self> for chaining.
+
+B<Circular reference note:> If your callback captures the C<$sse> object
+in a closure, use the C<$sse> argument instead — it is the same object
+but does not create an additional reference cycle. If you must capture
+it, use C<Scalar::Util::weaken>:
+
+    use Scalar::Util qw(weaken);
+    my $weak_sse = $sse;
+    weaken($weak_sse);
+    $sse->on_close(sub { $weak_sse->... if $weak_sse });
+
+The callback arrays are cleared after firing, so any cycle via a closure
+is broken at connection close, but C<weaken> prevents the object from
+being kept alive until that point.
 
 =head2 on_error
 
@@ -1005,7 +1071,45 @@ Callbacks receive two arguments:
         warn "SSE error: $error";
     });
 
-Registers error callback.
+    # Async callback — return value is awaited automatically
+    $sse->on_error(async sub {
+        my ($sse, $error) = @_;
+        await log_error_async($error);
+    });
+
+Registers error callback. Called when a C<try_send*> method fails
+(e.g., because the client disconnected mid-write). Callbacks can be
+regular subs or async subs — async results are automatically awaited.
+Multiple callbacks run in registration order. Exceptions are caught
+and warned but do not prevent other callbacks.
+
+Callbacks receive two arguments:
+
+=over 4
+
+=item * C<$sse> - The SSE connection object
+
+=item * C<$error> - The error string
+
+=back
+
+If no error handlers are registered, the error is warned to STDERR.
+
+Returns C<$self> for chaining.
+
+=head2 on
+
+    $sse->on(close => sub { my ($sse, $reason) = @_; ... });
+    $sse->on(error => sub { my ($sse, $error)  = @_; ... });
+
+    # Chaining
+    $sse->on(close => sub { ... })
+        ->on(error => sub { ... });
+
+Generic event dispatcher. Dispatches to C<on_close> or C<on_error>
+based on the event name. Dies if an unknown event name is given.
+
+Returns C<$self> for chaining.
 
 =head1 EXAMPLE: LIVE DASHBOARD
 

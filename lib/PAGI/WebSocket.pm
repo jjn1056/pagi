@@ -240,6 +240,11 @@ async sub _run_close_callbacks {
             warn "PAGI::WebSocket on_close callback error: $@";
         }
     }
+
+    # Clear all callback arrays to break any closure-based cycles
+    $self->{_on_close}   = [];
+    $self->{_on_error}   = [];
+    $self->{_on_message} = [];
 }
 
 # Register callback to run on errors
@@ -275,11 +280,16 @@ sub on {
 }
 
 # Internal: trigger error callbacks
-sub _trigger_error {
+async sub _trigger_error {
     my ($self, $error) = @_;
 
     for my $cb (@{$self->{_on_error}}) {
-        eval { $cb->($error) };
+        eval {
+            my $r = $cb->($error);
+            if (blessed($r) && $r->isa('Future')) {
+                await $r;
+            }
+        };
         if ($@) {
             warn "PAGI::WebSocket on_error callback error: $@";
         }
@@ -579,8 +589,8 @@ async sub run {
                     await $r;
                 }
             };
-            if ($@) {
-                $self->_trigger_error($@);
+            if (my $err = $@) {
+                await $self->_trigger_error($err);
             }
         }
     }
@@ -962,9 +972,23 @@ Exceptions in callback propagate to caller.
     });
 
 Registers cleanup callback that runs on disconnect or close().
-Callbacks can be regular subs or async subs - async results are
+Callbacks can be regular subs or async subs — async results are
 automatically awaited. Multiple callbacks run in registration order.
 Exceptions are caught and warned but don't prevent other callbacks.
+
+Returns C<$self> for chaining.
+
+B<Circular reference note:> If your callback captures C<$ws> in a
+closure, use C<Scalar::Util::weaken> to avoid a memory leak:
+
+    use Scalar::Util qw(weaken);
+    my $weak_ws = $ws;
+    weaken($weak_ws);
+    $ws->on_close(sub { $weak_ws->... if $weak_ws });
+
+The callback arrays are cleared after firing, so cycles via closures
+are broken at connection close, but C<weaken> prevents the object from
+being kept alive until that point.
 
 =head2 on_error
 
@@ -973,24 +997,51 @@ Exceptions are caught and warned but don't prevent other callbacks.
         warn "WebSocket error: $error";
     });
 
-Registers error callback. Called when exceptions occur in message
-handlers during C<run()>. If no error handlers are registered,
-errors are warned to STDERR.
+    # Async callback — return value is awaited automatically
+    $ws->on_error(async sub {
+        my ($error) = @_;
+        await log_error_async($error);
+    });
 
-=head2 on_message, on
+Registers error callback. Called when exceptions occur in message
+handlers during C<run()>. Callbacks can be regular subs or async
+subs — async results are automatically awaited. Multiple callbacks
+run in registration order. Exceptions in callbacks are caught and
+warned but do not prevent other callbacks.
+
+If no error handlers are registered, errors are warned to STDERR.
+
+Returns C<$self> for chaining.
+
+=head2 on_message
 
     $ws->on_message(sub {
         my ($data, $event) = @_;
-        # $data is text or bytes, $event is raw PAGI event
+        # $data is text or bytes, $event is the raw PAGI event hashref
+        # Check $event->{text} vs $event->{bytes} to distinguish frame type
     });
 
-    # Generic form (Socket.IO style)
-    $ws->on(message => sub { ... });
-    $ws->on(close => sub { ... });
-    $ws->on(error => sub { ... });
+Registers a message callback for use with C<run()>. Multiple callbacks
+can be registered and all will be called for each message.
 
-Registers message callback for use with C<run()>. Multiple
-callbacks can be registered for each event type.
+Returns C<$self> for chaining.
+
+=head2 on
+
+    # Generic Socket.IO-style event registration
+    $ws->on(message => sub { my ($data, $event) = @_; ... });
+    $ws->on(close   => sub { my ($code, $reason) = @_; ... });
+    $ws->on(error   => sub { my ($error) = @_; ... });
+
+    # Methods return $self, so calls can be chained
+    $ws->on(message => sub { ... })
+       ->on(close   => sub { ... })
+       ->on(error   => sub { ... });
+
+Generic event registration. Dispatches to C<on_message>, C<on_close>,
+or C<on_error> based on the event name. Dies for unknown event types.
+
+Returns C<$self> for chaining.
 
 =head2 run
 

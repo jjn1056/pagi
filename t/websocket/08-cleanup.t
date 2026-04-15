@@ -137,6 +137,9 @@ subtest 'on_close exception does not prevent other callbacks' => sub {
     $ws->accept->get;
 
     my $second_ran = 0;
+    my @warnings;
+    local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+
     $ws->on_close(async sub { die "First callback error" });
     $ws->on_close(async sub { $second_ran = 1 });
 
@@ -144,6 +147,8 @@ subtest 'on_close exception does not prevent other callbacks' => sub {
     $ws->receive->get;
 
     ok($second_ran, 'second callback ran despite first dying');
+    ok scalar @warnings, 'exception in on_close callback was warned';
+    like $warnings[0], qr/First callback error/, 'warning contains error text';
 };
 
 subtest 'on_close works with sync callbacks' => sub {
@@ -175,6 +180,109 @@ subtest 'on_close works with sync callbacks' => sub {
     is($sync_code, 1000, 'sync callback received code');
     is($sync_reason, 'Normal', 'sync callback received reason');
     ok($async_ran, 'async callback also ran');
+};
+
+subtest 'async on_error callback is awaited' => sub {
+    my @events = (
+        { type => 'websocket.connect' },
+        { type => 'websocket.receive', text => 'hello' },
+        { type => 'websocket.disconnect', code => 1000 },
+    );
+    my $idx = 0;
+    my $receive = sub { Future->done($events[$idx++]) };
+    my $send    = sub { Future->done };
+    my $scope   = { type => 'websocket', headers => [] };
+
+    my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+    $ws->accept->get;
+
+    my @fired;
+    $ws->on_error(async sub { push @fired, 'async-error' });
+    $ws->on_message(sub { die "message handler error\n" });
+
+    $ws->run->get;
+
+    is \@fired, ['async-error'], 'async on_error callback was awaited';
+};
+
+subtest 'async on_error exception does not prevent other callbacks' => sub {
+    my @events = (
+        { type => 'websocket.connect' },
+        { type => 'websocket.receive', text => 'hello' },
+        { type => 'websocket.disconnect', code => 1000 },
+    );
+    my $idx = 0;
+    my $receive = sub { Future->done($events[$idx++]) };
+    my $send    = sub { Future->done };
+    my $scope   = { type => 'websocket', headers => [] };
+
+    my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+    $ws->accept->get;
+
+    my @fired;
+    my @warnings;
+    local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+
+    # async die produces a failed Future — only caught if _trigger_error awaits
+    $ws->on_error(async sub { die "async error handler exploded\n" });
+    $ws->on_error(sub { push @fired, 'second' });
+    $ws->on_message(sub { die "message error\n" });
+
+    $ws->run->get;
+
+    is \@fired, ['second'], 'second on_error ran despite async first dying';
+    ok scalar @warnings, 'async exception in on_error callback was warned';
+    like $warnings[0], qr/async error handler exploded/, 'warning contains error text';
+};
+
+subtest 'callback arrays cleared after close (breaks cycles)' => sub {
+    my @events = (
+        { type => 'websocket.connect' },
+        { type => 'websocket.disconnect', code => 1000 },
+    );
+    my $idx = 0;
+    my $receive = sub { Future->done($events[$idx++]) };
+    my $send    = sub { Future->done };
+    my $scope   = { type => 'websocket', headers => [] };
+
+    my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+    $ws->accept->get;
+
+    $ws->on_close(sub   { 1 });
+    $ws->on_error(sub   { 1 });
+    $ws->on_message(sub { 1 });
+
+    $ws->receive->get;   # disconnect → fires + should clear callbacks
+
+    is scalar @{$ws->{_on_close}},   0, '_on_close array cleared after close';
+    is scalar @{$ws->{_on_error}},   0, '_on_error array cleared after close';
+    is scalar @{$ws->{_on_message}}, 0, '_on_message array cleared after close';
+};
+
+subtest 'WebSocket GCd after close when callback captured object' => sub {
+    use Scalar::Util qw(weaken);
+    my @events = (
+        { type => 'websocket.connect' },
+        { type => 'websocket.disconnect', code => 1000 },
+    );
+    my $idx   = 0;
+    my $receive = sub { Future->done($events[$idx++]) };
+    my $send    = sub { Future->done };
+    my $scope   = { type => 'websocket', headers => [] };
+
+    my $weak;
+    {
+        my $ws = PAGI::WebSocket->new($scope, $receive, $send);
+        weaken($weak = $ws);
+        $ws->accept->get;
+
+        # Callback captures $ws — would leak without clearing
+        $ws->on_close(sub { my $x = $ws });
+
+        $ws->receive->get;   # fires callbacks, clears array
+    }   # lexical $ws drops here
+
+    is $weak, undef, 'WebSocket GCd after close cleared callback cycle';
 };
 
 done_testing;
