@@ -29,4 +29,21 @@ subtest 'state transitions' => sub {
     ok($sse->is_closed, 'is_closed is true');
 };
 
+subtest 'run() resolves cleanly when receive fails' => sub {
+    use Future::AsyncAwait;
+    my $receive = sub { Future->fail("upstream gone") };
+    my $sse = PAGI::SSE->new({ type => 'sse' }, $receive, sub { Future->done });
+    $sse->_set_state('started');
+
+    my @warnings;
+    local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+
+    my $f = $sse->run;
+    ok !$f->is_failed, 'run() Future did not reject on receive failure';
+    $f->get;
+
+    ok scalar @warnings,                    'receive failure was warned';
+    like $warnings[0], qr/upstream gone/,   'warning contains error text';
+};
+
 done_testing;

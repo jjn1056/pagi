@@ -514,7 +514,12 @@ async sub run {
     await $self->start unless $self->is_started;
 
     while (!$self->is_closed) {
-        my $event = await $self->{receive}->();
+        my $event = eval { await $self->{receive}->() };
+        if (my $err = $@) {
+            warn "PAGI::SSE receive error: $err";
+            last;
+        }
+
         my $type = $event->{type} // '';
 
         if ($type eq 'sse.disconnect') {

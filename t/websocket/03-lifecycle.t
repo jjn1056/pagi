@@ -102,4 +102,22 @@ subtest 'close is idempotent' => sub {
     is($send_count, 1, 'close only sends once');
 };
 
+subtest 'run() resolves cleanly when receive fails' => sub {
+    my $scope = { type => 'websocket', headers => [] };
+    my $receive = sub { Future->fail("connection reset by peer") };
+    my $ws = PAGI::WebSocket->new($scope, $receive, sub { Future->done });
+    $ws->_set_state('connected');
+
+    my @warnings;
+    local $SIG{__WARN__} = sub { push @warnings, $_[0] };
+
+    # Must resolve (not reject) — caller should not need to handle a failed Future
+    my $f = $ws->run;
+    ok !$f->is_failed, 'run() Future did not reject on receive failure';
+    $f->get;
+
+    ok scalar @warnings,                              'receive failure was warned';
+    like $warnings[0], qr/connection reset by peer/,  'warning contains error text';
+};
+
 done_testing;

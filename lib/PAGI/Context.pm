@@ -2,6 +2,10 @@ package PAGI::Context;
 
 use strict;
 use warnings;
+use Carp qw(croak);
+use Scalar::Util qw(blessed);
+use Future::AsyncAwait;
+use Future;
 
 =head1 NAME
 
@@ -346,6 +350,129 @@ sub on_disconnect {
     my $conn = $self->connection;
     return unless $conn;
     $conn->on_disconnect($cb);
+}
+
+# ---------------------------------------------------------------------------
+# Event dispatcher — on(), on_error(), stop(), run()
+# ---------------------------------------------------------------------------
+
+# Terminal event type by scope type (websocket.*, sse.*, http.* are reserved)
+my %_TERMINAL = (
+    websocket => 'websocket.disconnect',
+    sse       => 'sse.disconnect',
+    http      => 'http.disconnect',
+);
+
+sub _terminal_event_type {
+    my ($self) = @_;
+    return $_TERMINAL{ $self->type // '' };
+}
+
+# Register a handler for a raw PAGI event type string.
+# Returns $self for chaining.
+sub on {
+    my ($self, $type, $cb) = @_;
+    push @{ $self->{_handlers}{$type} }, $cb;
+    return $self;
+}
+
+# Register an error handler. Called for both $receive->() failures
+# (source='receive') and handler exceptions (source='handler').
+# Returns $self for chaining.
+sub on_error {
+    my ($self, $cb) = @_;
+    push @{ $self->{_on_error} }, $cb;
+    return $self;
+}
+
+# Signal the run() loop to exit after the current handler finishes.
+sub stop {
+    my ($self) = @_;
+    $self->{_stopped} = 1;
+    return $self;
+}
+
+# Internal: fire error callbacks with ($ctx, $error, $source).
+async sub _trigger_ctx_error {
+    my ($self, $error, $source) = @_;
+
+    for my $cb (@{ $self->{_on_error} }) {
+        eval {
+            my $r = $cb->($self, $error, $source);
+            if (blessed($r) && $r->isa('Future')) {
+                await $r;
+            }
+        };
+        if ($@) {
+            warn "PAGI::Context on_error callback error: $@";
+        }
+    }
+
+    if (!@{ $self->{_on_error} }) {
+        warn "PAGI::Context error ($source): $error";
+    }
+}
+
+# Run the event dispatch loop.
+# Always resolves (never rejects). Returns reason: 'disconnect', 'stop', 'error'.
+async sub run {
+    my ($self) = @_;
+
+    croak "PAGI::Context run() called while already running"
+        if $self->{_running};
+
+    $self->{_running} = 1;
+    $self->{_stopped} = 0;
+    $self->{_on_error} //= [];
+
+    my $reason   = 'stop';
+    my $terminal = $self->_terminal_event_type;
+
+    LOOP: while (!$self->{_stopped}) {
+        my $event = eval { await $self->{receive}->() };
+        if (my $err = $@) {
+            await $self->_trigger_ctx_error($err, 'receive');
+            $reason = 'error';
+            last LOOP;
+        }
+
+        my $type = $event->{type} // '';
+
+        # Snapshot before iterating — on() calls from inside a handler
+        # must not affect the current iteration.
+        my @handlers = @{ $self->{_handlers}{$type} // [] };
+
+        if (@handlers) {
+            for my $cb (@handlers) {
+                eval {
+                    my $r = $cb->($self, $event);
+                    if (blessed($r) && $r->isa('Future')) {
+                        await $r;
+                    }
+                };
+                if (my $err = $@) {
+                    await $self->_trigger_ctx_error($err, 'handler');
+                }
+            }
+        } elsif ($ENV{PAGI_DEBUG} && !($terminal && $type eq $terminal)) {
+            warn "PAGI::Context: unhandled event type '$type'\n";
+        }
+
+        if ($terminal && $type eq $terminal) {
+            $reason = 'disconnect';
+            last LOOP;
+        }
+    }
+
+    $reason = 'stop' if $self->{_stopped} && $reason eq 'stop';
+
+    # Clear callbacks to break any closure-based reference cycles.
+    $self->{_handlers} = {};
+    $self->{_on_error} = [];
+    $self->{_running}  = 0;
+    $self->{_stopped}  = 0;
+
+    return $reason;
 }
 
 # Load subclasses

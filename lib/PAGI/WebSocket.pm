@@ -576,7 +576,14 @@ async sub each_json {
 async sub run {
     my ($self) = @_;
 
-    while (my $event = await $self->receive) {
+    while (1) {
+        my $event = eval { await $self->receive };
+        if (my $err = $@) {
+            warn "PAGI::WebSocket receive error: $err";
+            last;
+        }
+        last unless $event;
+
         next unless $event->{type} eq 'websocket.receive';
 
         my $data = $event->{text} // $event->{bytes};
