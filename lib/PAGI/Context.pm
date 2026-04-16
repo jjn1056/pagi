@@ -352,6 +352,103 @@ sub on_disconnect {
     $conn->on_disconnect($cb);
 }
 
+=head1 EVENT DISPATCHER
+
+The event dispatcher provides a generic, protocol-agnostic way to handle
+PAGI events.  It is most useful when the receive stream carries a mix of
+protocol events and application-level events injected by middleware such
+as C<PAGI::Middleware::Channels>.
+
+    my $ctx = PAGI::Context->new($scope, $receive, $send);
+
+    $ctx->on('websocket.receive', async sub {
+        my ($ctx, $event) = @_;
+        my $text = $event->{text} // '';
+        await $ctx->send->({ type => 'websocket.send', text => "echo: $text" });
+    });
+
+    $ctx->on('chat.message', async sub {
+        my ($ctx, $event) = @_;
+        # handle a channel-injected event
+    });
+
+    $ctx->on_error(sub {
+        my ($ctx, $error, $source) = @_;
+        warn "[$source] $error";
+    });
+
+    my $reason = await $ctx->run;   # 'disconnect', 'stop', or 'error'
+
+=head2 on
+
+    $ctx->on($event_type, $callback);   # returns $ctx
+
+Register a handler for a raw PAGI event type string.  Multiple handlers
+may be registered for the same type; they are called in registration order.
+Handlers receive C<($ctx, $event)>.  Handlers may be plain coderefs or
+C<async sub>s; if a handler returns a L<Future>, C<run()> awaits it before
+continuing.
+
+Returns C<$ctx> for chaining.
+
+=head2 on_error
+
+    $ctx->on_error($callback);   # returns $ctx
+
+Register an error callback.  It is called when C<$receive-E<gt>()> fails
+(C<$source = 'receive'>) or when a registered handler throws (C<$source =
+'handler'>).  Callbacks receive C<($ctx, $error, $source)>.
+
+Multiple callbacks may be registered and are called in order.  Callbacks
+may be C<async sub>s; if a callback returns a L<Future>, it is awaited.
+If no callbacks are registered, errors are emitted via C<warn>.
+
+Returns C<$ctx> for chaining.
+
+    # Avoid circular references — weaken if the callback closes over $ctx
+    use Scalar::Util qw(weaken);
+    my $weak = $ctx;
+    weaken $weak;
+    $ctx->on_error(sub { my ($ctx, $err, $src) = @_; warn "[$src] $err" });
+
+=head2 stop
+
+    $ctx->stop;   # returns $ctx
+
+Signal the C<run()> loop to exit cleanly after the current handler
+finishes.  C<run()> will resolve with reason C<'stop'>.
+
+Returns C<$ctx> for chaining.
+
+=head2 run
+
+    my $reason = await $ctx->run;
+
+Start the event dispatch loop.  Reads events from the receive stream and
+dispatches each to registered handlers.  The loop runs until one of:
+
+=over 4
+
+=item * The protocol's terminal disconnect event arrives (C<websocket.disconnect>,
+C<sse.disconnect>, C<http.disconnect>) — resolves with C<'disconnect'>
+
+=item * C<stop()> was called — resolves with C<'stop'>
+
+=item * C<$receive-E<gt>()> fails — fires C<on_error> callbacks and resolves
+with C<'error'>
+
+=back
+
+C<run()> always resolves successfully (never rejects).  The caller does
+not need to C<catch> it.
+
+Calling C<run()> a second time while already running throws synchronously.
+
+When run() resolves, all registered handlers and error callbacks are
+cleared to break closure-based reference cycles.
+
+=cut
+
 # ---------------------------------------------------------------------------
 # Event dispatcher — on(), on_error(), stop(), run()
 # ---------------------------------------------------------------------------
