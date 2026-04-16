@@ -14,33 +14,91 @@ PAGI::Context - Per-request context with protocol-specific subclasses
 =head1 SYNOPSIS
 
     use PAGI::Context;
+    use Future::AsyncAwait;
 
     # Factory returns the right subclass based on scope type
     my $ctx = PAGI::Context->new($scope, $receive, $send);
 
     # Shared methods (all protocol types)
-    my $type = $ctx->type;        # 'http', 'websocket', 'sse'
-    my $path = $ctx->path;
-    my $stash = $ctx->stash;      # PAGI::Stash
-    my $session = $ctx->session;  # PAGI::Session
+    my $type  = $ctx->type;        # 'http', 'websocket', 'sse'
+    my $path  = $ctx->path;
+    my $stash = $ctx->stash;       # PAGI::Stash
+    my $session = $ctx->session;   # PAGI::Session
 
-    # Protocol-specific (only on the appropriate subclass)
-    my $req = $ctx->request;      # HTTP only
-    my $res = $ctx->response;     # HTTP only
-    my $ws  = $ctx->websocket;    # WebSocket only
-    my $sse = $ctx->sse;          # SSE only
+    # WebSocket context — protocol ops directly on $ctx
+    await $ctx->accept;
+    await $ctx->send_json({ msg => 'hello' });
+    my $text = await $ctx->receive_text;
+    await $ctx->close;
+
+    # SSE context — same idea
+    await $ctx->send_event(event => 'update', data => $payload);
+    await $ctx->keepalive(25);
+
+    # Event dispatcher — works on any protocol type
+    my $reason = await $ctx
+        ->on('websocket.receive', async sub { ... })
+        ->on('chat.message',      async sub { ... })
+        ->on_error(sub { ... })
+        ->run;    # returns 'disconnect', 'stop', or 'error'
+
+    # Underlying protocol objects still available
+    my $ws  = $ctx->websocket;     # PAGI::WebSocket (WS only)
+    my $sse = $ctx->sse;           # PAGI::SSE (SSE only)
+    my $req = $ctx->request;       # PAGI::Request (HTTP only)
+    my $res = $ctx->response;      # PAGI::Response (HTTP only)
 
 =head1 DESCRIPTION
 
 PAGI::Context is a factory and base class that provides a unified entry
-point for per-request context. Calling C<< PAGI::Context->new(...) >>
+point for per-request context.  Calling C<< PAGI::Context->new(...) >>
 inspects C<< $scope->{type} >> and returns the appropriate subclass:
 L<PAGI::Context::HTTP>, L<PAGI::Context::WebSocket>, or
 L<PAGI::Context::SSE>.
 
-Shared methods (scope accessors, stash, session, connection state) live
-on the base class. Protocol-specific methods (request/response, websocket,
-sse) live on subclasses and simply do not exist on other protocol types.
+Shared methods (scope accessors, stash, session, event dispatcher) live
+on the base class.  Protocol-specific methods are delegated from
+subclasses so you can use C<$ctx> as your single object:
+
+    # Instead of:
+    my $ws = $ctx->websocket;
+    await $ws->send_json($data);    # closes over $ws in every handler
+
+    # Just do:
+    await $ctx->send_json($data);   # $ctx is already in scope
+
+=head2 Protocol Shape
+
+Each context type has a different set of available methods.  Calling a
+method that belongs to a different protocol type raises a standard Perl
+C<Can't locate object method> error.
+
+    Method              HTTP    WebSocket   SSE
+    ──────────────────  ──────  ──────────  ──────
+    request, response   yes     -           -
+    method              yes     -           -
+    accept              -       yes         -
+    send_text           -       yes         -
+    send_bytes          -       yes         -
+    send_json           -       yes         yes
+    send                -       -           yes
+    send_event          -       -           yes
+    send_comment        -       -           yes
+    start               -       -           yes
+    close               -       yes         yes
+    query / query_param -       yes(query)  yes(query_param)
+    is_connected        base*   WS override -
+    is_closed           -       yes         yes
+    is_started          -       -           yes
+    keepalive           -       yes         yes
+    each_text, etc.     -       yes         -
+    each, every         -       -           yes
+
+    *is_connected on WebSocket contexts checks WS handshake state,
+     not the TCP-level pagi.connection that the base class uses.
+
+See L<PAGI::Context::WebSocket> and L<PAGI::Context::SSE> for the
+full method reference on each subclass.
 
 =head1 EXTENSIBILITY
 
@@ -583,7 +641,18 @@ __END__
 
 =head1 SEE ALSO
 
-L<PAGI::Context::HTTP>, L<PAGI::Context::WebSocket>, L<PAGI::Context::SSE>,
+B<Protocol subclasses> (full method reference for each protocol):
+
+L<PAGI::Context::HTTP>, L<PAGI::Context::WebSocket>, L<PAGI::Context::SSE>
+
+B<Underlying protocol objects> (standalone use, or direct access via
+C<< $ctx->websocket >>, C<< $ctx->sse >>, C<< $ctx->request >>,
+C<< $ctx->response >>):
+
+L<PAGI::WebSocket>, L<PAGI::SSE>, L<PAGI::Request>, L<PAGI::Response>
+
+B<Shared services>:
+
 L<PAGI::Stash>, L<PAGI::Session>
 
 =cut
