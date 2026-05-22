@@ -17,7 +17,7 @@ PAGI::Session - Standalone helper object for session data access
     my $session = PAGI::Session->new($req);  # any object with ->scope
     my $session = PAGI::Session->new(@_);    # extra args ignored
 
-    # Test convenience — wrap raw data directly
+    # Test convenience - wrap raw data directly
     my $session = PAGI::Session->from_data({ _id => 'test', user_id => 42 });
 
     # Strict get - dies if key doesn't exist (catches typos)
@@ -88,7 +88,7 @@ sub new {
         return bless { _data => $scope->{'pagi.session'} }, $class;
     }
 
-    # Scope hashref — must have pagi.session key
+    # Scope hashref - must have pagi.session key
     if (ref $arg eq 'HASH' && exists $arg->{'pagi.session'}) {
         return bless { _data => $arg->{'pagi.session'} }, $class;
     }

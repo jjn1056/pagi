@@ -1,5 +1,9 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.001023 - 2026-05-21
+  - Fixed incorrect metadata and package version information
+  - POD fixes.
+
 0.001022 - 2026-04-06
   [New Features — PAGI::Context]
   - New PAGI::Context factory + base class with protocol-specific subclasses

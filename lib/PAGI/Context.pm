@@ -25,17 +25,17 @@ PAGI::Context - Per-request context with protocol-specific subclasses
     my $stash = $ctx->stash;       # PAGI::Stash
     my $session = $ctx->session;   # PAGI::Session
 
-    # WebSocket context — protocol ops directly on $ctx
+    # WebSocket context - protocol ops directly on $ctx
     await $ctx->accept;
     await $ctx->send_json({ msg => 'hello' });
     my $text = await $ctx->receive_text;
     await $ctx->close;
 
-    # SSE context — same idea
+    # SSE context - same idea
     await $ctx->send_event(event => 'update', data => $payload);
     await $ctx->keepalive(25);
 
-    # Event dispatcher — works on any protocol type
+    # Event dispatcher - works on any protocol type
     my $reason = await $ctx
         ->on('websocket.receive', async sub { ... })
         ->on('chat.message',      async sub { ... })
@@ -337,7 +337,7 @@ Returns true if session middleware has populated C<< $scope->{'pagi.session'} >>
 
     my $state = $ctx->state;   # hashref
 
-Returns C<< $scope->{state} >> — the app/endpoint-level shared state.
+Returns C<< $scope->{state} >> - the app/endpoint-level shared state.
 
 =cut
 
@@ -463,7 +463,7 @@ If no callbacks are registered, errors are emitted via C<warn>.
 
 Returns C<$ctx> for chaining.
 
-    # Avoid circular references — weaken if the callback closes over $ctx
+    # Avoid circular references - weaken if the callback closes over $ctx
     use Scalar::Util qw(weaken);
     my $weak = $ctx;
     weaken $weak;
@@ -488,11 +488,11 @@ dispatches each to registered handlers.  The loop runs until one of:
 =over 4
 
 =item * The protocol's terminal disconnect event arrives (C<websocket.disconnect>,
-C<sse.disconnect>, C<http.disconnect>) — resolves with C<'disconnect'>
+C<sse.disconnect>, C<http.disconnect>) - resolves with C<'disconnect'>
 
-=item * C<stop()> was called — resolves with C<'stop'>
+=item * C<stop()> was called - resolves with C<'stop'>
 
-=item * C<$receive-E<gt>()> fails — fires C<on_error> callbacks and resolves
+=item * C<$receive-E<gt>()> fails - fires C<on_error> callbacks and resolves
 with C<'error'>
 
 =back
@@ -508,7 +508,7 @@ cleared to break closure-based reference cycles.
 =cut
 
 # ---------------------------------------------------------------------------
-# Event dispatcher — on(), on_error(), stop(), run()
+# Event dispatcher - on(), on_error(), stop(), run()
 # ---------------------------------------------------------------------------
 
 # Terminal event type by scope type (websocket.*, sse.*, http.* are reserved)
@@ -593,7 +593,7 @@ async sub run {
 
         my $type = $event->{type} // '';
 
-        # Snapshot before iterating — on() calls from inside a handler
+        # Snapshot before iterating - on() calls from inside a handler
         # must not affect the current iteration.
         my @handlers = @{ $self->{_handlers}{$type} // [] };
 
