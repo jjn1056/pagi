@@ -8,9 +8,6 @@ use File::Spec;
 use POSIX qw(setsid);
 use FindBin ();
 
-use PAGI;
-
-
 =head1 NAME
 
 PAGI::Runner - PAGI application loader and server runner
@@ -265,6 +262,10 @@ sub parse_options {
         'v|version'           => \$opts{version},
     ) or die "Error parsing options\n";
 
+    # Store the selected server class before the version/help early-return
+    # so --version can report the configured server (see _show_version).
+    $self->{server}     = $opts{server}     if defined $opts{server};
+
     # Handle help/version flags
     if ($opts{version}) {
         $self->{show_version} = 1;
@@ -278,7 +279,6 @@ sub parse_options {
     # Apply parsed options
     $self->{host}       = $opts{host}       if defined $opts{host};
     $self->{port}       = $opts{port}       if defined $opts{port};
-    $self->{server}     = $opts{server}     if defined $opts{server};
     $self->{env}        = $opts{env}        if defined $opts{env};
     $self->{loop}       = $opts{loop}       if defined $opts{loop};
     $self->{access_log} = $opts{access_log} if defined $opts{access_log};
@@ -755,9 +755,16 @@ HELP
 sub _show_version {
     my ($self) = @_;
 
-    require PAGI;
-    require PAGI::Server;
-    print "pagi-server (PAGI $PAGI::VERSION, PAGI::Server $PAGI::Server::VERSION)\n";
+    my $server_class = $self->{server} // 'PAGI::Server';
+    (my $server_file = $server_class) =~ s{::}{/}g;
+    eval { require "$server_file.pm" };
+
+    require File::Basename;
+    my $prog           = File::Basename::basename($0);
+    my $pagi_version   = eval { require PAGI; PAGI->VERSION } // 'unknown';
+    my $server_version = $server_class->VERSION // 'unknown';
+
+    print "$prog (PAGI $pagi_version, $server_class $server_version)\n";
 }
 
 sub _daemonize {

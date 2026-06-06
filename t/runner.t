@@ -12,6 +12,7 @@ use Cwd qw(abs_path);
 our $test_bin;
 BEGIN { $test_bin = $FindBin::Bin; }
 use lib "$test_bin/../lib";
+use lib "$test_bin/lib";
 use PAGI::Runner;
 
 # Test 1: Basic construction
@@ -617,6 +618,47 @@ subtest 'load_server with listen option omits host/port' => sub {
     is(scalar @$listeners, 2, 'two listeners configured');
     is($listeners->[0]{type}, 'tcp', 'first listener is tcp');
     is($listeners->[1]{type}, 'unix', 'second listener is unix');
+};
+
+# Version output must reflect the selected server class, not assume
+# PAGI::Server (Runner is server-agnostic; see PAGI::Spec::Server)
+subtest 'version output is server-agnostic' => sub {
+    my $runner = PAGI::Runner->new(server => 'PAGITest::FakeServer');
+
+    my $out = '';
+    {
+        open my $fh, '>', \$out or die "Cannot open scalar handle: $!";
+        local *STDOUT = $fh;
+        $runner->_show_version;
+    }
+
+    like($out, qr/PAGITest::FakeServer 0\.001/, 'reports selected server class and its version');
+    unlike($out, qr/PAGI::Server\b/, 'does not hardcode PAGI::Server');
+
+    # The CLI path must work too: -s CLASS --version goes through
+    # parse_options, which must store the server class before its
+    # version early-return
+    my $cli_runner = PAGI::Runner->new;
+    $cli_runner->parse_options('-s', 'PAGITest::FakeServer', '--version');
+
+    my $cli_out = '';
+    {
+        open my $fh, '>', \$cli_out or die "Cannot open scalar handle: $!";
+        local *STDOUT = $fh;
+        $cli_runner->_show_version;
+    }
+
+    like($cli_out, qr/PAGITest::FakeServer 0\.001/, '-s CLASS --version reports the selected class');
+
+    # A bogus/unloadable server class must degrade to 'unknown', not crash
+    my $bogus_runner = PAGI::Runner->new(server => 'PAGITest::DoesNotExist');
+    my $bogus_out = '';
+    {
+        open my $fh, '>', \$bogus_out or die "Cannot open scalar handle: $!";
+        local *STDOUT = $fh;
+        $bogus_runner->_show_version;
+    }
+    like($bogus_out, qr/PAGITest::DoesNotExist unknown/, 'missing server class degrades to unknown');
 };
 
 done_testing;
