@@ -3,94 +3,51 @@ use warnings;
 use Test2::V0;
 use FindBin;
 use lib "$FindBin::Bin/../../lib";
+use File::Temp qw(tempfile);
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
 
 # ============================================================
-# Test: --http2 CLI Flag Processing
+# Test: --http2 CLI flag chain
 # ============================================================
-# Verifies that bin/pagi-server correctly parses the --http2
-# flag and passes it through to PAGI::Server via env var.
+# --http2 must flow: bin/pagi-server CLI -> server_options ->
+# server constructor. PAGITest::FakeServer (t/lib) stands in for
+# PAGI::Server, so no sockets are involved and the chain is
+# observable from its STDOUT.
 
-use PAGI::Server;
+my $pagi_server = "$FindBin::Bin/../../bin/pagi-server";
+my $tlib        = "$FindBin::Bin/../../t/lib";
 
-# ============================================================
-# --http2 sets _PAGI_SERVER_HTTP2 environment variable
-# ============================================================
-subtest '--http2 flag sets environment variable' => sub {
-    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
+my ($app_fh, $app_file) = tempfile(SUFFIX => '.pl', UNLINK => 1);
+print $app_fh "sub {}\n";
+close $app_fh;
 
-    # The BEGIN block in bin/pagi-server processes --http2 by setting
-    # $ENV{_PAGI_SERVER_HTTP2}. We test the full chain: env var → Server config.
-    # The env var → Server path is tested in 02-server-config.t, so here
-    # we verify the flag parsing by running a subprocess.
+sub run_cli {
+    my (@flags) = @_;
+    local $ENV{PAGI_ENV} = 'production';   # deterministic mode, no Lint wrap
+    return `$^X -Ilib -I$tlib $pagi_server @flags -s PAGITest::FakeServer $app_file 2>&1`;
+}
 
-    my $pagi_server = "$FindBin::Bin/../../bin/pagi-server";
-    plan skip_all => "bin/pagi-server not found" unless -f $pagi_server;
-
-    # Run pagi-server with --http2 and a minimal -e app that prints the env var
-    my $output = `$^X -Ilib $pagi_server --http2 -e 'sub { print \$ENV{_PAGI_SERVER_HTTP2} // "unset"; exit 0 }' 2>&1`;
-
-    # The process may fail (no port, etc.) but the env var should be set
-    # before PAGI::Runner runs. Use a more targeted test:
-    local $ENV{_PAGI_SERVER_HTTP2};
-    my $check_script = qq{
-        do "$pagi_server";
-    };
-    # Instead, test that Server reads the env var correctly
-    # (this is the integration point between CLI and Server)
-    local $ENV{_PAGI_SERVER_HTTP2} = 1;
-    my $loop = IO::Async::Loop->new;
-    my $server = PAGI::Server->new(
-        app   => sub { },
-        host  => '127.0.0.1',
-        port  => 0,
-        quiet => 1,
-    );
-    $loop->add($server);
-
-    ok($server->{http2_enabled}, 'Server enables http2 from _PAGI_SERVER_HTTP2 env var');
-    ok($server->{http2_protocol}, 'http2_protocol created from env var');
-
-    $loop->remove($server);
+subtest '--http2 reaches the server constructor' => sub {
+    my $out = run_cli('--http2');
+    like($out, qr/FAKESERVER http2=1/, '--http2 passes http2 => 1 via server_options');
 };
 
-# ============================================================
-# --http2 flag is removed from @ARGV
-# ============================================================
-subtest '--http2 does not interfere with app argument parsing' => sub {
-    # The BEGIN block should splice --http2 out of @ARGV so PAGI::Runner
-    # doesn't see it as an unknown option.
-    # We can verify this by checking that --http2 doesn't appear in the
-    # arguments after processing.
-
-    # Simulate the BEGIN block logic
-    my @test_argv = ('--http2', '--port', '5000', './app.pl');
-    my @to_splice;
-    for my $i (0 .. $#test_argv) {
-        if ($test_argv[$i] eq '--http2') {
-            push @to_splice, $i;
-        }
-    }
-    for my $i (reverse @to_splice) {
-        splice @test_argv, $i, 1;
-    }
-
-    is(\@test_argv, ['--port', '5000', './app.pl'],
-        '--http2 removed from ARGV, other args preserved');
+subtest 'http2 is absent without the flag' => sub {
+    my $out = run_cli();
+    like($out, qr/FAKESERVER http2=unset/, 'no --http2 means no http2 option');
 };
 
-# ============================================================
-# POD documents --http2 flag
-# ============================================================
+subtest 'environment variables play no part' => sub {
+    local $ENV{_PAGI_SERVER_HTTP2} = 0;    # would force-disable under the old design
+    my $out = run_cli('--http2');
+    like($out, qr/FAKESERVER http2=1/, 'flag works regardless of environment');
+};
+
 subtest 'bin/pagi-server documents --http2' => sub {
-    my $pagi_server = "$FindBin::Bin/../../bin/pagi-server";
-    plan skip_all => "bin/pagi-server not found" unless -f $pagi_server;
-
     open my $fh, '<', $pagi_server or die "Cannot open $pagi_server: $!";
     my $content = do { local $/; <$fh> };
     close $fh;
-
     like($content, qr/--http2/, 'bin/pagi-server mentions --http2');
 };
 

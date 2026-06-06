@@ -2188,7 +2188,7 @@ sub _init {
         // (($ENV{PAGI_ENV} // '') eq 'development' ? 1 : 0);
 
     # HTTP/2 support (opt-in, experimental)
-    $self->{http2} = delete $params->{http2} // $ENV{_PAGI_SERVER_HTTP2} // 0;
+    $self->{http2} = delete $params->{http2} // 0;
 
     # HTTP/2 protocol settings (only used when http2 is enabled)
     my $h2_max_concurrent_streams  = delete $params->{h2_max_concurrent_streams}  // 100;

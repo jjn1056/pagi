@@ -9,10 +9,6 @@ BEGIN {
             $ENV{PAGI_FUTURE_XS} = 1;
             push @to_splice, $i;
         }
-        elsif ($ARGV[$i] eq '--http2') {
-            $ENV{_PAGI_SERVER_HTTP2} = 1;
-            push @to_splice, $i;
-        }
     }
     # Remove processed flags in reverse order to preserve indices
     for my $i (reverse @to_splice) {
@@ -67,6 +63,7 @@ GetOptionsFromArray(
     'b|listener-backlog=i'  => \$server_opts{listener_backlog},
 
     # Misc
+    'http2'                 => \$server_opts{http2},
     'log-level=s'           => \$server_opts{log_level},
     'sync-file-threshold=i' => \$server_opts{sync_file_threshold},
     'access-log-format=s'   => \$server_opts{access_log_format},

@@ -45,24 +45,6 @@ subtest 'http2 flag accepted by Server' => sub {
 };
 
 # ============================================================
-# http2 via environment variable
-# ============================================================
-subtest 'http2 via _PAGI_SERVER_HTTP2 env var' => sub {
-    plan skip_all => "Net::HTTP2::nghttp2 not installed" unless PAGI::Server->has_http2;
-
-    local $ENV{_PAGI_SERVER_HTTP2} = 1;
-
-    my $server = PAGI::Server->new(
-        app   => $app,
-        host  => '127.0.0.1',
-        port  => 0,
-        quiet => 1,
-    );
-
-    ok($server->{http2}, 'http2 enabled via environment variable');
-};
-
-# ============================================================
 # _build_ssl_config includes ALPN when http2 is enabled
 # ============================================================
 subtest 'SSL config includes ALPN with http2' => sub {
