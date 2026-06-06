@@ -4,23 +4,24 @@ use Test2::V0;
 use IO::Async::Loop;
 use Net::Async::HTTP;
 use Future::AsyncAwait;
-use FindBin;
 
 use PAGI::Server;
 
 plan skip_all => "Server integration tests not supported on Windows" if $^O eq 'MSWin32';
 use PAGI::App::WrapPSGI;
 
-# Step 9: PSGI Compatibility Bridge
-# Tests for examples/09-psgi-bridge/app.pl
+# Integration tests: PSGI apps bridged via PAGI::App::WrapPSGI on PAGI::Server
 
 my $loop = IO::Async::Loop->new;
 
-# Load the example app
-my $app_path = "$FindBin::Bin/../examples/09-psgi-bridge/app.pl";
-my $app = do $app_path;
-die "Could not load app from $app_path: $@" if $@;
-die "App did not return a coderef" unless ref $app eq 'CODE';
+# Inline copy of examples/09-psgi-bridge/app.pl so this test is
+# self-contained (the example ships in a different distribution)
+my $psgi_app = sub {
+    my ($env) = @_;
+    my $body = do { local $/; readline $env->{'psgi.input'} } // '';
+    return [ 200, [ 'Content-Type' => 'text/plain' ], [ "PSGI says hi\n", "Body: $body" ] ];
+};
+my $app = PAGI::App::WrapPSGI->new(psgi_app => $psgi_app)->to_app;
 
 # Test 1: PSGI bridge runs legacy PSGI apps
 subtest 'PSGI bridge runs legacy PSGI apps - 09-psgi-bridge app' => sub {

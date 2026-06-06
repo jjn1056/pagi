@@ -10,7 +10,7 @@ use FindBin;
 use Digest::MD5 'md5_hex';
 use File::Temp;
 
-use lib "$FindBin::Bin/../lib";
+use lib "$FindBin::Bin/../../lib";
 use PAGI::Server;
 use PAGI::App::File;
 
@@ -19,7 +19,7 @@ use PAGI::App::File;
 # =============================================================================
 
 my $loop = IO::Async::Loop->new;
-my $static_dir = "$FindBin::Bin/../examples/app-01-file/static";
+my $static_dir = "$FindBin::Bin/fixtures/static";
 
 # Helper to create server with App::File
 sub create_server {

@@ -1,0 +1,7 @@
+Hello from PAGI::App::File!
+
+This is a plain text file for testing static file serving.
+It demonstrates that the server correctly handles:
+- Content-Type detection (text/plain)
+- Content-Length headers
+- ETag generation for caching

@@ -1,0 +1,10 @@
+{
+    "name": "PAGI::App::File",
+    "version": "1.0",
+    "features": [
+        "Static file serving",
+        "ETag caching",
+        "Range requests",
+        "MIME type detection"
+    ]
+}
