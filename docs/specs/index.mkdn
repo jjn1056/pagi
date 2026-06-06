@@ -8,3 +8,4 @@ These are the specifications for PAGI. The root specification outlines how appli
 - [HTTP and WebSocket Protocol](www.mkdn)
 - [Lifespan](lifespan.mkdn)
 - [TLS Extension](tls.mkdn)
+- [Server Runner Contract](server.mkdn)

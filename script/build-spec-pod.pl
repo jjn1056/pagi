@@ -34,6 +34,7 @@ my @SPEC_FILES = qw(
     www.mkdn
     lifespan.mkdn
     tls.mkdn
+    server.mkdn
 );
 
 # Mapping from .mkdn filenames to POD module names
@@ -42,6 +43,7 @@ my %MKDN_TO_POD = (
     'www.mkdn'      => 'PAGI::Spec::Www',
     'lifespan.mkdn' => 'PAGI::Spec::Lifespan',
     'tls.mkdn'      => 'PAGI::Spec::Tls',
+    'server.mkdn'   => 'PAGI::Spec::Server',
 );
 
 # Known Perl modules that should be L<> links on metacpan

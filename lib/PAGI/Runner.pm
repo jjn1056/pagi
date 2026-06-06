@@ -451,6 +451,11 @@ sub prepare_app {
 
     my $server = $runner->load_server;
 
+Constructs the configured server class (C<-s CLASS>, default
+L<PAGI::Server>) according to the server runner contract documented in
+L<PAGI::Spec::Server>: C<< $class->new(%options) >> followed by
+C<< $server->run >>. Any class implementing that contract works here.
+
 Creates the server instance with the prepared app and configuration.
 Parses server-specific options and passes them to the server constructor.
 

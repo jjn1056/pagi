@@ -1,0 +1,81 @@
+# PAGI Server Runner Contract
+
+**Version**: 0.1 (Draft)
+
+This document specifies the interface a PAGI server class implements so
+that application runners (`PAGI::Runner`'s `-s CLASS` option, deployment
+tooling, etc.) can construct and start it without server-specific
+knowledge. It is the server-side counterpart of the application
+interface described in [the main specification](main.mkdn).
+
+A PAGI server is any code that accepts PAGI applications and speaks the
+protocol in [the main specification](main.mkdn). Implementing this
+contract is OPTIONAL but RECOMMENDED for any server that wishes to be
+usable as a drop-in replacement with `PAGI::Runner` or compatible
+runners.
+
+## Constructor
+
+A conforming server class MUST provide a `new` class method accepting a
+hash of options:
+
+    my $server = My::PAGI::Server->new(%options);
+
+A runner passes the following common options. A conforming server MUST
+accept these (it MAY ignore ones that do not apply, but MUST NOT die on
+them):
+
+- `app` (code reference, required) - the PAGI application.
+- `host` (string) - interface to bind. Runners supply a default
+  (`PAGI::Runner` uses `127.0.0.1`) when no other binding option is given.
+- `port` (integer) - TCP port to bind. Runner default: `5000`.
+- `quiet` (boolean) - suppress startup banners and informational output.
+- `access_log` (filehandle or undef) - where to write access logs; an
+  explicit undef disables access logging. When the option is absent the
+  server chooses its own default.
+- `loop_type` (string) - event loop implementation hint. Servers not
+  offering a choice of loop MAY ignore it.
+
+Any further options are server-specific. They are collected by the
+server's own CLI wrapper (for `PAGI::Server`, `bin/pagi-server`) and
+passed through the runner's `server_options` mechanism verbatim. A
+conforming server SHOULD reject options it does not recognize as
+either common options (listed above) or its own documented
+server-specific options, with a clear error naming the option.
+
+## run
+
+A conforming server class MUST provide a `run` instance method:
+
+    $server->run;
+
+`run` blocks the calling process, owns the event loop, and returns (or
+exits) only when the server has shut down. Signal handling, worker
+management, and graceful-shutdown behaviour are server-specific.
+
+Runners MUST NOT place critical cleanup logic in code that follows
+`run`, since a conforming server MAY terminate the process directly
+instead of returning; runners should register cleanup with Perl's `END`
+mechanism or equivalent.
+
+## Runner conventions
+
+Application runners that construct servers by class name SHOULD:
+
+- accept the class via a `-s`/`--server CLASS` style option, defaulting
+  to `PAGI::Server`;
+- load the class, call `new` with the options above plus any
+  server-specific passthrough options, then call `run`;
+- treat `run` as blocking and perform daemonization, PID files, and
+  privilege dropping before calling it.
+
+See `PAGI::Runner` for the reference runner implementation and
+`PAGI::Server` for the reference server.
+
+## Version History
+
+- 0.1 (Draft): Initial server runner contract specification
+
+## Copyright
+
+This document has been placed in the public domain.
