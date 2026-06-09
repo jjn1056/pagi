@@ -12,10 +12,12 @@ A real-time job queue dashboard demonstrating PAGI's async capabilities with HTT
 
 ## Running
 
-From the PAGI root directory:
+From the PAGI root directory, using `pagi-server` from the `PAGI-Server`
+distribution. This example keeps its modules under its own `lib/`, so put that
+on the module search path:
 
 ```bash
-perl -Ilib -Iexamples/11-job-runner/lib bin/pagi-server \
+PERL5LIB=examples/11-job-runner/lib pagi-server \
     --app examples/11-job-runner/app.pl --port 5001
 ```
 
