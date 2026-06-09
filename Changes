@@ -1,5 +1,19 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002000
+  - The PAGI distribution is now the specification: PAGI.pm plus the
+    generated PAGI::Spec::* documentation. The reference server and its
+    runner (PAGI::Server::Runner) moved to the PAGI-Server distribution,
+    and the application toolkit (middleware, apps, endpoints,
+    request/response, test utilities) moved to the PAGI-Tools
+    distribution. Git history preserved.
+  - The spec modules are pure documentation. For backward compatibility
+    during the transition, PAGI pulls in PAGI-Server and PAGI-Tools as
+    runtime dependencies, so existing `requires 'PAGI'` dependents keep
+    getting the server and toolkit. Depend on PAGI::Server / PAGI::Tools
+    directly; this convenience dependency will be removed in a future
+    release.
+
 0.001023 - 2026-05-21
   - Fixed incorrect metadata and package version information
   - POD fixes.

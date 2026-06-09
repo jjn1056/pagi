@@ -1,2 +1,0 @@
-This file is in a subdirectory.
-Testing nested path serving.

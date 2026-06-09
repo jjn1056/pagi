@@ -31,9 +31,12 @@ When in doubt, match what you see in the surrounding code.
 
 ## Running Tests
 
+The spec distribution has minimal tests (the `PAGI::Spec::*` POD is
+generated at build time and not present in the repo). `prove -l t/` runs
+the load test against the one shippable module, `PAGI.pm`.
+
 ```bash
-prove -l t/                      # Quick test run during development
-RELEASE_TESTING=1 prove -l t/    # Full test suite - run before submitting PR
+prove -l t/                      # Run the spec distribution tests
 ```
 
 ## AI-Assisted Contributions

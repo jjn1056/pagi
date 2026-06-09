@@ -13,7 +13,7 @@ use Future::AsyncAwait;
 use IO::Async::Loop;
 
 # Load the IO::Async implementation for Future::IO
-# This is what PAGI::Server does at startup
+# This is what a PAGI server does at startup
 use Future::IO::Impl::IOAsync;
 
 my $loop = IO::Async::Loop->new;

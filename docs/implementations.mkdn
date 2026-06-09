@@ -4,7 +4,7 @@ Complete or upcoming implementations of PAGI-compatible components — servers, 
 
 ## Servers
 
-- **PAGI::Server** — Reference IO::Async-based server with HTTP/1.1, WebSocket, SSE, and TLS support. Features multi-worker pre-fork mode, async file streaming, graceful shutdown, and signal-based worker scaling. Protocols: `http`, `websocket`, `sse`, `lifespan`. Status: **stable**. [GitHub](https://github.com/jnapiorkowski/PAGI)
+- **PAGI-Server** — Reference IO::Async-based server with HTTP/1.1, HTTP/2, WebSocket, SSE, and TLS support. Features multi-worker pre-fork mode, async file streaming, graceful shutdown, and signal-based worker scaling. Protocols: `http`, `websocket`, `sse`, `lifespan`. Status: **beta**. [GitHub](https://github.com/jjn1056/pagi-server)
 
 ## Application Frameworks
 
@@ -12,11 +12,12 @@ Complete or upcoming implementations of PAGI-compatible components — servers, 
 
 ## Middleware & Apps
 
-Bundled with PAGI::Server:
+Part of the PAGI-Tools distribution:
 
 - **PAGI::Middleware::*** — 37 middleware components including GZip, CORS, CSRF, Session, RateLimit, Auth (Basic/Bearer), and more.
 - **PAGI::App::*** — 17 reusable apps including File (static serving), Directory (listings), Proxy, URLMap, WrapPSGI, and WebSocket/SSE utilities.
 
 ## Tools / Utilities
 
-- **pagi-server** — CLI for running PAGI applications. Supports daemonization, PID files, privilege dropping, SSL, multi-worker mode, and graceful restarts via signals. Bundled with PAGI::Server.
+- **pagi-server** — CLI for running PAGI applications. Supports daemonization, PID files, privilege dropping, SSL, multi-worker mode, and graceful restarts via signals. Bundled with the PAGI-Server distribution.
+- **PAGI-Tools** — Application toolkit: Runner, middleware, apps, endpoints, request/response handling, and test utilities. Protocols: `http`, `websocket`, `sse`. Status: **beta**. [GitHub](https://github.com/jjn1056/pagi-tools)
