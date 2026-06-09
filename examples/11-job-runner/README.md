@@ -2,6 +2,14 @@
 
 A real-time job queue dashboard demonstrating PAGI's async capabilities with HTTP, SSE, and WebSocket protocols working together.
 
+> **Note: this example is IO::Async-specific.** The background worker tick, the
+> WebSocket ping, and the per-job countdown timers use `IO::Async::Timer::*` and
+> obtain the loop directly via `IO::Async::Loop`, so it runs only under an
+> IO::Async-based server such as PAGI::Server. It could be made loop-agnostic by
+> replacing those timers with `Future::IO` (e.g. `Future::IO->sleep`), which
+> works under any conforming server -- the rest of the app is plain PAGI
+> protocol and would not need to change.
+
 ## Running
 
 From the PAGI root directory:
