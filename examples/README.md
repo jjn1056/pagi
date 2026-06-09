@@ -25,8 +25,8 @@ and L<PAGI::Spec>.
 9. `11-job-runner` - background job processing (uses `IO::Async` directly for timers/subprocesses)
 10. `12-utf8` - UTF-8 handling demonstration
 
-Also included: `backpressure-test` and `worker-pool-prototype.pl` -- lower-level
-explorations of backpressure and worker pools.
+Also included: `worker-pool-prototype.pl` -- a lower-level exploration of worker
+pools.
 
 ## More examples
 
