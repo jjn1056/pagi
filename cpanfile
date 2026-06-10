@@ -20,16 +20,13 @@ on 'test' => sub {
     requires 'Future::AsyncAwait', '0.38';
     requires 'IO::Async',          '0.78';
     requires 'Future::IO',         '0.08';
+    requires 'Test::Pod',          '1.41';
 };
 
-# Development / build: the PAGI::Spec::* POD is generated from
-# docs/specs/*.mkdn at dzil-build time by script/build-spec-pod.pl,
-# which shells out to App::sdview.
+# Development / build dependencies for building the distribution with dzil.
 on 'develop' => sub {
     requires 'Dist::Zilla', '6.030';
     requires 'Dist::Zilla::Plugin::MetaJSON';
     requires 'Dist::Zilla::Plugin::MetaResources';
     requires 'Dist::Zilla::Plugin::Prereqs::FromCPANfile';
-    requires 'Dist::Zilla::Plugin::Run';
-    requires 'App::sdview';
 };

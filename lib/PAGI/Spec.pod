@@ -1,0 +1,543 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::Spec - The base PAGI specification: application interface and core concepts
+
+=head1 PAGI (Perl Asynchronous Gateway Interface) Specification
+
+I<Note: code examples use modern Perl with subroutine signatures for clarity.
+This is a documentation preference and B<not> a requirement of the PAGI
+specification.>
+
+B<Version>: 0.2 (Draft)
+
+=head2 Introduction
+
+While work has been done to support asynchronous response handling in PSGI (the C<psgi.nonblocking> environment key), support for protocols with multiple input events (such as WebSockets) remained hacks. The use of non-blocking or asynchronous handling based on PSGI never took off. The PSGI specification hasn't changed since July 2013. Since then, asynchronous programming in has taken off in many programming languages, including in Perl: although Perl does not natively support the C<async/await> pattern like Python or JavaScript, the module C<Future::AsyncAwait> implements the pattern since 24 January 2018 for Perl versions 5.16 and up.
+
+Considering the above and the fact that similar specifications have existed for several years now for other languages, the time has arrived to create a fully asynchronous webserver gateway interface specification for Perl.
+
+Perl does not natively support Python's C<async/await> pattern, but we can achieve similar functionality using B<Future::AsyncAwait> which provides C<async/await> syntax on top of C<Future.pm>. Below is how we translate key ASGI components into Perl.
+
+=head2 Abstract
+
+This document proposes a standard interface between network protocol servers (particularly web servers) and Perl applications, intended to support multiple common protocol styles (including HTTP/1.1, HTTP/2, and WebSocket).
+
+This base specification defines the APIs by which servers interact with and run application code. Each supported protocol (such as HTTP) includes a sub-specification detailing how to encode and decode that protocol into structured messages.
+
+=head2 Rationale
+
+PSGI has worked well as a standard interface for synchronous Perl web applications. However, its design is tied to the HTTP-style request/response cycle, and cannot support full-duplex protocols such as WebSockets.
+
+PAGI preserves a simple application interface while introducing a fully asynchronous message-based abstraction, enabling data to be sent and received at any time during a connection's lifecycle.
+
+It defines:
+
+=over
+
+=item -
+
+A standardized interface for communication between server and application.
+
+=item -
+
+A set of message formats per protocol.
+
+=back
+
+The primary goal is to support WebSockets, HTTP/2, and Server-Sent Events (SSE) alongside HTTP/1.1, while maintaining compatibility with existing PSGI applications through a transitional adapter layer.
+
+=head2 Overview
+
+PAGI consists of two main components:
+
+=over
+
+=item -
+
+A I<protocol server> which manages sockets and translates network events into connection-level messages.
+
+=item -
+
+An I<application> which is invoked once per connection and communicates via asynchronous message passing.
+
+=back
+
+Applications are written as asynchronous subroutines using C<Future::AsyncAwait>. They receive a C<scope> describing the connection, and two coderefs, C<$recv> and C<$send>, which return Futures representing event input and output.
+
+Unlike PSGI, PAGI applications persist for the entire connection lifecycle. They process incoming events from the server and emit outgoing events in response.
+
+Two important concepts in PAGI:
+
+=over
+
+=item -
+
+I<Connection scope>: A hashref describing the connection.
+
+=item -
+
+I<Events>: Hashrefs representing messages sent/received during the connection.
+
+=back
+
+=head2 Specification Details
+
+=head3 Connection Scope
+
+Each incoming connection causes the application to be invoked with a C<scope> hashref. Its keys include:
+
+=over
+
+=item -
+
+C<type>: Protocol type, e.g., C<http>, C<websocket>
+
+=item -
+
+C<pagi>: A hashref with at least:
+
+=item -
+
+C<<< version => '0.2' >>>
+
+=item -
+
+C<<< spec_version => '0.2' >>> (optional; protocol-specific override if it diverges)
+
+=item -
+
+C<features> (optional): a hashref of server-reported capabilities such as:
+
+=over
+
+=item -
+
+C<supports_streaming> => 1 if streaming responses are supported for this scope
+
+=item -
+
+C<max_request_body_size> => maximum accepted request body size (in bytes)
+
+=item -
+
+C<max_concurrent_streams> => maximum streams per HTTP/2/HTTP/3 connection
+
+=item -
+
+C<supports_trailers> => 1 if trailer frames are accepted for the response
+
+=back
+
+=back
+
+Clarification on PAGI version keys:
+
+=over
+
+=item -
+
+C<version>: Signals the core PAGI specification version that governs scopes/events. This value B<must> be a string.
+
+=item -
+
+C<spec_version>: Indicates the version for the specific protocol (such as HTTP or WebSocket). Servers may omit it, in which case clients should assume it matches C<version>.
+
+=item -
+
+C<features>: Server-defined key/value pairs that describe optional behaviors for the connection. Values should use the permitted data types from this specification.
+
+=item -
+
+Additional keys may be defined per protocol specification (e.g., HTTP, WebSocket) and must be documented there.
+
+=back
+
+The scope describes the full lifetime of the connection, and persists until the connection is closed. Some protocols (e.g., HTTP) may treat each request as a distinct scope, while others (e.g., WebSocket) maintain one persistent scope for the entire session.
+
+Specifically:
+
+=over
+
+=item -
+
+HTTP treats each incoming request (for example, GET or POST requests) as a separate scope that exists only for the life of that request-response cycle. After the response is sent fully, the scope is discarded.
+
+=item -
+
+WebSocket connection establishes a single scope at connection initiation, persisting for the full duration of the continuous message exchanges until the WebSocket connection closes.
+
+=back
+
+Applications may need to wait for an initial event before sending any messages, depending on the protocol specification.
+
+If the application does not recognize or support C<<< scope->{type} >>>, it MUST throw an exception. The PAGI server must handle such exceptions gracefully, by closing the connection promptly, optionally logging the issue and providing relevant protocol-specific error responses or messages.
+
+This explicit requirement ensures that servers never assume application-protocol compatibility without explicit support declared by implementations.
+
+=head3 Events
+
+PAGI defines communication in terms of discrete events.
+
+The C<type> key in each event must be a namespaced string of the form C<protocol.message_type>, such as C<http.request> or C<websocket.send>. This convention ensures clear protocol dispatching and avoids naming collisions.
+
+Reserved C<type> prefixes include:
+
+=over
+
+=item -
+
+C<http> -- standard HTTP events
+
+=item -
+
+C<websocket> -- WebSocket events
+
+=item -
+
+C<lifespan> -- process lifecycle events
+
+=item -
+
+C<pagi> -- reserved for future PAGI-defined system events
+
+=item -
+
+C<ext.> -- reserved for experimental or nonstandard events
+
+=back
+
+Custom user-defined protocols should avoid clashing with these prefixes.
+
+    my $event = await $recv->();
+    await $send->({ type => 'http.response.start', ... });
+
+=head4 Permitted Event Data Types
+
+The following types are permitted in event data structures:
+
+=over
+
+=item -
+
+B<Strings> (Perl scalars):
+
+=item -
+
+B<Text strings>: Strings containing decoded Unicode characters. These must be explicitly encoded according to the relevant protocol before serialization or transmission.
+
+=item -
+
+B<Byte strings>: Strings containing opaque binary data. Their intended encoding or interpretation, if applicable, must be explicitly specified by the relevant protocol.
+
+I<Note>: Do B<not> rely on Perl's internal UTF-8 flag (C<utf8::is_utf8>) to distinguish between text and binary strings. The protocol or application context must explicitly indicate the intent.
+
+=item -
+
+B<Integers>: Signed 64-bit integers. While Perl supports arbitrary-size integers, PAGI restricts integers to this range to ensure interoperability across serialization formats and programming languages.
+
+Integers commonly stand in for boolean values (C<0> or C<1>). When a protocol flag is described as boolean it B<must> still use integers (never custom barewords) so transports remain consistent.
+
+=item -
+
+B<Floating-point numbers>: IEEE 754 double-precision floats. Special values (C<NaN>, C<Inf>, C<-Inf>) are B<not permitted>, due to inconsistent cross-platform and serialization support.
+
+=item -
+
+B<C<undef>>: Represents the absence of a value.
+
+=item -
+
+B<Arrayrefs>: Arrays containing only permitted data types.
+
+=item -
+
+B<Hashrefs>: Hashes with keys stored as B<byte strings>.
+
+=item -
+
+If keys represent textual data, they B<must be explicitly encoded into UTF-8 byte strings> by the application.
+
+=item -
+
+Values must contain only permitted data types.
+
+=back
+
+B<Note:> Booleans are intentionally omitted from the core spec to avoid ambiguity in Perl, which lacks a native boolean type. In contexts where ASGI would use C<true>/C<false>, PAGI protocol specifications will define expected values explicitly -- usually C<0> or C<1>, or by the presence/absence of a defined value.
+
+=head3 Applications
+
+PAGI applications are single coderefs returning Futures.
+
+Applications may optionally support lifecycle hooks such as shutdown. If supported, the PAGI server should call:
+
+    $app->on_shutdown(sub {
+        # Optional shutdown logic (e.g., flush logs, close DB)
+    });
+
+This pattern is reserved and may be formalized in a future PAGI extension.
+
+Applications B<must> throw an exception if the incoming C<<< scope->{type} >>> is not supported. This prevents the server from assuming a protocol is handled when it is not, and avoids ambiguity in multi-protocol deployments.
+
+Each application is expected to run for the duration of a connection and may remain alive briefly after disconnect to perform cleanup. The interface is:
+
+    use Future::AsyncAwait;
+
+    async sub application ($scope, $recv, $send) {
+        if ($scope->{type} ne 'http') {
+            die "Unsupported protocol type: $scope->{type}";
+        }
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [ [ 'content-type', 'text/plain' ] ],
+        });
+
+        await $send->({
+            type       => 'http.response.body',
+            body       => "Hello from PAGI!",
+            more       => 0,
+        });
+
+        return;
+    }
+
+=over
+
+=item -
+
+C<$scope>: Hashref with connection metadata
+
+=item -
+
+C<$recv>: Coderef returning a C<Future> resolving to the next event
+
+=item -
+
+C<$send>: Coderef taking an event hashref and returning a C<Future>
+
+=back
+
+Each application is called per-connection, and remains active until the connection closes and cleanup completes.
+
+=head3 Application Completion Contract
+
+B<The application's returned Future represents request completion.> When this Future resolves, the server considers the response finished and may close the connection, write access logs, or handle the next request.
+
+Applications B<must> await all C<$send> calls before their Future completes:
+
+    # CORRECT: await all sends
+    async sub app ($scope, $recv, $send) {
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => 'Hello' });
+    }
+
+    # WRONG: send not awaited, app Future resolves before send completes
+    async sub app ($scope, $recv, $send) {
+        $send->({ type => 'http.response.body', body => 'Hello' })->retain;
+        return;  # App Future resolves immediately, send may not complete!
+    }
+
+Work scheduled via C<<< ->retain >>> or other fire-and-forget patterns will race with connection cleanup and produce undefined behavior. The server has no visibility into retained Futures - they exist outside the application's Future tree.
+
+B<Use C<PAGI::Middleware::Lint>> during development to detect incomplete responses.
+
+=head3 Legacy Applications
+
+Legacy (PSGI) applications are not async and follow a synchronous interface. Support for these can be implemented via a compatibility adapter.
+
+Adapters must call the PSGI app once with C<$env> and transform the response into PAGI event messages.
+
+=head3 Protocol Specifications
+
+Each protocol defines:
+
+=over
+
+=item -
+
+Scope format
+
+=item -
+
+Event types for C<$recv> and C<$send>
+
+=back
+
+Common examples:
+
+=over
+
+=item -
+
+C<http.request>, C<http.response.start>, C<http.response.body>
+
+=item -
+
+C<websocket.connect>, C<websocket.receive>, C<websocket.send>
+
+=back
+
+The C<type> field in scope and events identifies the protocol and message:
+
+    $event->{type} eq 'http.request';
+    $scope->{type} eq 'websocket';
+
+Applications B<must> throw an exception if the protocol is unknown.
+
+Current protocol specifications:
+
+=over
+
+=item -
+
+L<HTTP, WebSocket and SSE|PAGI::Spec::Www>
+
+=item -
+
+L<Lifespan|PAGI::Spec::Lifespan>
+
+=back
+
+=head3 Middleware
+
+PAGI middleware wraps an application:
+
+    use Future::AsyncAwait;
+
+    sub middleware ($app) {
+        return async sub ($scope, $recv, $send) {
+            my $modified_scope = { %$scope };
+            $modified_scope->{custom} = 1;
+
+            my $result = eval { await $app->($modified_scope, $recv, $send) };
+            if (my $error = $@) {
+                # Middleware MUST propagate exceptions clearly without silently swallowing them.
+                # Optionally, middleware can log or handle the error explicitly before rethrowing.
+                warn "Middleware encountered an application error: $error";
+                die $error;
+            }
+            return $result;
+
+            # Middleware should default to shallow cloning and explicitly deep clone if required.
+        };
+    }
+
+Middleware B<must not> mutate the original C<$scope> in-place; always clone before modification.
+
+=head3 Cancellation and Disconnects
+
+If the server detects client-driven cancellation (e.g., HTTP/2 resets or WebSocket disconnects), it B<must> deliver the appropriate disconnect event to the application:
+
+=over
+
+=item -
+
+HTTP: C<<< { type => 'http.disconnect' } >>>
+
+=item -
+
+WebSocket: C<<< { type => 'websocket.disconnect' } >>>
+
+=item -
+
+Other protocols: see their respective specifications for the canonical event name.
+
+=back
+
+Applications receiving these events should immediately halt unnecessary work, optionally send minimal acknowledgments if the protocol allows it, and perform cleanup for open resources or background tasks. Servers must also ensure timely cleanup after the application finishes its cancellation handling.
+
+=head3 Error Handling
+
+Servers must raise exceptions if:
+
+=over
+
+=item -
+
+Events are missing required fields
+
+=item -
+
+Event fields are of the wrong type
+
+=item -
+
+The C<type> field is unrecognized
+
+=back
+
+Applications should do the same when receiving malformed events.
+
+Extra fields in events B<must not> cause errors -- this supports forward-compatible upgrades.
+
+If C<$send> is called after connection closure, it should be a no-op unless specified otherwise.
+
+=head3 Extensions
+
+Servers may expose additional features via the C<extensions> key in the scope:
+
+    $scope->{extensions} = {
+        fullflush => {},
+    };
+
+Applications may send new events such as:
+
+    await $send->({ type => 'http.fullflush' });
+
+Only if the server declares support in C<extensions>.
+
+=head3 Strings and Unicode
+
+All keys in scope and event hashrefs B<must> be strings that are valid UTF-8 when interpreted as bytes. The UTF-8 flag is not required, but the keys must decode cleanly as UTF-8.
+
+Byte content (e.g., body payloads) must be passed as Perl scalars B<without> the UTF-8 flag set. Applications are responsible for encoding/decoding appropriately.
+
+=head2 Version History
+
+=over
+
+=item -
+
+0.2 (Draft): Loop-agnostic applications, improved event validation, clarified
+application completion contract, added extension mechanism documentation
+
+=item -
+
+0.1 (Draft): Initial PAGI version, modeled after ASGI 3.0
+
+=back
+
+=head2 See Also
+
+The PAGI specification spans several documents:
+
+=over
+
+=item -
+
+L<PAGI::Spec::Www> - HTTP, WebSocket, and SSE message formats
+
+=item -
+
+L<PAGI::Spec::Lifespan> - startup and shutdown lifecycle protocol
+
+=item -
+
+L<PAGI::Spec::Tls> - TLS connection information extension
+
+=item -
+
+L<PAGI::Spec::Server> - server runner contract for swappable servers
+
+=back
+
+See L<PAGI> for an overview of the ecosystem and L<PAGI::Tutorial> for a guided
+introduction to the protocol.
+
+=head2 Copyright
+
+This document is placed in the public domain.

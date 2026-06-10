@@ -1,0 +1,1461 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::Spec::Www - PAGI message formats for HTTP, WebSocket, and SSE
+
+=head1 HTTP, WebSocket & SSE PAGI Message Format
+
+B<Version>: 0.2 (Draft)
+
+The HTTP, WebSocket & SSE PAGI sub-specification defines how HTTP/1.1, HTTP/2, WebSocket, and Server-Side Events (SSE) connections are transported within PAGI.
+
+It is designed to be a superset of the PSGI specification and specifies how to translate between PAGI and PSGI for compatible requests.
+
+=head2 Spec Versions
+
+=over
+
+=item -
+
+C<0.2>: Added keepalive events (C<websocket.keepalive>, C<sse.keepalive>), send timeouts, disconnect reasons, SSE support for all HTTP methods (not just GET) with C<sse.request> receive event for request body. Added C<pagi.connection> scope key for non-destructive disconnect detection.
+
+=item -
+
+C<0.1>: Initial draft, based on ASGI 2.5, including Server-Side Events support.
+
+=back
+
+=head2 Common Data Types
+
+=head3 Headers Format
+
+Headers are represented as C<ArrayRef[ArrayRef[Bytes]]> - an array of 2-element tuples where each tuple contains C<[name, value]>:
+
+    headers => [
+        ['content-type', 'text/html; charset=utf-8'],
+        ['x-request-id', '12345'],
+        ['set-cookie', 'session=abc'],
+        ['set-cookie', 'tracking=xyz'],  # duplicate names allowed
+    ]
+
+B<Why tuples instead of PSGI's flat array?>
+
+PSGI uses a flat array with implicit pairs: C<['Content-Type', 'text/html', 'X-Custom', 'value']>. PAGI uses explicit tuples for several reasons:
+
+=over 4
+
+=item 1.
+
+B<Clearer iteration> - Each header is a discrete unit:
+
+    # PAGI - straightforward
+    for my $header (@$headers) {
+        my ($name, $value) = @$header;
+    }
+
+    # PSGI - requires index math
+    for (my $i = 0; $i < @$headers; $i += 2) {
+        my ($name, $value) = @{$headers}[$i, $i+1];
+    }
+
+=item 2.
+
+B<Explicit duplicates> - Duplicate header names (common for C<Set-Cookie>) are visually obvious
+
+=item 3.
+
+B<Easier manipulation> - Filtering, mapping, and transforming headers works naturally with array operations:
+
+    # Remove all cookies
+    my @filtered = grep { $_->[0] ne 'set-cookie' } @$headers;
+
+    # Find a header
+    my ($ct) = grep { $_->[0] eq 'content-type' } @$headers;
+
+=item 4.
+
+B<ASGI compatibility> - Matches the Python ASGI specification that PAGI is modeled on
+
+=back
+
+B<Rules:>
+
+=over
+
+=item -
+
+Header names MUST be lowercase byte strings
+
+=item -
+
+Header values MUST be byte strings (opaque, not decoded)
+
+=item -
+
+Each inner arrayref MUST contain exactly 2 elements: C<[name, value]>
+
+=item -
+
+Duplicate header names are permitted (required for C<Set-Cookie>, etc.)
+
+=back
+
+B<HTTP::Headers Compatibility:>
+
+PSGI's flat array format is more compatible with C<<< HTTP::Headers->flatten() >>>. If you need to interoperate:
+
+    # PAGI tuples -> flat array (for HTTP::Headers)
+    my @flat = map { @$_ } @$pagi_headers;
+    my $hh = HTTP::Headers->new(@flat);
+
+    # Flat array -> PAGI tuples
+    my @flat = $http_headers->flatten;
+    my @pagi = map { [$flat[$_*2], $flat[$_*2+1]] } 0 .. ($#flat/2);
+
+=head3 Scope Extension Keys
+
+The scope hashref may contain additional keys beyond those defined in the HTTP, WebSocket, and SSE sections below. This allows middleware and applications to pass data through the request lifecycle.
+
+B<Reserved prefixes:>
+
+=over
+
+=item -
+
+C<pagi.*> - Reserved for PAGI spec extensions (e.g., C<pagi.router>, C<pagi.session>)
+
+=item -
+
+Keys without a dot prefix (e.g., C<type>, C<method>, C<path>) - Reserved for core spec use
+
+=back
+
+B<Custom keys:>
+
+Applications and third-party middleware SHOULD use a unique key or prefix to avoid collisions. Two common patterns:
+
+    # Pattern 1: Single hashref (recommended for grouped data)
+    $scope->{myauth} = {
+        user  => $user_object,
+        roles => ['admin', 'editor'],
+    };
+
+    # Pattern 2: Dotted keys (for flat/independent values)
+    $scope->{'myapp.request_id'} = $uuid;
+    $scope->{'myapp.started_at'} = time();
+
+Either approach works - choose based on whether your data is naturally grouped or independent.
+
+B<Allowed values:>
+
+Scope values may be any Perl data type:
+
+=over
+
+=item -
+
+Scalars, arrayrefs, hashrefs
+
+=item -
+
+Blessed objects
+
+=item -
+
+Code references
+
+=back
+
+B<Note:> Objects in scope are NOT serializable. Do not assume scope can be passed between processes, persisted to storage, or serialized to JSON. Scope exists only for the lifetime of a single request within a single process.
+
+B<Example:>
+
+    # Authentication middleware - hashref pattern
+    $scope->{myauth} = {
+        user  => $user_object,
+        roles => ['admin', 'editor'],
+        authenticated_at => time(),
+    };
+
+    # Router middleware (PAGI built-in)
+    $scope->{'pagi.router'} = {
+        params => { id => '42' },
+        route  => '/users/:id',
+    };
+
+    # Application accessing middleware data
+    my $user = $scope->{myauth}{user};
+    my $id = $scope->{'pagi.router'}{params}{id};
+
+B<Middleware guidelines:>
+
+=over
+
+=item -
+
+Document the keys your middleware adds to scope
+
+=item -
+
+Use consistent naming within your namespace
+
+=item -
+
+Don't modify keys outside your namespace
+
+=item -
+
+Check for key existence before assuming middleware ran
+
+=back
+
+=head2 HTTP
+
+PAGI covers HTTP/1.0, HTTP/1.1, and HTTP/2. Protocol servers assign separate scopes for requests within the same HTTP/2 connection and multiplex responses appropriately.
+
+=head3 HTTP/2 Stream Mapping
+
+PAGI servers must translate HTTP/2 frames into PAGI HTTP events per stream. Applications only see structured events, not raw frames:
+
+=over
+
+=item -
+
+B<HEADERS>: start a new PAGI C<http> scope and emit an initial C<http.request> event with headers and C<<< more => 1 >>> if DATA will follow, or C<<< more => 0 >>> if C<END_STREAM> was signaled immediately.
+
+=item -
+
+B<DATA>: emit subsequent C<http.request> events with C<<< body => <chunk> >>> and C<<< more => 1 >>> or C<0> depending on C<END_STREAM>.
+
+=item -
+
+B<END_STREAM>: if no DATA frames, send an C<http.request> with C<<< body => '' >>> and C<<< more => 0 >>> to signal end of request.
+
+=item -
+
+B<RST_STREAM>: trigger a C<http.disconnect> event and cancel any outstanding Futures for that scope.
+
+=item -
+
+B<WINDOW_UPDATE / PRIORITY>: ignored by default (advanced flow control is optional).
+
+=item -
+
+B<PUSH_PROMISE>: not supported; servers must reject push promises.
+
+=back
+
+Only HTTP/2 over TLS (C<h2>) is required for the initial implementation; cleartext HTTP/2 (C<h2c>) is optional.
+
+The HTTP version is available in the scope. Pseudo headers (like C<:authority>) from HTTP/2 and HTTP/3 must be removed; if C<:authority> is present, its value must be used to populate or override the C<host> header.
+
+Multiple C<Set-Cookie> headers must be preserved individually, and C<Cookie> headers should be combined or split according to the version-specific rules (as per RFC 7230, RFC 6265, and RFC 9113).
+
+=head3 Cookie Header Normalization
+
+PAGI servers B<must normalize C<Cookie> headers> before passing them to the application.
+
+=over
+
+=item -
+
+If multiple C<Cookie:> headers are received from the client (which may happen in real-world deployments despite RFC guidance), the server must:
+
+=item -
+
+Concatenate them using C<"; "> (semicolon followed by space)
+
+=item -
+
+Ensure only B<one C<cookie> header> appears in the PAGI C<headers> list
+
+=back
+
+B<Example:>
+
+If the client sends:
+
+    Cookie: a=1 Cookie: b=2; c=3
+
+The PAGI scope must include:
+
+    headers => [
+      [ 'cookie', 'a=1; b=2; c=3' ]
+    ]
+
+The server does not parse the cookie string into key-value pairs -- parsing is left to middleware or application code. The server only guarantees RFC-compliant normalization.
+
+=head3 HTTP Connection Scope
+
+Each HTTP request has a single-request connection scope. Scope keys:
+
+=over
+
+=item -
+
+C<type> (String) -- C<"http">
+
+=item -
+
+C<pagi["version"]> (String) -- PAGI version
+
+=item -
+
+C<pagi["spec_version"]> (String) -- PAGI HTTP spec version (default C<"0.2">)
+
+=item -
+
+C<http_version> (String) -- C<"1.0">, C<"1.1">, or C<"2">
+
+=item -
+
+C<method> (String) -- Uppercase HTTP method
+
+=item -
+
+C<scheme> (String, default C<"http">) -- URL scheme (C<"http"> or C<"https">)
+
+=item -
+
+C<path> (String) -- Decoded HTTP path
+
+=item -
+
+C<raw_path> (Bytes, optional) -- Original HTTP path bytes
+
+=item -
+
+C<query_string> (Bytes) -- Percent-encoded query string
+
+=item -
+
+C<root_path> (String, default C<"">) -- Application mount path, equivalent to C<SCRIPT_NAME> in PSGI
+
+=item -
+
+C<headers> (ArrayRef[ArrayRef[Bytes]]) -- Original HTTP headers. Header names B<must> be lower-cased byte strings and header values must be opaque byte strings.
+
+=item -
+
+C<client> (ArrayRef[String, Int], optional) -- C<[host, port]> of client
+
+=item -
+
+C<server> (ArrayRef[String, Optional[Int]], optional) -- C<[host, port]> or C<[path, undef]> for Unix sockets
+
+=item -
+
+C<state> (HashRef, optional) -- State namespace from lifespan
+
+=item -
+
+C<pagi.connection> (Object) -- Connection state object for disconnect detection. See L<Connection State|#connection-state> below.
+
+=back
+
+=head3 Request - C<receive> event
+
+Note: Chunked transfer encoding must be de-chunked by the server. Each C<http.request> represents a de-chunked body fragment.
+
+Keys:
+
+=over
+
+=item -
+
+C<type> -- C<"http.request">
+
+=item -
+
+C<body> (Bytes, default C<"">) -- Request body chunk
+
+=item -
+
+C<more> (Int, default C<0>) -- C<1> if more body data is forthcoming, otherwise C<0>
+
+=back
+
+=head3 Response Start - C<send> event
+
+Note: Protocol servers are NOT required to flush on C<http.response.start>, giving flexibility to emit an error response in case of internal application errors before data is sent.
+
+Transfer-Encoding headers sent by the application must be ignored. Content-Encoding (e.g. gzip) is under application control.
+
+Keys:
+
+=over
+
+=item -
+
+C<type> -- C<"http.response.start">
+
+=item -
+
+C<status> (Int) -- HTTP status code
+
+=item -
+
+C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Response headers
+
+=item -
+
+C<trailers> (Int, default C<0>) -- C<1> if trailers will be sent after body via C<http.response.trailers>, otherwise C<0>
+
+=back
+
+=head3 Response Body - C<send> event
+
+Keys:
+
+=over
+
+=item -
+
+C<type> -- C<"http.response.body">
+
+=item -
+
+C<body> (Bytes, default C<"">) -- Response body chunk
+
+=item -
+
+C<file> (String) -- Absolute path to file for server to open and stream
+
+=item -
+
+C<fh> (Filehandle) -- Already-open filehandle for server to stream
+
+=item -
+
+C<offset> (Int, default C<0>) -- Byte offset to start reading from (for range requests)
+
+=item -
+
+C<length> (Int, optional) -- Number of bytes to send (omit to read until EOF)
+
+=item -
+
+C<more> (Int, default C<0>) -- Indicates more body content to follow (C<1> if true, otherwise C<0>). B<Ignored for C<file> and C<fh> responses> which are implicitly complete.
+
+=back
+
+The C<body>, C<file>, and C<fh> keys are B<mutually exclusive> - exactly one MUST be provided per event. Applications B<MUST> provide C<body> as encoded bytes. For text content, this typically means UTF-8 encoding before sending. The C<Content-Length> header (if present) MUST reflect byte length, not character length.
+
+B<Note:> When using C<file> or C<fh>, the response is implicitly complete after the file/handle contents are sent. The C<more> key is ignored for these response types - there is no need to specify C<<< more => 0 >>>.
+
+When C<file> or C<fh> is provided, servers MUST stream the file contents efficiently:
+
+=over
+
+=item -
+
+Servers SHOULD stream large files in chunks to avoid memory bloat
+
+=item -
+
+Servers MAY use zero-copy mechanisms (sendfile, splice) when appropriate
+
+=item -
+
+The C<offset> and C<length> keys enable range request support (e.g., HTTP 206 Partial Content)
+
+=item -
+
+For production file serving, consider using XSendfile middleware to delegate to a reverse proxy
+
+=item -
+
+When using C<file>, the server opens the file, streams it, and closes it
+
+=item -
+
+When using C<fh>, the application retains ownership and B<MUST> close the handle after the C<<< $send->() >>> Future completes
+
+=back
+
+B<Error Handling:>
+
+=over
+
+=item -
+
+If C<file> cannot be opened (not found, permission denied), the C<<< $send->() >>> Future MUST fail with an appropriate exception
+
+=item -
+
+If C<fh> is invalid or closed, the C<<< $send->() >>> Future MUST fail immediately
+
+=item -
+
+Applications SHOULD validate file existence before sending C<http.response.start> to avoid incomplete responses
+
+=back
+
+B<Validation:>
+
+=over
+
+=item -
+
+C<offset> MUST be a non-negative integer
+
+=item -
+
+C<length> MUST be a non-negative integer if provided
+
+=item -
+
+If C<offset> exceeds file size, servers SHOULD send zero bytes
+
+=back
+
+B<Examples:>
+
+    # Full file streaming
+    await $send->({
+        type => 'http.response.body',
+        file => '/var/www/static/large-video.mp4',
+    });
+
+    # Range request (bytes 1000-1999)
+    await $send->({
+        type => 'http.response.body',
+        file => '/var/www/static/document.pdf',
+        offset => 1000,
+        length => 1000,
+    });
+
+    # Streaming from already-open filehandle
+    open my $fh, '<:raw', '/tmp/generated-report.csv' or die $!;
+    await $send->({
+        type => 'http.response.body',
+        fh => $fh,
+    });
+    close $fh;  # Application MUST close after send Future completes
+
+=head3 Response Trailers - C<send> event
+
+Only valid when C<http.response.start> was sent with C<<< trailers => 1 >>>. After trailers are transmitted the server MUST consider the response body complete.
+
+Keys:
+
+=over
+
+=item -
+
+C<type> -- C<"http.response.trailers">
+
+=item -
+
+C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers encoded the same way as response headers (lower-case names, byte values)
+
+=back
+
+=head3 Disconnected Client - C<send> exception
+
+If the client disconnects or cancels the connection, servers MUST send an explicit C<disconnect> event to the application.
+
+Any subsequent C<$send> invocation B<must> fail its returned C<Future> (or throw) with a Perl exception class that indicates the disconnect (e.g., C<PAGI::Error::Disconnected>). Servers MUST NOT expose Python exceptions such as C<OSError>.
+
+Applications MUST gracefully handle disconnect events by:
+
+=over
+
+=item -
+
+Immediately halting unnecessary processing upon disconnect
+
+=item -
+
+Optionally sending minimal final acknowledgment messages
+
+=item -
+
+Executing asynchronous cleanup of resources as necessary.
+
+=back
+
+=head3 Disconnect - C<receive> event
+
+Sent to the application if receive is called after a response has been sent or after the HTTP connection has been closed.
+
+Keys:
+
+=over
+
+=item -
+
+C<type> -- C<"http.disconnect">
+
+=back
+
+=head3 Connection State
+
+The C<pagi.connection> scope key provides a mechanism for applications to detect client disconnection B<without consuming messages from the receive queue>. This addresses a fundamental limitation where checking for disconnect via C<receive()> may inadvertently consume request body data.
+
+=head4 The Problem
+
+In PAGI's pull-based receive model, the only way to know if a client has disconnected is to consume the next message:
+
+    my $message = await $receive->();
+    if ($message->{type} eq 'http.disconnect') {
+        # Client is gone - but if it wasn't a disconnect, that data is lost!
+    }
+
+The connection state object solves this with synchronous, non-destructive checks.
+
+=head4 Connection Object Interface
+
+Servers MUST provide a connection state object with these methods:
+
+B<C<is_connected()>> - Returns true if the connection is still open.
+
+    my $connected = $conn->is_connected;  # Boolean, synchronous
+
+B<C<disconnect_reason()>> - Returns the disconnect reason string, or C<undef> if still connected.
+
+    my $reason = $conn->disconnect_reason;  # String or undef
+
+B<C<on_disconnect($callback)>> - Registers a callback to be invoked when disconnect occurs.
+
+    $conn->on_disconnect(sub {
+        my ($reason) = @_;
+        cleanup_resources();
+    });
+
+=over
+
+=item -
+
+May be called multiple times to register multiple callbacks
+
+=item -
+
+Callbacks are invoked in registration order
+
+=item -
+
+If registered after disconnect already occurred, callback is invoked immediately
+
+=back
+
+B<C<disconnect_future()>> - Returns a Future that resolves when the connection closes.
+
+    my $future = $conn->disconnect_future;  # Future or undef
+    my $reason = await $future;
+
+Servers SHOULD provide this method. Returns C<undef> if not supported.
+
+=head4 Standard Disconnect Reasons
+
+Servers MUST use these standard reason strings:
+
+=over 4
+
+=item C<client_closed>
+
+Client initiated clean close (TCP FIN)
+
+=item C<client_timeout>
+
+Client stopped responding (read timeout)
+
+=item C<idle_timeout>
+
+Connection idle too long between requests
+
+=item C<write_timeout>
+
+Response write timed out
+
+=item C<write_error>
+
+Socket write failed (EPIPE, ECONNRESET)
+
+=item C<read_error>
+
+Socket read failed
+
+=item C<protocol_error>
+
+HTTP parse error, invalid request
+
+=item C<server_shutdown>
+
+Server shutting down gracefully
+
+=item C<body_too_large>
+
+Request body exceeded limit
+
+=back
+
+Servers MAY define additional reasons prefixed with C<x-> (e.g., C<x-rate-limited>).
+
+=head4 Server Requirements
+
+=over
+
+=item 1.
+
+MUST provide C<pagi.connection> in scope for C<http> type requests
+
+=item 2.
+
+MUST implement C<is_connected()>, C<disconnect_reason()>, and C<on_disconnect()> methods
+
+=item 3.
+
+SHOULD implement C<disconnect_future()> method returning a Future
+
+=item 4.
+
+MUST update connection state as soon as disconnect is detected
+
+=item 5.
+
+MUST use standard reason strings where applicable
+
+=item 6.
+
+MUST NOT transition C<is_connected()> back to true once false (one-way transition)
+
+=back
+
+=head4 State Transition Order
+
+When disconnect is detected, servers MUST update state in this order:
+
+=over
+
+=item 1.
+
+Set C<is_connected()> to return false
+
+=item 2.
+
+Set C<disconnect_reason()> to return the reason string
+
+=item 3.
+
+Resolve C<disconnect_future()> with the reason (if provided)
+
+=item 4.
+
+Invoke C<on_disconnect> callbacks in registration order
+
+=item 5.
+
+Send C<http.disconnect> message to receive queue
+
+=back
+
+=head4 Applicability
+
+=over 4
+
+=item C<http>
+
+MUST provide C<pagi.connection>
+
+=item C<websocket>
+
+NOT APPLICABLE (use C<websocket.disconnect> events)
+
+=item C<sse>
+
+NOT APPLICABLE (use C<sse.disconnect> events)
+
+=back
+
+WebSocket and SSE have dedicated disconnect events and typically use handler objects (like C<PAGI::WebSocket>, C<PAGI::SSE>) that already manage connection state.
+
+=head4 Example: Basic Connection Check
+
+    async sub handler {
+        my ($scope, $receive, $send) = @_;
+        my $conn = $scope->{'pagi.connection'};
+
+        # Check before expensive work
+        return unless $conn->is_connected;
+
+        my $result = await expensive_operation();
+
+        # Check again before responding
+        return unless $conn->is_connected;
+
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => $result, more => 0 });
+    }
+
+=head4 Example: Cleanup on Disconnect
+
+    async sub handler {
+        my ($scope, $receive, $send) = @_;
+        my $conn = $scope->{'pagi.connection'};
+
+        my $temp_file = create_temp_file();
+
+        # Register cleanup - runs automatically if client disconnects
+        $conn->on_disconnect(sub {
+            my ($reason) = @_;
+            $temp_file->unlink;
+            log_info("Client disconnected: $reason");
+        });
+
+        my $result = await process_data($temp_file);
+        $temp_file->unlink;  # Normal cleanup
+
+        await send_response($send, $result);
+    }
+
+=head4 Example: Racing Against Disconnect
+
+    async sub long_poll_handler {
+        my ($scope, $receive, $send) = @_;
+        my $conn = $scope->{'pagi.connection'};
+
+        my $disconnect_future = $conn->disconnect_future;
+        my $event_future = wait_for_event();
+
+        if ($disconnect_future) {
+            # Race: wait for event OR disconnect
+            await Future->wait_any($disconnect_future, $event_future);
+
+            return unless $conn->is_connected;
+        }
+
+        my $event = $event_future->get;
+        await send_response($send, $event);
+    }
+
+=head2 WebSocket
+
+WebSocket servers handle fragmentation and PING/PONG messages. Servers MUST wait for a reply to C<websocket.connect> before completing the handshake. If C<websocket.close> is sent instead of C<websocket.accept>, the server MUST reject the connection with HTTP 403.
+
+=head3 WebSocket Connection Scope
+
+=over
+
+=item -
+
+C<type> (String) -- C<"websocket">
+
+=item -
+
+C<pagi["version"]> (String) -- PAGI version
+
+=item -
+
+C<pagi["spec_version"]> (String) -- PAGI HTTP spec version (default C<"0.2">)
+
+=item -
+
+C<http_version> (String, default C<"1.1">) -- HTTP version used for handshake
+
+=item -
+
+C<scheme> (String, default C<"ws">) -- URL scheme (C<"ws"> or C<"wss">)
+
+=item -
+
+C<path> (String) -- Decoded path string
+
+=item -
+
+C<raw_path> (Bytes, optional) -- Original path bytes from request
+
+=item -
+
+C<query_string> (Bytes) -- Percent-encoded query string
+
+=item -
+
+C<root_path> (String, default C<"">) -- Mount point for application
+
+=item -
+
+C<headers> (ArrayRef[ArrayRef[Bytes]]) -- Original headers
+
+=item -
+
+C<client> (ArrayRef[String, Int], optional)
+
+=item -
+
+C<server> (ArrayRef[String, Optional[Int]], optional)
+
+=item -
+
+C<subprotocols> (ArrayRef[String], default C<[]>)
+
+=item -
+
+C<state> (HashRef, optional)
+
+=back
+
+=head4 Handshake Headers and Subprotocols
+
+The C<headers> arrayref B<must> include all WebSocket handshake headers as raw byte strings, lower-cased, for example:
+
+=over
+
+=item -
+
+C<upgrade>, C<connection>, C<sec-websocket-key>, C<sec-websocket-version>, C<host>, etc.
+
+=item -
+
+C<sec-websocket-protocol> (if present)
+
+=back
+
+The C<subprotocols> key is an arrayref of strings parsed from the C<Sec-WebSocket-Protocol> header by splitting on commas and trimming whitespace. If the header is absent, C<subprotocols> MUST be an empty arrayref.
+
+=head3 WebSocket Events
+
+=head4 Connect - C<receive> event
+
+=over
+
+=item -
+
+C<type> -- C<"websocket.connect">
+
+=back
+
+=head4 Accept - C<send> event
+
+=over
+
+=item -
+
+C<type> -- C<"websocket.accept">
+
+=item -
+
+C<subprotocol> (String, optional)
+
+=item -
+
+C<headers> (ArrayRef[ArrayRef[Bytes]], optional)
+
+=back
+
+=head4 Receive - C<receive> event
+
+=over
+
+=item -
+
+C<type> -- C<"websocket.receive">
+
+=item -
+
+C<bytes> (Bytes, optional)
+
+=item -
+
+C<text> (String, optional)
+
+=back
+
+Exactly one must be non-null.
+
+The server B<must> UTF-8 decode incoming text frames into Unicode characters
+for C<text>, and UTF-8 encode outgoing C<text> values to wire format. Binary
+frames pass through as raw C<bytes> without encoding transformation.
+
+If a text frame contains invalid UTF-8, the server B<must> fail the WebSocket
+connection with close code 1007 (Invalid frame payload data) per RFC 6455.
+
+=head4 Send - C<send> event
+
+=over
+
+=item -
+
+C<type> -- C<"websocket.send">
+
+=item -
+
+C<bytes> (Bytes, optional)
+
+=item -
+
+C<text> (String, optional)
+
+=item -
+
+C<timeout> (Number, optional) -- Send timeout in seconds. If the write does not complete within this time, the Future fails and the connection is closed.
+
+=back
+
+Exactly one of C<bytes> or C<text> must be non-null.
+
+=head4 Keepalive - C<send> event
+
+Enables WebSocket protocol-level ping/pong keepalive. The server sends ping frames (opcode 0x9) at the specified interval. Clients automatically respond with pong frames per RFC 6455 - no application code required.
+
+=over
+
+=item -
+
+C<type> -- C<"websocket.keepalive">
+
+=item -
+
+C<interval> (Number) -- Seconds between ping frames. C<0> disables keepalive.
+
+=item -
+
+C<timeout> (Number, optional) -- Seconds to wait for pong response. If no pong is received within this time, the connection is closed with code 1006 and the application receives a C<websocket.disconnect> event with C<<< reason => 'keepalive timeout' >>>.
+
+=back
+
+B<Behavior:>
+
+=over
+
+=item -
+
+Multiple C<websocket.keepalive> events update settings (last wins)
+
+=item -
+
+Omitting C<timeout> enables keepalive without dead connection detection (useful for high-latency connections)
+
+=item -
+
+Setting C<<< interval => 0 >>> stops the keepalive timer
+
+=back
+
+B<Example:>
+
+    # Enable keepalive with 30s ping interval, 20s pong timeout
+    await $send->({
+        type     => 'websocket.keepalive',
+        interval => 30,
+        timeout  => 20,
+    });
+
+=head4 Disconnect - C<receive> event
+
+Sent when the WebSocket connection is closed, either by the client, server, or due to error conditions.
+
+=over
+
+=item -
+
+C<type> -- C<"websocket.disconnect">
+
+=item -
+
+C<code> (Int, default C<1005>) -- WebSocket close code per RFC 6455
+
+=item -
+
+C<reason> (String, default empty) -- Human-readable disconnect reason
+
+=back
+
+B<Common close codes and reasons:>
+
+    Code  Reason               Meaning
+    ----  -------------------  -------
+    1000  (from client)        Normal closure
+    1001  'going away'         Client/server going away
+    1006  'keepalive timeout'  No pong received within timeout
+    1006  'send timeout'       Send operation timed out
+    1006  'write error'        Write to socket failed
+    1007  'invalid UTF-8'      Text frame contained invalid UTF-8
+
+=head4 Disconnected Client - C<send> exception
+
+Raises server-specific subclass of C<OSError>.
+
+=head4 Close - C<send> event
+
+=over
+
+=item -
+
+C<type> -- C<"websocket.close">
+
+=item -
+
+C<code> (Int, default C<1000>)
+
+=item -
+
+C<reason> (String, default empty)
+
+=back
+
+=head2 Server-Side Events (SSE)
+
+SSE connections stream C<text/event-stream> data to clients.
+
+=head3 SSE Connection Detection
+
+PAGI servers MUST detect SSE requests and assign a scope of type C<sse> when all of the following are true:
+
+=over
+
+=item -
+
+The C<Accept> header includes the media type C<text/event-stream>.
+
+=item -
+
+The request has not been upgraded to WebSocket.
+
+=back
+
+Otherwise the connection uses a normal C<http> scope.
+
+B<Note on HTTP methods:> SSE works with any HTTP method, not just GET. While the browser's native C<EventSource> API only supports GET, libraries like Microsoft's C<fetch-event-source> (used by htmx 4, datastar, and others) enable SSE over POST, PUT, and other methods via the Fetch API. PAGI servers MUST support SSE for all HTTP methods to enable these modern patterns.
+
+Routing based on URL or application logic is not used to infer SSE.
+
+=head3 SSE Connection Scope
+
+SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, etc.) but set C<<< type => 'sse' >>>. Header casing rules follow the HTTP section.
+
+=head3 Request Body - C<receive> event
+
+For SSE requests with a body (POST, PUT, etc.), the application receives the body via C<sse.request> events, similar to HTTP:
+
+=over
+
+=item -
+
+C<type> -- C<"sse.request">
+
+=item -
+
+C<body> (Bytes, default C<"">) -- Request body chunk
+
+=item -
+
+C<more> (Int, default C<0>) -- C<1> if more body data is forthcoming, otherwise C<0>
+
+=back
+
+For GET requests (no body), a single C<sse.request> event with empty body and C<<< more => 0 >>> is returned.
+
+B<Example (POST SSE with htmx/datastar):>
+
+    my $event = await $receive->();
+    if ($event->{type} eq 'sse.request') {
+        my $body = $event->{body};
+        # Parse JSON body, extract query parameters, etc.
+    }
+
+    await $send->({ type => 'sse.start', status => 200 });
+    # ... send SSE events based on POST body ...
+
+=head3 Start SSE - C<send> event
+
+C<sse.start> replaces C<http.response.start> for SSE connections and MUST be sent before any C<sse.send> events.
+
+=over
+
+=item -
+
+C<type> -- C<"sse.start">
+
+=item -
+
+C<status> (Int, default C<200>)
+
+=item -
+
+C<headers> (ArrayRef[ArrayRef[Bytes]]) -- Must include C<<< content-type => 'text/event-stream' >>> unless already supplied by middleware.
+
+=back
+
+=head3 Send SSE - C<send> event
+
+C<sse.send> emits a single SSE dispatch. Fields marked "String" are Unicode strings per the core data-type rules and MUST be UTF-8 encoded by the server before transmission.
+
+=over
+
+=item -
+
+C<type> -- C<"sse.send">
+
+=item -
+
+C<event> (String, optional)
+
+=item -
+
+C<data> (String) -- Required text payload
+
+=item -
+
+C<id> (String, optional)
+
+=item -
+
+C<retry> (Int, optional) -- Milliseconds for the C<retry:> directive
+
+=back
+
+To end the SSE stream the application simply returns after the final C<sse.send>. The server will flush buffered events and close the HTTP connection.
+
+=head3 SSE Comment - C<send> event
+
+C<sse.comment> sends an SSE comment line. Comments start with a colon (C<:>) and are used for keepalive pings or protocol-level messages. Comments do NOT trigger the client's C<onmessage> handler in browsers, making them ideal for connection maintenance.
+
+=over
+
+=item -
+
+C<type> -- C<"sse.comment">
+
+=item -
+
+C<comment> (String) -- Comment text. If the text does not start with C<:>, the server MUST prepend one.
+
+=back
+
+B<Example:>
+
+    # Keepalive ping (no browser callback triggered)
+    await $send->({
+        type    => 'sse.comment',
+        comment => ':keepalive',
+    });
+
+The server emits the comment followed by two newlines (C<:keepalive\n\n>). This keeps the connection alive through proxies without triggering application-level event handlers on the client.
+
+=head3 SSE Keepalive - C<send> event
+
+Enables automatic SSE keepalive comments. The server sends comment lines at the specified interval to prevent proxy/load balancer timeouts on idle connections.
+
+=over
+
+=item -
+
+C<type> -- C<"sse.keepalive">
+
+=item -
+
+C<interval> (Number) -- Seconds between keepalive comments. C<0> disables keepalive.
+
+=item -
+
+C<comment> (String, default C<''>) -- Comment text to send. Empty string sends just C<:> followed by newlines.
+
+=back
+
+B<Behavior:>
+
+=over
+
+=item -
+
+Multiple C<sse.keepalive> events update settings (last wins)
+
+=item -
+
+Setting C<<< interval => 0 >>> stops the keepalive timer
+
+=item -
+
+Comments do not trigger client's C<onmessage> handler
+
+=back
+
+B<Example:>
+
+    # Enable keepalive with 30s interval
+    await $send->({
+        type     => 'sse.keepalive',
+        interval => 30,
+        comment  => 'ping',
+    });
+
+=head3 SSE Send Timeout
+
+The C<sse.send> event supports an optional C<timeout> field:
+
+=over
+
+=item -
+
+C<timeout> (Number, optional) -- Send timeout in seconds. If the write does not complete within this time, the Future fails and the connection is closed.
+
+=back
+
+B<Example:>
+
+    await $send->({
+        type    => 'sse.send',
+        data    => 'hello',
+        timeout => 5,
+    });
+
+=head3 SSE Disconnect - C<receive> event
+
+Sent to the application if the client disconnects or if the server shuts down the SSE stream after C<sse.start>.
+
+=over
+
+=item -
+
+C<type> -- C<"sse.disconnect">
+
+=item -
+
+C<reason> (String, default empty) -- Human-readable disconnect reason
+
+=back
+
+B<Common reasons:>
+
+=over 4
+
+=item C<'client disconnect'>
+
+Client closed connection normally
+
+=item C<'write error'>
+
+Failed to write (keepalive or send)
+
+=item C<'send timeout'>
+
+Send timeout exceeded
+
+=back
+
+=head2 PAGI to PSGI Compatibility
+
+PAGI translates keys explicitly to maintain compatibility with PSGI:
+
+=over
+
+=item -
+
+C<REQUEST_METHOD> -> C<method>
+
+=item -
+
+C<SCRIPT_NAME> -> C<root_path>
+
+=item -
+
+C<PATH_INFO> -> C<path> minus C<root_path>
+
+=item -
+
+C<QUERY_STRING> -> C<query_string>
+
+=item -
+
+C<CONTENT_TYPE> -> extracted from C<headers>
+
+=item -
+
+C<CONTENT_LENGTH> -> extracted from C<headers>
+
+=item -
+
+C<SERVER_NAME>, C<SERVER_PORT> -> C<server>
+
+=item -
+
+C<REMOTE_ADDR>, C<REMOTE_PORT> -> C<client>
+
+=item -
+
+C<SERVER_PROTOCOL> -> C<http_version>
+
+=item -
+
+C<psgi.url_scheme> -> C<scheme>
+
+=item -
+
+C<psgi.version> -> C<[1, 1]> (PAGI servers MUST advertise the PSGI version they emulate when bridging)
+
+=item -
+
+C<psgi.input> -> constructed from C<http.request> events
+
+=item -
+
+C<psgi.errors> -> handled by the server as appropriate
+
+=item -
+
+C<psgi.streaming>, C<psgi.nonblocking>, C<psgi.multithread>, C<psgi.multiprocess> -> derived from PAGI server capabilities and advertised via PSGI adapter docs
+
+=back
+
+Response mappings:
+
+=over
+
+=item -
+
+C<status> and C<headers> map directly to C<http.response.start>
+
+=item -
+
+Body content from PSGI maps directly to C<http.response.body> messages.
+
+=back
+
+=head2 PAGI Encoding Differences
+
+=over
+
+=item -
+
+C<path>: Decoded UTF-8 string from percent-encoded input. The server first
+percent-decodes C<raw_path>, then attempts UTF-8 decoding of the resulting
+bytes into Unicode characters. If the bytes are not valid UTF-8, the server
+B<should> fall back to the original percent-decoded bytes rather than
+replacing invalid sequences or rejecting the request (Mojolicious-style
+fallback). Applications needing strict UTF-8 validation can check C<raw_path>
+and decode themselves with C<Encode::FB_CROAK>.
+
+=item -
+
+C<headers>: Represented as bytes exactly as sent/received
+
+=item -
+
+C<query_string>: Raw bytes from URL after C<?>, percent-encoded
+
+=item -
+
+C<root_path>: Unicode path string matching C<SCRIPT_NAME>
+
+=back
+
+=head2 Version History
+
+=over
+
+=item -
+
+C<0.2> (Draft): SSE POST method support, keepalive events, disconnect reasons,
+clarified scope fields (method required for HTTP/SSE, not for WebSocket)
+
+=item -
+
+C<0.1> (Draft): Initial draft based on ASGI 2.5, supporting HTTP, WebSocket, and SSE.
+
+=back
+
+=head2 Copyright
+
+This document has been placed in the public domain.

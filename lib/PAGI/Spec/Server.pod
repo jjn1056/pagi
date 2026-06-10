@@ -1,0 +1,126 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::Spec::Server - The PAGI server runner contract for swappable servers
+
+=head1 PAGI Server Runner Contract
+
+B<Version>: 0.1 (Draft)
+
+This document specifies the interface a PAGI server class implements so
+that application runners (C<PAGI::Server::Runner>'s C<-s CLASS> option, deployment
+tooling, etc.) can construct and start it without server-specific
+knowledge. It is the server-side counterpart of the application
+interface described in L<the main specification|PAGI::Spec>.
+
+A PAGI server is any code that accepts PAGI applications and speaks the
+protocol in L<the main specification|PAGI::Spec>. Implementing this
+contract is OPTIONAL but RECOMMENDED for any server that wishes to be
+usable as a drop-in replacement with C<PAGI::Server::Runner> or compatible
+runners.
+
+=head2 Constructor
+
+A conforming server class MUST provide a C<new> class method accepting a
+hash of options:
+
+    my $server = My::PAGI::Server->new(%options);
+
+A runner passes the following common options. A conforming server MUST
+accept these (it MAY ignore ones that do not apply, but MUST NOT die on
+them):
+
+=over
+
+=item -
+
+C<app> (code reference, required) - the PAGI application.
+
+=item -
+
+C<host> (string) - interface to bind. Runners supply a default
+(C<PAGI::Server::Runner> uses C<127.0.0.1>) when no other binding option is given.
+
+=item -
+
+C<port> (integer) - TCP port to bind. Runner default: C<5000>.
+
+=item -
+
+C<quiet> (boolean) - suppress startup banners and informational output.
+
+=item -
+
+C<access_log> (filehandle or undef) - where to write access logs; an
+explicit undef disables access logging. When the option is absent the
+server chooses its own default.
+
+=item -
+
+C<loop_type> (string) - event loop implementation hint. Servers not
+offering a choice of loop MAY ignore it.
+
+=back
+
+Any further options are server-specific. They are collected by the
+server's own CLI wrapper (for C<PAGI::Server>, C<bin/pagi-server>) and
+passed through the runner's C<server_options> mechanism verbatim. A
+conforming server SHOULD reject options it does not recognize as
+either common options (listed above) or its own documented
+server-specific options, with a clear error naming the option.
+
+=head2 run
+
+A conforming server class MUST provide a C<run> instance method:
+
+    $server->run;
+
+C<run> blocks the calling process, owns the event loop, and returns (or
+exits) only when the server has shut down. Signal handling, worker
+management, and graceful-shutdown behaviour are server-specific.
+
+Runners MUST NOT place critical cleanup logic in code that follows
+C<run>, since a conforming server MAY terminate the process directly
+instead of returning; runners should register cleanup with Perl's C<END>
+mechanism or equivalent.
+
+=head2 Runner conventions
+
+Application runners that construct servers by class name SHOULD:
+
+=over
+
+=item -
+
+accept the class via a C<-s>/C<--server CLASS> style option, defaulting
+to C<PAGI::Server>;
+
+=item -
+
+load the class, call C<new> with the options above plus any
+server-specific passthrough options, then call C<run>;
+
+=item -
+
+treat C<run> as blocking and perform daemonization, PID files, and
+privilege dropping before calling it.
+
+=back
+
+See C<PAGI::Server::Runner> for the reference runner implementation and
+C<PAGI::Server> for the reference server.
+
+=head2 Version History
+
+=over
+
+=item -
+
+0.1 (Draft): Initial server runner contract specification
+
+=back
+
+=head2 Copyright
+
+This document has been placed in the public domain.

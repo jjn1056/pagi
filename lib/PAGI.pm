@@ -64,7 +64,7 @@ L<PAGI::Tutorial>.
 B<WARNING: This is beta software.>
 
 This distribution (C<PAGI>) is the B<specification> only: this module plus the
-generated L<PAGI::Spec> documentation. The reference implementations live in
+L<PAGI::Spec> documentation. The reference implementations live in
 separate distributions, each with its own stability level:
 
 =over 4
@@ -293,7 +293,7 @@ L<PAGI::Spec> for the full specification.
 
 =head1 REQUIREMENTS
 
-The specification modules (C<PAGI.pm> and the generated C<PAGI::Spec::*> POD)
+The specification modules (C<PAGI.pm> and the C<PAGI::Spec::*> POD)
 are pure documentation and need only B<Perl 5.18+>. During the transition the
 distribution additionally pulls in C<PAGI-Server> and C<PAGI-Tools> for
 backward compatibility (see L</INSTALLATION AND BACKWARD COMPATIBILITY>); those
