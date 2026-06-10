@@ -89,7 +89,7 @@ B<When to use which:>
 
 =back
 
-Many applications benefit from both: use PAGI for real-time endpoints (WebSocket, SSE) and forking for traditional request/response. PAGI also supports worker mode (C<--workers N>) which combines both approaches.
+Many applications benefit from both the async model (for real-time endpoints like WebSocket and SSE) and pre-forking (for CPU-bound request/response work). The reference server, L<PAGI::Server>, combines them with its worker mode (C<--workers N>): several pre-forked workers, each running the async event loop. That is a feature of the server, not of the PAGI protocol.
 
 B<The Async Advantage>
 
