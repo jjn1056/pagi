@@ -265,7 +265,10 @@ pagi-server supports environment modes that control middleware behavior:
 =item B<development> (default when running interactively)
 
 Auto-enables L<PAGI::Middleware::Lint> with strict mode, which catches PAGI
-specification violations early and provides helpful error messages.
+specification violations early and provides helpful error messages. Note that
+Lint lives in the C<PAGI-Tools> distribution: pagi-server applies it only when
+PAGI-Tools is installed, and otherwise prints a reminder that you can install
+PAGI-Tools to enable it and runs without it.
 
 =item B<production> (default when running non-interactively)
 
