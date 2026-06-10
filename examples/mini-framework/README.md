@@ -1,4 +1,4 @@
-# A web framework built on PAGI — in ~40 lines
+# A web framework built on PAGI — in ~50 lines
 
 Routing, path parameters, and proper async dispatch — the heart of every web
 framework — as a thin layer over raw PAGI. The entire framework is the `Nano`
@@ -59,7 +59,8 @@ same app runs unchanged on any conforming PAGI server.
 ## Why this matters
 
 You just watched routing, path parameters, and correct async concurrency happen
-in about forty lines. Scale that thought up:
+in about fifty lines of plain Perl — nothing newer than 5.18, no XS, no magic.
+Scale that thought up:
 
 - A real framework adds *more* of the same kind of layering — it is not a
   different category of thing.

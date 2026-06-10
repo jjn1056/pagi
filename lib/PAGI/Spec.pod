@@ -6,9 +6,8 @@ PAGI::Spec - The base PAGI specification: application interface and core concept
 
 =head1 PAGI (Perl Asynchronous Gateway Interface) Specification
 
-I<Note: code examples use modern Perl with subroutine signatures for clarity.
-This is a documentation preference and B<not> a requirement of the PAGI
-specification.>
+I<Note: code examples are illustrative; their style is a documentation
+convenience, not a requirement of the specification.>
 
 B<Version>: 0.2 (Draft)
 
@@ -285,7 +284,8 @@ Each application is expected to run for the duration of a connection and may rem
 
     use Future::AsyncAwait;
 
-    async sub application ($scope, $recv, $send) {
+    async sub application {
+        my ($scope, $recv, $send) = @_;
         if ($scope->{type} ne 'http') {
             die "Unsupported protocol type: $scope->{type}";
         }
@@ -330,13 +330,15 @@ B<The application's returned Future represents request completion.> When this Fu
 Applications B<must> await all C<$send> calls before their Future completes:
 
     # CORRECT: await all sends
-    async sub app ($scope, $recv, $send) {
+    async sub app {
+        my ($scope, $recv, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'Hello' });
     }
 
     # WRONG: send not awaited, app Future resolves before send completes
-    async sub app ($scope, $recv, $send) {
+    async sub app {
+        my ($scope, $recv, $send) = @_;
         $send->({ type => 'http.response.body', body => 'Hello' })->retain;
         return;  # App Future resolves immediately, send may not complete!
     }
@@ -408,8 +410,10 @@ PAGI middleware wraps an application:
 
     use Future::AsyncAwait;
 
-    sub middleware ($app) {
-        return async sub ($scope, $recv, $send) {
+    sub middleware {
+        my ($app) = @_;
+        return async sub {
+            my ($scope, $recv, $send) = @_;
             my $modified_scope = { %$scope };
             $modified_scope->{custom} = 1;
 

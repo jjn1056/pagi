@@ -2,8 +2,6 @@ package JobRunner::Worker;
 
 use strict;
 use warnings;
-use feature 'signatures';
-no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use Future::AsyncAwait;
@@ -131,12 +129,14 @@ sub _execute_job_async {
     # Execute the job
     my $future = execute_job($job, $event_loop, $progress_cb, $cancel_check);
 
-    $future->on_done(sub ($result) {
+    $future->on_done(sub {
+        my ($result) = @_;
         complete_job($job_id, $result);
         $running_count--;
         $total_processed++;
         _broadcast_worker_stats();
-    })->on_fail(sub ($error) {
+    })->on_fail(sub {
+        my ($error) = @_;
         # Check if it was a cancellation
         if ($error =~ /cancelled/i) {
             # Job was cancelled - don't mark as failed (already marked)

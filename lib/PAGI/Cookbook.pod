@@ -34,12 +34,14 @@ genuinely non-blocking async dispatch -- is about B<forty lines> over raw PAGI:
 
     my $app = Nano->new;
 
-    $app->get('/hello/:name' => sub ($req) {
+    $app->get('/hello/:name' => sub {
+        my ($req) = @_;
         "Hello, $req->{params}{name}!\n";
     });
 
     # An async handler awaits slow work without blocking other requests:
-    $app->get('/slow/:secs' => async sub ($req) {
+    $app->get('/slow/:secs' => async sub {
+        my ($req) = @_;
         await Future::IO->sleep( $req->{params}{secs} );
         "Done.\n";
     });

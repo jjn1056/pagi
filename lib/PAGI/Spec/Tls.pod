@@ -286,7 +286,8 @@ Note that real-world usage may involve more checks or error handling.
     use warnings;
     use Future::AsyncAwait;
 
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
         # Check for TLS extension
         if (exists $scope->{extensions}{tls}) {
             my $tls_info = $scope->{extensions}{tls};

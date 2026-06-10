@@ -49,7 +49,8 @@ could look like this:
     use warnings;
     use Future::AsyncAwait;
 
-    async sub app ($scope, $receive, $send) {
+    async sub app {
+        my ($scope, $receive, $send) = @_;
         # Only handle 'lifespan' protocol
         if ($scope->{type} eq 'lifespan') {
 

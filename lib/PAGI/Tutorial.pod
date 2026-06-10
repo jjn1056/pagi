@@ -1228,11 +1228,13 @@ Example using L<PAGI::Endpoint::Router>:
   my $db;
 
   my $router = PAGI::Endpoint::Router->new(
-      on_startup => async sub ($scope) {
+      on_startup => async sub {
+          my ($scope) = @_;
           $db = MyDB->connect('dbi:Pg:dbname=myapp');
           warn "Database connected\n";
       },
-      on_shutdown => async sub ($scope) {
+      on_shutdown => async sub {
+          my ($scope) = @_;
           $db->disconnect;
           warn "Database disconnected\n";
       },
