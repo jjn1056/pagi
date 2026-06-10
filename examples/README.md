@@ -2,7 +2,16 @@
 
 These are raw-protocol PAGI applications -- each is a plain `async sub` working
 directly with `$scope`/`$receive`/`$send`, using no helper modules. They
-illustrate the protocol itself, which is what the `PAGI` distribution is about.
+illustrate the protocol itself, and what you can build on it, which is what the
+`PAGI` distribution is about.
+
+## Start here: build a framework on PAGI
+
+**`mini-framework`** -- a complete little web framework (routing, path
+parameters, genuinely non-blocking async dispatch) in about **forty lines** on
+raw PAGI, plus an application that uses it. It is the single best demonstration
+of why PAGI is a foundation worth building on. If you read one example, read
+this one.
 
 ## Requirements
 - Perl 5.18+ with `Future::AsyncAwait`
