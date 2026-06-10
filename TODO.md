@@ -1,364 +1,201 @@
-# TODO
-
-## PAGI::Server - Ready for Release
-
-### Completed
-
-- ~~More logging levels and control (like Apache)~~ **DONE** - See `log_level` option (debug, info, warn, error)
-- ~~Run compliance tests: HTTP/1.1, WebSocket, TLS, SSE~~ **DONE** - See `perldoc PAGI::Server::Compliance`
-  - HTTP/1.1: Full compliance (10/10 tests)
-  - WebSocket (Autobahn): 215/301 non-compression tests pass (71%); validation added for RSV bits, reserved opcodes, close codes, control frame sizes
-- ~~Verify no memory leaks in PAGI::Server~~ **DONE** - See `perldoc PAGI::Server::Compliance`
-- ~~Max requests per worker (--max-requests) for long-running deployments~~ **DONE**
-  - Workers restart after N requests via `max_requests` parameter
-  - CLI: `pagi-server --workers 4 --max-requests 10000 app.pl`
-  - Defense against slow memory growth (~6.5 bytes/request observed)
-- ~~Worker reaping in multi-worker mode~~ **DONE** - Uses `$loop->watch_process()` for automatic respawn
-- ~~Filesystem-agnostic path handling~~ **DONE** - Uses `File::Spec->catfile()` throughout
-- ~~File response streaming~~ **DONE** - Supports `file` and `fh` in response body
-  - Small files (<=64KB): direct in-process read
-  - Large files: async worker pool reads
-  - Range requests with offset/length
-  - Use XSendfile middleware for reverse proxy delegation in production
-
-### Future Enhancements (Not Blockers)
-
-- ~~Review common server configuration options (from Uvicorn, Hypercorn, Starman)~~ **DONE** - HTTP/2 protocol settings (`h2_max_concurrent_streams`, `h2_initial_window_size`, `h2_max_frame_size`, `h2_enable_push`, `h2_enable_connect_protocol`, `h2_max_header_list_size`) exposed as `PAGI::Server` constructor options with defaults validated against Apache, nginx, H2O, Hypercorn, and Go stdlib
-- UTF-8 testing for text, HTML, JSON
-- Middleware for handling reverse proxy / X-Forwarded-* headers
-- HTTP/2 per-stream stall detection (see details below)
-- Request/body timeouts (low priority - idle timeout handles most cases, typically nginx/HAProxy handles this in production)
-- SIGHUP graceful restart for single-process mode (re-exec pattern)
-  - Currently only multi-worker mode supports HUP for graceful restart
-  - Single-process would need to re-exec itself, inheriting the listen socket via `$ENV{LISTEN_FD}` (like systemd socket activation)
-  - Could also support fork-exec with socket passing via SCM_RIGHTS
-  - Low priority - production deployments typically use multi-worker or external orchestration (systemd, docker)
-
-### HTTP/2 Per-Stream Stall Detection
-
-**Problem:** The connection-level idle timer (line 247 of Connection.pm) resets on
-ANY byte from the socket. HTTP/2 multiplexes all streams on one TCP connection, so
-an attacker can hold 100 streams open indefinitely by sending a PING every 29 seconds.
-The `request_timeout` / stall timer only applies to HTTP/1.1 (started at line 1619,
-inside `_on_request` which is HTTP/1.1-only). HTTP/2 streams have zero stall detection.
-
-**Attack:** Open 1 connection, send HEADERS for 100 streams (max_concurrent_streams),
-never send body data, send periodic PING to keep idle timer alive. All 100 stream
-slots consumed, holding memory for headers, body_pending Futures, receive queues.
-Repeat across N connections.
-
-**Approach: Periodic sweep (Option B)**
-
-Add a `last_activity` timestamp per stream and one periodic sweep timer per connection.
-
-1. **In `_h2_on_request`** (line ~424, stream init): set `last_activity => time()` in the
-   `$self->{h2_streams}{$stream_id}` hash.
-
-2. **In `_h2_on_body`** (line ~500): update `$stream->{last_activity} = time()`.
-
-3. **In `_h2_create_send`** closure: update `last_activity` when app sends response data.
-
-4. **New: `_start_h2_stream_sweep_timer`** — called once when the first HTTP/2 stream is
-   created. Uses `IO::Async::Timer::Periodic` (same pattern as SSE keepalive timer at
-   line 1512). Interval = `h2_stream_timeout / 2` (check twice per timeout period).
-
-   ```perl
-   sub _start_h2_stream_sweep_timer {
-       my ($self) = @_;
-       return if $self->{h2_sweep_timer};
-       return unless $self->{h2_stream_timeout} && $self->{h2_stream_timeout} > 0;
-
-       weaken(my $weak_self = $self);
-       my $timer = IO::Async::Timer::Periodic->new(
-           interval => $self->{h2_stream_timeout} / 2,
-           on_tick => sub {
-               return unless $weak_self;
-               return if $weak_self->{closed};
-               my $now = time();
-               my $timeout = $weak_self->{h2_stream_timeout};
-               for my $sid (keys %{$weak_self->{h2_streams} // {}}) {
-                   my $stream = $weak_self->{h2_streams}{$sid};
-                   next unless $stream->{last_activity};
-                   if ($now - $stream->{last_activity} > $timeout) {
-                       # RST_STREAM the stale stream
-                       eval { $weak_self->{h2_session}->submit_rst_stream($sid, 0) };
-                       # Wake any pending body futures
-                       if ($stream->{body_pending} && !$stream->{body_pending}->is_ready) {
-                           $stream->{body_pending}->done({ type => 'http.disconnect' });
-                       }
-                       delete $weak_self->{h2_streams}{$sid};
-                   }
-               }
-               $weak_self->_h2_write_pending;
-           },
-       );
-       $self->{h2_sweep_timer} = $timer;
-       $self->{server}->add_child($timer);
-       $timer->start;
-   }
-   ```
-
-5. **Stop timer in `_close`** (line ~2373, alongside the other timer stops):
-   ```perl
-   if ($self->{h2_sweep_timer}) {
-       $self->{h2_sweep_timer}->stop;
-       $self->{server}->remove_child($self->{h2_sweep_timer});
-       $self->{h2_sweep_timer} = undef;
-   }
-   ```
+# PAGI Roadmap
+
+Project-wide roadmap across the three distributions. The **specification**
+itself (`PAGI.pm` + `PAGI::Spec::*`) is stable; what follows tracks the
+reference server, the toolkit, and tooling. Each item is tagged with its target
+distribution:
+
+- **[Server]** — PAGI-Server (`PAGI::Server::*`, `bin/pagi-server`)
+- **[Tools]** — PAGI-Tools (`PAGI::Middleware::*`, `PAGI::App::*`, `PAGI::Endpoint::*`, `PAGI::Request`/`Response`/`SSE`/`WebSocket`)
+- **[Thunderhorse]** — the framework built on PAGI, not PAGI core
 
-6. **Config:** Add `h2_stream_timeout` param to Connection constructor (default 0 =
-   disabled). Expose via PAGI::Server as `--h2-stream-timeout` CLI flag. Reasonable
-   default when enabled: 30-60 seconds.
+Tiers are ordered by current priority: fix what is broken or misleading first,
+then lower the adoption barrier, then add features as demand appears.
+
+---
 
-7. **Check `submit_rst_stream` availability** in Net::HTTP2::nghttp2::Session. If not
-   exposed, you'll need to add it to the XS bindings, or use `terminate()` on the
-   whole session as a fallback (but that kills all streams, not just the stale one).
+## Tier 1 — Correctness & honesty
+
+These are either bugs or features the docs promise but the code does not deliver.
+Documented-but-missing behaviour is worse than a gap, so these come first.
 
-**What NOT to do:** Don't create one timer per stream — at 100 concurrent streams
-across 10,000 connections that's 1M timers. The sweep approach uses 1 timer per
-connection.
+- **[Tools] Signed cookies are documented but not implemented.**
+  `PAGI::Middleware::Cookie` documents `get_signed`/`set_signed` and accepts a
+  `secret`, but the secret is stored and never used and the methods do not
+  exist. Implement HMAC signing, or remove the option and POD.
+
+- **[Tools] `PAGI::App::WrapCGI` accepts a `timeout` but never enforces it.**
+  POD says default 30s; the blocking `open '-|'` read has no alarm/timer.
+  Implement the timeout or drop the option.
+
+- **[Tools] `PAGI::App::WrapPSGI` "streaming" buffers the whole body.**
+  The streaming-writer closure only pushes chunks and flushes after the PSGI
+  responder returns, so it does not actually stream. Fix, or document the
+  limitation honestly.
+
+- **[Tools] `PAGI::App::Router` mount prefixes treat `:param` as a literal.**
+  `mount('/users/:user_id' => $app)` matches the literal text `:user_id`
+  (mount prefixes never go through `_compile_path`). The one critical gap left
+  in the router's Phase 1. Either compile prefix params or croak on `:` in a
+  mount prefix so it fails loudly.
+
+- **[Tools] IPv6 CIDR matching silently fails.**
+  `_ip_in_cidr` in `PAGI::Middleware::Maintenance` and
+  `PAGI::Middleware::ReverseProxy` returns false for any non-IPv4 address, so
+  allow/deny lists silently no-op on IPv6. A security allow-list that quietly
+  ignores v6 is dangerous — support IPv6, or at minimum document IPv4-only
+  loudly in POD (not just an inline comment).
+
+- **[Tools] Lifespan shutdown errors are swallowed.**
+  `PAGI::Lifespan` `eval`s the shutdown handler but never checks `$@`
+  (startup does). Report shutdown failures.
+
+- **[Tools] `PAGI::App::Throttle` shares one `%buckets` across all instances.**
+  Package-global state means two throttles interfere. Make it per-instance (or
+  add a namespace option) and warn in POD.
+
+- **[Server] SSE `id` field is not checked for NUL.**
+  The serializer guards SSE fields against newlines but not `\x00`; an `id`
+  containing NUL is silently dropped by browsers. Small correctness add
+  alongside the existing newline checks.
+
+---
+
+## Tier 2 — Adoption & developer experience
 
-**Mitigating factors (why this is low priority):**
-- `max_concurrent_streams` = 100 bounds the damage per connection
-- Production deployments behind nginx/haproxy get `proxy_read_timeout` for free
-- Connection-level idle timer still kills fully-idle connections
-- The attacker needs to hold real TCP connections open
-
-## Future Ideas
-
-### API Consistency: on_close Callback Signatures
-
-Consider unifying `on_close` callback signatures for 1.0:
-
-- **Current:** WebSocket passes `($code, $reason)`, SSE passes `($sse)`
-- **Reason:** WebSocket has close protocol with codes; SSE has no close frame
-- **Options for 1.0:**
-  - Option B: Both pass `($self)` - users call `$ws->close_code` if needed
-  - Option C: Both pass `($self, $info)` where `$info` is `{code => ..., reason => ...}` for WS, `{}` for SSE
-
-Decision deferred to 1.0 to avoid breaking changes in beta.
-
-### Worker Pool Enhancements
-
-Level 2 (Worker Service Scope) and Level 3 (Named Worker Pools) are documented
-in the codebase history but deemed overkill for the current implementation. The
-`IO::Async::Function` pool covers the common use case.
-
-### PubSub / Multi-Worker
-
-**Decision:** PubSub remains single-process (in-memory) by design.
-
-- Industry standard: in-memory for dev, Redis for production
-- For multi-worker/multi-server: use Redis or similar external broker
-- MCE integration explored but adds complexity
-
-## Documentation (Post-Release)
-
-- Scaling guide: single-worker vs multi-worker vs multi-server
-- PubSub limitations and Redis migration path
-- Performance tuning guide
-- Deployment guide (systemd, Docker, nginx)
-
-## Crazy Ideas for a Higher-Order Framework
-
-### Response as Future Collector
-
-The `->retain` footgun (forgetting to await send calls) is a common async mistake.
-PAGI intentionally keeps the spec simple like ASGI, but a higher-level framework
-could solve this by having `PAGI::Response` (or similar helper) maintain a
-`Future::Selector` or `Future::Converge` that collects all spawned futures.
-
-**Concept:**
-
-```perl
-# Framework-level helper (not raw PAGI)
-my $response = MyFramework::Response->new($send);
-
-# These would register futures with the response's collector
-$response->send_header(200, \@headers);  # Returns future, auto-collected
-$response->send_body("Hello");           # Returns future, auto-collected
-
-# Framework's finalize() awaits all collected futures
-await $response->finalize();  # Waits for everything
-```
-
-**Why it might work:**
-- All response operations go through the helper
-- Helper tracks every future created
-- `finalize()` awaits all of them before returning
-- No orphaned futures possible at this abstraction level
-
-**Why PAGI doesn't do this:**
-- PAGI is a protocol spec, not a framework
-- Raw `$send->()` is intentionally low-level
-- Frameworks like Dancer3/Mojolicious built on PAGI can implement this pattern
-- Keeps PAGI simple and ASGI-compatible
-
-**Implementation notes:**
-- Could use `Future::Utils::fmap_void` or `Future->wait_all`
-- Helper methods return futures AND register them
-- `finalize()` is just `await Future->wait_all(@collected_futures)`
-- Error in any collected future should propagate
-
-This pattern would eliminate the await footgun for framework users while keeping
-raw PAGI available for those who need direct control.
-
-### Framework as IO::Async::Notifier
-
-Building on Paul Evans' ideas about Future trees and notifier hierarchies, a
-higher-level framework could itself be an `IO::Async::Notifier` subclass. This
-enables proper Future adoption and error propagation through the notifier tree.
-
-**Notifier tree structure:**
-
-```
-Loop
-└── PAGI::Server (Notifier)
-    └── MyFramework (Notifier)  ← long-lived, spans all requests
-        └── per-request futures adopted here
-```
-
-**Detection via duck typing:**
-
-Server would detect if the app is a Notifier and adopt it automatically:
-
-```perl
-# In PAGI::Server startup:
-if (blessed($app) && $app->isa('IO::Async::Notifier')) {
-    $self->add_child($app);
-}
-```
-
-**Framework implementation:**
-
-```perl
-package MyFramework;
-use parent 'IO::Async::Notifier';
-
-sub to_app {
-    my $self = shift;
-    return sub {
-        my ($scope, $receive, $send) = @_;
-        # Framework can adopt its own futures - errors propagate up
-        $self->adopt_future($self->some_background_work());
-        # Request handling...
-    };
-}
-```
-
-**Benefits:**
-
-1. **No spec changes** - $scope stays clean, no new keys needed
-2. **Opt-in** - Simple apps (coderefs) work unchanged
-3. **Server-agnostic** - Other PAGI servers ignore the Notifier aspect
-4. **Natural error propagation** - Adopted futures surface errors properly
-5. **Coherent shutdown** - Server shutdown flows down to framework
-6. **Framework controls closure** - `to_app` closure captures `$self`
-
-**Open questions:**
-
-- Should Connection also be exposed for request-scoped adoption?
-- How does this interact with lifespan.startup/shutdown?
-- Should there be a formal interface beyond duck typing?
-
-**Related:** This complements the "Response as Future Collector" pattern above.
-Together they address the two main async footguns: orphaned request futures
-(collector pattern) and orphaned background futures (notifier tree).
-
-## Things to Think About
-
-### Accept External IO::Async::Loop in Constructor
-
-Allow passing an existing `IO::Async::Loop` instance to `PAGI::Server->new` for embedding into larger systems.
-
-**Use Cases:**
-
-| Use Case | Why It Helps |
-|----------|--------------|
-| Embedding | Run PAGI alongside other IO::Async components (DB pools, timers, Redis clients) |
-| Testing | Control the loop for deterministic tests |
-| Hybrid apps | Existing IO::Async app wants to add HTTP endpoint |
-| Custom setup | Pre-configured loop with specific settings |
-
-**Proposed API:**
-
-```perl
-# Current (still works)
-my $server = PAGI::Server->new(app => $app, port => 5000);
-$server->run;
-
-# With external loop - new 'start' method
-my $loop = IO::Async::Loop->new;
-$loop->add($redis_client);  # Other components
-
-my $server = PAGI::Server->new(app => $app, port => 5000);
-$loop->add($server);        # Server is a Notifier
-$server->start->get;        # Start listening (async)
-$loop->run;                 # Caller controls the loop
-
-# Or pass loop to constructor
-my $server = PAGI::Server->new(
-    app  => $app,
-    port => 5000,
-    loop => $loop,  # Stores reference, run() uses it
-);
-```
-
-**Considerations:**
-
-1. **Signal handlers** - With external loop, who installs SIGTERM/SIGINT handlers? Should be optional/configurable
-2. **Multi-worker mode** - Doesn't make sense with external loop (workers fork and create their own)
-3. **`run()` vs `start()`** - `run()` owns the loop lifecycle; `start()` just begins listening
-
-**Implementation:**
-
-- Add `loop` option to constructor
-- `run()` uses `$self->{loop} // $self->_create_loop`
-- Add `start()` method that sets up listening without calling `$loop->run`
-- Add `install_signals` option (default true for `run()`, false for `start()`)
-
-### `$scope->{'pagi.loop'}` - Exposing the Event Loop
-
-**Idea:** Add the IO::Async::Loop to scope so apps can access it directly:
-
-```perl
-my $loop = $scope->{'pagi.loop'};
-$loop->delay_future(after => 60)->then(...)->retain;
-$loop->add($my_notifier);
-```
-
-**Pros:**
-- Explicit and discoverable (no magic ambient loop lookup)
-- Apps often need loop for timers, custom watchers, adding Notifiers
-- Consistent with PAGI's "everything in scope" pattern
-
-**Cons:**
-- Ties apps to IO::Async implementation detail
-- Apps written for PAGI::Server might not work with other PAGI servers
-- Could encourage tight coupling between app and server
-
-**Current workaround:** `IO::Async::Loop->new` returns the ambient loop when
-running inside PAGI::Server, but this is implicit.
-
-**Decision:** Deferred. Need to weigh portability vs convenience. For now,
-apps needing the loop can use the ambient loop pattern or accept loop as
-a constructor parameter and initialize in lifespan.startup.
-
-## Future Extensions
-
-### Early Hints (HTTP 103)
-Add `http.response.early_hint` extension for sending HTTP 103 responses before the main response. Useful for preloading resources while the server processes the request.
-
-```perl
-# Example usage
-await $send->({
-    type    => 'http.response.early_hint',
-    headers => [
-        ['link', '</style.css>; rel=preload; as=style'],
-        ['link', '</app.js>; rel=preload; as=script'],
-    ],
-});
-```
-
-Requires PAGI::Server changes to handle the new event type.
+High-value, moderate effort. This is where "make it real" energy pays off.
+
+- **[Server] `--reload` (file-watch dev restart).**
+  Every comparable server has it (uvicorn `--reload`). The re-exec machinery
+  already exists; add a `Filesys::Notify`-style watcher over `lib/` and the app
+  file. Biggest single DX/adoption win on this list. Dev-only.
+
+- **[Server] Ship real deployment artifacts.**
+  The guidance exists as POD prose (nginx config, systemd unit, socket
+  activation). Provide copy-pasteable files — a `Dockerfile`, `nginx.conf`,
+  and `pagi-server.service` — to remove the adoption barrier. Low effort.
+
+- **[Server] Accept an external `IO::Async::Loop` in the constructor.**
+  Lets PAGI embed in larger IO::Async apps (DB pools, Redis clients, timers)
+  and gives deterministic tests. This is the well-scoped answer to "apps need
+  the loop" — preferred over exposing `$scope->{'pagi.loop'}`, which would
+  couple apps to IO::Async.
+
+  ```perl
+  # run() still owns the loop lifecycle (unchanged)
+  $server->run;
+
+  # new: caller owns the loop
+  my $server = PAGI::Server->new(app => $app, port => 5000);
+  $loop->add($server);     # PAGI::Server is already a Notifier
+  $server->start->get;     # begin listening, no $loop->run
+  $loop->run;
+  ```
+
+  Notes: add a `loop` constructor option and a `start()` that listens without
+  running the loop; make signal-handler installation optional (default on for
+  `run()`, off for `start()`); multi-worker mode does not apply with an
+  external loop.
+
+- **[Server] Structured JSON access logging.**
+  The custom access-log-format infrastructure already exists (presets +
+  atoms); add a `json` preset/atom. Ops teams expect machine-readable logs.
+
+---
+
+## Tier 3 — When there's demand
+
+Genuinely useful, but pull them forward only when someone asks.
+
+- **[Tools] Router ergonomics people reach for:** trailing-slash policy
+  (redirect vs strict), optional path segments (`/users(/:id)`), `pass` /
+  fall-through to the next matching route, and route introspection
+  (`routes_info`/`walk`). Route introspection also unlocks OpenAPI/tooling
+  later.
+
+- **[Tools] Bring `PAGI::Endpoint::Router` to parity with `PAGI::App::Router`.**
+  The class-based RouteBuilder is missing `group`, `any`, and chained
+  `constraints` even though the underlying router supports them. Matters if the
+  endpoint layer is the framework path.
+
+- **[Server/Tools] Prometheus `/metrics` endpoint.**
+  The higher-ROI half of the observability story (OpenTelemetry tracing is the
+  heavier half). A `Metrics::Any` integration design already exists as a draft
+  plan — pick it up from there.
+
+- **[Server] HTTP/2 per-stream stall detection.** *(security hardening, low
+  priority — mitigated today by `max_concurrent_streams` and reverse proxies.)*
+  The connection idle timer resets on any byte, so an HTTP/2 peer can hold N
+  streams open indefinitely with periodic PINGs. Add a per-stream
+  `last_activity` and **one** periodic sweep timer per connection (never one
+  timer per stream) that RST_STREAMs stale streams; gate on a new
+  `h2_stream_timeout` (default 0 = off). Check `submit_rst_stream` is exposed
+  by the nghttp2 bindings first.
+
+- **[Server] Early Hints (HTTP 103) extension.**
+  Add an `http.response.early_hint` event so apps can push `Link: rel=preload`
+  hints before the main response.
+
+---
+
+## Framework-layer ideas (Thunderhorse, not PAGI core)
+
+PAGI is a protocol and stays low-level; these belong in a framework built on it.
+Kept here so the ideas are not lost — move to Thunderhorse when that repo is
+ready.
+
+- **[Thunderhorse] Response as a Future collector.**
+  A `Response` helper that registers every send Future it creates and awaits
+  them all in `finalize()`, eliminating the "forgot to await `$send`" footgun
+  at the framework layer while raw `$send` stays available.
+
+- **[Thunderhorse] Framework as an `IO::Async::Notifier`.**
+  Let a framework be a long-lived Notifier in the loop's tree so it can adopt
+  per-request and background Futures with proper error propagation and coherent
+  shutdown. The server can duck-type-detect a Notifier app and `add_child` it —
+  no spec change, opt-in, server-agnostic.
+
+---
+
+## Decisions & non-goals
+
+Settled; recorded so they are not re-litigated.
+
+- **PubSub stays single-process / in-memory by design.** Multi-worker or
+  multi-server deployments use an external broker (Redis, etc.).
+- **WebSocket permessage-deflate is intentionally unsupported server-side**
+  (a `PAGI::Middleware::WebSocket::Compression` exists in Tools for those who
+  want it). This is why the Autobahn suite reports ~71% — the bulk of the
+  remainder is compression tests.
+- **`on_close` callback signatures are deliberately left unaligned until 1.0**
+  (WebSocket passes `($code, $reason)`, SSE passes `($self, $reason)`); both
+  are documented. Aligning them is a breaking change deferred to 1.0.
+- **`$scope->{'pagi.loop'}` is rejected** in favour of the external-loop
+  constructor option (avoids coupling apps to IO::Async).
+- **Deferred as overkill / YAGNI until asked:** HTTP/3 (QUIC), worker RSS
+  memory limits (`max_requests` covers slow growth), config-file/env-var
+  configuration, and the router's custom path types, host-based routing,
+  `resources` generation, route caching, and versioned routing.
+
+---
+
+## Cross-repo housekeeping
+
+Code health, not user-facing — do opportunistically, do not track as features.
+
+- **[Server] `PAGI::Server::Connection` is a ~3900-line god object;** the
+  WebSocket/SSE/HTTP2 handlers could be extracted into modules.
+- **[Tools] Duplicated helpers:** `_get_header` is copy-pasted across ~16
+  middleware, `_url_decode` across 4 modules, and `PAGI::Endpoint::Router` has
+  three near-identical wrapper methods. **[Server]** header-validation is
+  duplicated between `Connection` and `Protocol::HTTP1`. Consolidate into base
+  classes / shared utils.
+- **[Tools] `PAGI::App::Router` matches by linear scan.** Only worth a
+  dispatch-table/trie if profiling shows routing is a bottleneck.
+- **Shared cross-repo test suite.** Each dist has its own `t/integration/`;
+  a shared `xt/` or a small test distribution could cover cross-package
+  behaviour once the repos stabilise.
+- **Docs to write:** scaling guide (single vs multi-worker vs multi-server),
+  PubSub→Redis migration path, performance tuning, and a published benchmark
+  comparison against Starman/Twiggy (internal numbers exist; no cross-server
+  comparison published).
