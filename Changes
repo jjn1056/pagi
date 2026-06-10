@@ -2,11 +2,19 @@
 
 0.002000
   - The PAGI distribution is now the specification: PAGI.pm plus the
-    generated PAGI::Spec::* documentation. The reference server and its
-    runner (PAGI::Server::Runner) moved to the PAGI-Server distribution,
-    and the application toolkit (middleware, apps, endpoints,
-    request/response, test utilities) moved to the PAGI-Tools
-    distribution. Git history preserved.
+    PAGI::Spec::* documentation. The reference server and its runner
+    (PAGI::Server::Runner) moved to the PAGI-Server distribution, and the
+    application toolkit (middleware, apps, endpoints, request/response,
+    test utilities) moved to the PAGI-Tools distribution. Git history
+    preserved.
+  - The PAGI::Spec::* documents are now authored directly as POD. The
+    previous markdown-to-POD build step (and its App::sdview dependency)
+    has been removed; the spec POD is the source.
+  - Expanded the learning material: PAGI::Cookbook (worked, runnable
+    recipes), examples/mini-framework (a complete web framework on PAGI in
+    about fifty lines), PAGI::PSGI (a migration guide for people coming
+    from PSGI), PAGI::Building (a guide for framework authors), and a
+    committed README.md. All example code targets Perl 5.18.
   - The spec modules are pure documentation. For backward compatibility
     during the transition, PAGI pulls in PAGI-Server and PAGI-Tools as
     runtime dependencies, so existing `requires 'PAGI'` dependents keep
