@@ -19,7 +19,7 @@ Status: ☐ open · ◐ in progress · ☑ done
 - **Done:** `Www.pod` HTTP + WebSocket "Disconnected Client" subsections rewritten to no-op + point at the disconnect event / `pagi.connection`; base `Spec.pod` send-after-close text made affirmative and detection-pointing. (The unrelated `Www:483` file-open-error `$send` failure correctly stays.)
 - **Possible future (non-blocking):** WS/SSE have no dedicated disconnect-only Future like HTTP's `disconnect_future`; consider adding one for symmetry someday.
 
-### A2. Disconnect-reason taxonomy is inconsistent and partly non-conformant ◐ (spec ☑, server pending)
+### A2. Disconnect-reason taxonomy is inconsistent and partly non-conformant ☑ (spec + server done)
 - **Type:** DECISION/spec → then fix server. **Folds in B5 and B6.**
 - **Divergence:** (a) WebSocket and SSE use *different* reason vocabularies. (b) The server emits reasons that are neither in the spec's standard list nor `x-`prefixed, which the spec's *own rule* forbids for custom reasons. (c) SSE emits `client_closed` where the spec documents `client disconnect`. (d) `on_disconnect` fired for *both* abnormal drops and normal completion, so apps couldn't tell them apart, and completion "reasons" (`request_complete`/`stream_complete`/`session_complete`) leaked into the same surface as real disconnect reasons.
 - **RESOLVED — one taxonomy, abnormal vs. complete split (spec done):**
@@ -28,8 +28,13 @@ Status: ☐ open · ◐ in progress · ☑ done
   - **WS/SSE keep their event model**; their `*.disconnect` events now reference the shared vocabulary (SSE spaces→underscores; WS `reason` MUST carry the real token, not empty = **B5**).
   - **WS close `code`:** `1006` for abnormal drops (no close handshake), `1005` only for a codeless peer close frame — affirms the server's behaviour (= **B6**, server was right; spec said "default 1005" and is now corrected).
 - **Spec edits (done):** `Www.pod` Connection Object Interface (+`on_complete`), Standard Disconnect Reasons (abnormal framing + 3 new tokens), Server Requirements, State Transition Order (abnormal + completion paths), Cleanup example (on_disconnect/on_complete symmetry), WS disconnect event (vocab + `code` + `reason`), SSE disconnect event (vocab); `Cookbook.pod` recipe updated.
-- **Server (PENDING):** route completion (`request_complete`/`stream_complete`/`session_complete`) to a new `on_complete`/`_mark_complete` path instead of `on_disconnect`; emit standard tokens for abnormal disconnects; populate WS disconnect `reason` (B5); rename `policy_violation`→`queue_overflow`; keep `1006` for abnormal WS closes (B6). Then **re-run PAGI-Server tests + sweep examples.**
-- **Server citations:** `keepalive_timeout` `Connection.pm:1789`; `policy_violation` `:3637, :3650`; `request_complete` `:2038`; `stream_complete` `:2951`; `session_complete` `:3294`; `server_error` `:326, :2004`. SSE `client_closed` `:588, :2622, :2727, :2999`, h2 `:1158`. WS empty reason `:2618, :2723`. ConnectionState `_mark_disconnected` single callback list `ConnectionState.pm:253`.
+- **Server (DONE — PAGI-Server branch `sync-a2-disconnect-complete-split`):**
+  - `ConnectionState.pm`: added `on_complete`/`_mark_complete` with a `connected → {disconnected, completed}` state machine; `on_disconnect`/`disconnect_reason`/`disconnect_future` are abnormal-only; a late `on_disconnect` after completion (and vice versa) is inert. (commit `67a4a97`)
+  - `Connection.pm`: HTTP completion fires `_mark_complete` on both the keep-alive and close paths (the keep-alive path previously dropped the state entirely, so `on_complete` could never fire). (commit `0fb4ed6`)
+  - `Connection.pm`: WS disconnect event now carries a standard reason token + the real close code via a centralized `_ws_disconnect_event` helper (`ws_disconnect_reason` set in `_handle_disconnect`, `ws_disconnect_code` recorded in `_send_close_frame`); `policy_violation`→`queue_overflow`; completion reasons recognized and never recorded as abnormal. (commit `eab73cb`) **B5/B6 server side done.**
+  - **Tests:** full suite green (84 files / 537 tests, 3 signal tests skipped). New `t/integration/connection-complete.t` (on_complete on both completion paths) + `t/integration/websocket-disconnect-reason.t` (reason=`queue_overflow`, code=1008). Examples branch on disconnect `type` only → unaffected.
+  - **Deferred (PAGI-Tools):** `PAGI::Request` needs an `on_complete` delegate to match its `on_disconnect`. The HTTP/2 WebSocket receive path (RFC 8441) keeps its own per-stream disconnect mapping → folded into **D1**.
+- **Server citations (point-in-time, pre-change):** `keepalive_timeout` `Connection.pm:1789`; `policy_violation` `:3637, :3650`; `request_complete` `:2038`; `stream_complete` `:2951`; `session_complete` `:3294`; `server_error` `:326, :2004`. SSE `client_closed` `:588, :2622, :2727, :2999`, h2 `:1158`. WS empty reason `:2618, :2723`. ConnectionState `_mark_disconnected` single callback list `ConnectionState.pm:253`.
 
 ---
 
@@ -59,10 +64,9 @@ Status: ☐ open · ◐ in progress · ☑ done
 - **Spec:** `Www.pod:1292`.
 - **Server:** `Connection.pm:3200-3216`.
 
-### B5. keepalive-timeout `websocket.disconnect` reason is empty → **folded into A2** ◐
-- **Type:** fix server (instance of A2). Spec side done (WS `reason` MUST carry the standard token); server fix tracked under A2.
-- **Divergence:** On pong-timeout the spec promises `reason => 'keepalive_timeout'`; the queued event is `{ code => 1006, reason => '' }`.
-- **Spec:** `Www.pod` WS disconnect event (now requires the token). **Server:** `Connection.pm:2618, 2723`.
+### B5. keepalive-timeout `websocket.disconnect` reason is empty → **resolved in A2** ☑
+- **Type:** fix server (instance of A2). Spec requires the token; server now emits it.
+- **Done:** centralized `_ws_disconnect_event` helper + `ws_disconnect_reason`/`ws_disconnect_code`; abnormal WS closes now report `{ code => <real>, reason => <token> }` instead of `{ 1006, '' }`. PAGI-Server commit `eab73cb`; covered by `t/integration/websocket-disconnect-reason.t`.
 
 ### B6. `websocket.disconnect` default `code` 1006 vs spec 1005 → **resolved in A2 (server was right)** ☑
 - **Type:** DECISION → fix spec. Server's `1006` for abnormal closes is RFC-correct; `1005` is only for a codeless peer close frame.
