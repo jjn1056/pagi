@@ -41,4 +41,5 @@ apps, request/response sugar) live with the toolkit, in the `PAGI-Tools`
 distribution. The protocol examples here need none of that.
 
 Each example has its own `README.md` explaining how to run it and which spec
-sections to review.
+sections to review. For an annotated tour of these examples with the key code
+inline, see the `PAGI::Cookbook` documentation.

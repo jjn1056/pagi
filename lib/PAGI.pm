@@ -160,8 +160,10 @@ L<PAGI::Test::Client> and friends for in-process testing.
 =back
 
 This C<PAGI> distribution is the canonical starting point for the ecosystem:
-the specification, the L<tutorial|PAGI::Tutorial>, and a set of raw-protocol
-example applications under F<examples/>. The reference server lives in the
+the specification, the L<tutorial|PAGI::Tutorial>, a L<cookbook|PAGI::Cookbook>
+of worked recipes, and a set of raw-protocol example applications under
+F<examples/> (including a complete little web framework built on PAGI). The
+reference server lives in the
 C<PAGI-Server> distribution and the application toolkit in C<PAGI-Tools>. The
 project repository is L<https://github.com/jjn1056/pagi>; its history holds the
 original combined distribution from before the split.
@@ -334,6 +336,10 @@ requires L<Future::AsyncAwait>).
 =head1 SEE ALSO
 
 =over 4
+
+=item L<PAGI::Tutorial> - A step-by-step guide to the protocol
+
+=item L<PAGI::Cookbook> - Worked, runnable recipes for each protocol feature
 
 =item L<PAGI::Spec> - The full PAGI specification
 

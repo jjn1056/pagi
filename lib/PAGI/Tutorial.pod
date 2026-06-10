@@ -1697,13 +1697,13 @@ You've covered the PAGI protocol! For more information:
 
 =over 4
 
+=item * L<PAGI::Cookbook> - Worked, runnable recipes for each protocol feature
+
+=item * Browse F<examples/> for complete working applications, including a small web framework built on PAGI
+
 =item * Read the specification: L<PAGI::Spec> and the protocol documents L<PAGI::Spec::Www>, L<PAGI::Spec::Lifespan>, L<PAGI::Spec::Server>.
 
 =item * L<PAGI::Tools::Tutorial> - Guide to the optional convenience helpers (middleware, routers, request/response sugar, ready-made apps)
-
-=item * L<PAGI::Cookbook> - Recipes for common tasks (in the C<PAGI-Tools> distribution)
-
-=item * Browse C<examples/> for complete working applications
 
 =back
 
@@ -1712,6 +1712,8 @@ You've covered the PAGI protocol! For more information:
 =over 4
 
 =item * L<PAGI> - The PAGI specification distribution and overview
+
+=item * L<PAGI::Cookbook> - Worked, runnable recipes for the protocol
 
 =item * L<PAGI::Spec> - The full PAGI specification
 

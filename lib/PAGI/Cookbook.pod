@@ -1,0 +1,295 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::Cookbook - worked, runnable recipes for the PAGI protocol
+
+=head1 DESCRIPTION
+
+A gallery of short, self-contained recipes for "how do I do X in PAGI?", each
+with the key code inline. Where L<PAGI::Tutorial> teaches the protocol as a
+linear path, the cookbook is for dipping in.
+
+Every recipe corresponds to a complete, runnable application under the
+distribution's F<examples/> directory. They are all B<raw PAGI> -- a single
+C<async sub> over C<$scope>, C<$receive>, and C<$send>, with no helper modules
+-- so what you see is the protocol itself, not a framework on top of it.
+
+=head2 Running a recipe
+
+You need a PAGI server. These instructions use C<pagi-server> from the
+C<PAGI-Server> distribution; any conforming server works:
+
+    pagi-server --app examples/01-hello-http/app.pl --port 5000
+
+Each example has its own F<README.md> with a fuller description.
+
+=head1 START HERE: A FRAMEWORK ON PAGI
+
+I<Example: F<examples/mini-framework>>
+
+The best way to understand PAGI's value is to see how little stands between the
+protocol and a real web framework. C<Nano> -- routing, path parameters, and
+genuinely non-blocking async dispatch -- is about B<forty lines> over raw PAGI:
+
+    my $app = Nano->new;
+
+    $app->get('/hello/:name' => sub ($req) {
+        "Hello, $req->{params}{name}!\n";
+    });
+
+    # An async handler awaits slow work without blocking other requests:
+    $app->get('/slow/:secs' => async sub ($req) {
+        await Future::IO->sleep( $req->{params}{secs} );
+        "Done.\n";
+    });
+
+The application above never touches the protocol; the framework hides it. Read
+F<examples/mini-framework/README.md> for the full walkthrough -- it is the
+single best argument for building on PAGI.
+
+=head1 HTTP
+
+=head2 Hello, HTTP
+
+I<Example: F<examples/01-hello-http>>
+
+Every HTTP response is one C<http.response.start> event followed by one or more
+C<http.response.body> events. C<< more => 0 >> marks the final body chunk:
+
+    await $send->({
+        type    => 'http.response.start',
+        status  => 200,
+        headers => [ [ 'content-type', 'text/plain' ] ],
+    });
+
+    await $send->({
+        type => 'http.response.body',
+        body => 'Hello from PAGI',
+        more => 0,
+    });
+
+Header names are lower-case, and bodies are bytes -- encode text yourself (see
+L</UTF-8 round trips>).
+
+=head2 Reading a request body
+
+I<Example: F<examples/03-request-body>>
+
+The request body arrives as a stream of C<http.request> events. Keep calling
+C<$receive> until one has C<< more >> false:
+
+    my $body = '';
+    while (1) {
+        my $event = await $receive->();
+        last if $event->{type} ne 'http.request';
+        $body .= $event->{body} // '';
+        last unless $event->{more};
+    }
+
+The bytes are raw and undecoded; the application decides how to interpret them.
+Even if you do not need the body, you should drain it before responding.
+
+=head2 Streaming a response
+
+I<Example: F<examples/02-streaming-response>>
+
+To stream, send several C<http.response.body> events with C<< more => 1 >> and a
+final one with C<< more => 0 >>. Declaring C<< trailers => 1 >> on the start
+event lets you finish with an C<http.response.trailers> event:
+
+    await $send->({
+        type     => 'http.response.start',
+        status   => 200,
+        headers  => [ [ 'content-type', 'text/plain' ] ],
+        trailers => 1,
+    });
+
+    for my $i (0 .. $#chunks) {
+        my $more = ($i < $#chunks) ? 1 : 0;
+        await $send->({ type => 'http.response.body', body => $chunks[$i], more => $more });
+        await Future::IO->sleep(1) if $more;
+    }
+
+    await $send->({ type => 'http.response.trailers', headers => [ [ 'x-done', '1' ] ] });
+
+The example also keeps a C<$receive> Future pending and checks
+C<< $disconnect->is_ready >> between chunks, so it stops early if the client
+goes away.
+
+=head2 UTF-8 round trips
+
+I<Example: F<examples/12-utf8>>
+
+PAGI is precise about where text is decoded for you and where you get raw
+bytes:
+
+    # $scope->{path} is already UTF-8-decoded per the spec.
+    # query_string and the body are raw bytes -- percent-decode, then decode:
+    $str =~ s/%([0-9A-Fa-f]{2})/chr hex $1/eg;
+    my $text = decode_utf8($str);
+
+    # Responses go out as bytes, and Content-Length is the BYTE count:
+    my $bytes = encode_utf8($html);
+    await $send->({
+        type    => 'http.response.start',
+        status  => 200,
+        headers => [
+            [ 'content-type',   'text/html; charset=utf-8' ],
+            [ 'content-length', length $bytes ],
+        ],
+    });
+    await $send->({ type => 'http.response.body', body => $bytes, more => 0 });
+
+The running example echoes Greek, CJK, emoji, and accented input back through
+the path, query string, and a form body. See the UTF-8 sections of
+L<PAGI::Spec::Www> and L<PAGI> for the full rules.
+
+=head1 WEBSOCKET
+
+=head2 Echo server
+
+I<Example: F<examples/04-websocket-echo>>
+
+A WebSocket scope opens with a C<websocket.connect> event that you answer with
+C<websocket.accept>; then you loop, receiving C<websocket.receive> frames and
+sending C<websocket.send>, until C<websocket.disconnect>:
+
+    my $event = await $receive->();              # websocket.connect
+    await $send->({ type => 'websocket.accept' });
+
+    while (1) {
+        my $frame = await $receive->();
+        if ($frame->{type} eq 'websocket.receive') {
+            # $frame->{text} for text frames, $frame->{bytes} for binary
+            await $send->({ type => 'websocket.send', text => "echo: $frame->{text}" });
+        }
+        elsif ($frame->{type} eq 'websocket.disconnect') {
+            last;
+        }
+    }
+
+Unlike HTTP, a WebSocket scope is long-lived: one scope spans the whole
+connection.
+
+=head1 SERVER-SENT EVENTS
+
+=head2 Broadcasting events
+
+I<Example: F<examples/05-sse-broadcaster>>
+
+Open the stream with C<sse.start>, then push C<sse.send> events. Watch
+C<$receive> for C<sse.disconnect> so you stop when the client closes:
+
+    await $send->({
+        type    => 'sse.start',
+        status  => 200,
+        headers => [ [ 'content-type', 'text/event-stream' ] ],
+    });
+
+    for my $msg (@events) {
+        last if $disconnect->is_ready;
+        await Future::IO->sleep(1);
+        await $send->({ type => 'sse.send', event => $msg->{event}, data => $msg->{data} });
+    }
+
+Using C<< Future::IO->sleep >> rather than C<sleep> keeps the handler
+non-blocking and loop-agnostic.
+
+=head1 APPLICATION LIFECYCLE
+
+=head2 Lifespan and shared state
+
+I<Example: F<examples/06-lifespan-state>>
+
+The C<lifespan> scope runs once per process, around startup and shutdown. Reply
+to each event, and use it to build state that later requests share via
+C<< $scope->{state} >>:
+
+    if ($event->{type} eq 'lifespan.startup') {
+        $state->{greeting} = 'Hello from lifespan';
+        await $send->({ type => 'lifespan.startup.complete' });
+    }
+    elsif ($event->{type} eq 'lifespan.shutdown') {
+        await $send->({ type => 'lifespan.shutdown.complete' });
+        last;
+    }
+
+Not every server or run drives lifespan, so an app should still work when the
+startup event never arrives. See L<PAGI::Spec::Lifespan>.
+
+=head1 SERVER EXTENSIONS
+
+=head2 Forcing a flush: the fullflush extension
+
+I<Example: F<examples/07-extension-fullflush>>
+
+Servers advertise optional capabilities in C<< $scope->{extensions} >>. Always
+check for one before using it. C<fullflush> pushes buffered bytes to the client
+immediately:
+
+    my $supports_fullflush = exists $scope->{extensions}{fullflush};
+
+    await $send->({ type => 'http.response.body', body => $chunk, more => 1 });
+    await $send->({ type => 'http.fullflush' }) if $supports_fullflush;
+
+The extension mechanism is described in L<PAGI::Spec::Extensions>.
+
+=head2 Inspecting the TLS connection
+
+I<Example: F<examples/08-tls-introspection>>
+
+When the connection is over TLS and the server supports the extension,
+C<< $scope->{extensions}{tls} >> carries the connection's security metadata:
+
+    my $tls = $scope->{extensions}{tls};
+    if ($tls) {
+        # $tls->{tls_version}, $tls->{cipher_suite},
+        # $tls->{client_cert_name}, $tls->{client_cert_chain}, ...
+    }
+
+The key is absent for cleartext connections. See L<PAGI::Spec::Tls> for the
+full set of fields.
+
+=head1 PUTTING IT TOGETHER
+
+=head2 A real-time job runner
+
+I<Example: F<examples/11-job-runner>>
+
+The capstone example combines all three application protocols in one app
+sharing a single job queue: a REST API over B<HTTP> to create and cancel jobs,
+per-job progress over B<SSE>, and a live queue dashboard over B<WebSocket>. It
+is the most complete demonstration of raw PAGI.
+
+Note: it drives C<IO::Async> timers directly, so it runs only under an
+IO::Async-based server such as PAGI::Server -- see its F<README.md> for how it
+could be made loop-agnostic with L<Future::IO>.
+
+=head1 SEE ALSO
+
+=over
+
+=item *
+
+L<PAGI::Tutorial> - the protocol taught as a linear path
+
+=item *
+
+L<PAGI> - the specification overview and ecosystem map
+
+=item *
+
+L<PAGI::Spec> - the formal specification
+
+=back
+
+=head1 AUTHOR
+
+John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+This software is licensed under the same terms as Perl itself.
+
+=cut
