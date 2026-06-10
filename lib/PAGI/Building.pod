@@ -1,0 +1,184 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::Building - building frameworks and toolkits on PAGI
+
+=head1 DESCRIPTION
+
+This guide is for people building a B<layer> on PAGI: a web framework, a
+toolkit, an application harness. Where L<PAGI::PSGI> is about bringing your code
+I<to> PAGI, this is about building I<on> it.
+
+The thesis is short. A PAGI application is just:
+
+    async sub {
+        my ($scope, $receive, $send) = @_;
+        ...
+    }
+
+Everything a framework provides -- routing, middleware, request and response
+objects, content negotiation, sessions -- is an B<optional> layer over that one
+small contract. The contract is stable (see the stability notice in L<PAGI>),
+so a framework built on it does not have to chase a moving target, and an
+application written against your framework runs unchanged on any conforming
+server.
+
+=head1 THE LAYERING MODEL
+
+A framework is not a different kind of thing from a raw PAGI application; it is a
+stack of conveniences over the same C<$scope>/C<$receive>/C<$send>. It helps to
+see the layers as separable, because you can write your own, borrow ready-made
+ones from the C<PAGI-Tools> distribution, or mix the two:
+
+=over 4
+
+=item B<Dispatch / routing>
+
+Map an incoming request (method and path, the scope type) to a handler.
+F<examples/mini-framework> is a complete worked example -- routing with path
+parameters and async dispatch in about fifty lines. The production version is
+L<PAGI::App::Router>.
+
+=item B<Request and response ergonomics>
+
+Hand the user a request object instead of a raw C<$scope>, and a response
+builder instead of hand-written C<http.response.start>/C<http.response.body>
+events. See L<PAGI::Request> and L<PAGI::Response>.
+
+=item B<Middleware>
+
+A wrapping layer around the application -- see L</MIDDLEWARE> below. The
+C<PAGI::Middleware::*> suite ships ready-made ones (CORS, sessions, gzip, auth,
+rate limiting, and more).
+
+=item B<Everything else>
+
+Error handling, content negotiation, body parsing, cookies, sessions: each is
+another small layer over the protocol, not a reimplementation of it.
+
+=back
+
+The point is that you never reimplement the protocol. You add conveniences, and
+you choose how many.
+
+=head1 MIDDLEWARE
+
+A middleware is a function that takes the inner application (an C<async sub>) and
+returns a new one. The new wrapper can adjust C<$scope> before calling inner,
+wrap C<$send> (or C<$receive>) to observe or rewrite events, short-circuit by
+responding without calling inner at all, or do work before and after.
+
+A complete example that stamps each request with an id -- making it visible to
+inner handlers via the scope, and to the client via a response header:
+
+    sub with_request_id {
+        my ($app) = @_;
+        my $counter = 0;
+
+        return async sub {
+            my ($scope, $receive, $send) = @_;
+
+            my $id = ++$counter;
+            $scope->{'myapp.request_id'} = $id;   # inner handlers can read this
+
+            my $wrapped_send = async sub {
+                my ($event) = @_;
+                if ($event->{type} eq 'http.response.start') {
+                    push @{ $event->{headers} }, [ 'x-request-id', $id ];
+                }
+                return await $send->($event);
+            };
+
+            return await $app->($scope, $receive, $wrapped_send);
+        };
+    }
+
+To short-circuit -- an authentication gate, say -- a middleware simply sends its
+own response and returns without ever calling C<$app>. This is the same shape as
+PSGI middleware, one level asynchronous; if you have written PSGI middleware,
+you already know how to write this.
+
+=head1 EXTENDING THE PROTOCOL
+
+PAGI is deliberately small, but it is not closed. A framework can define its own
+events and scope conventions:
+
+=over 4
+
+=item *
+
+B<New protocol events or scope types> (a capability like C<http.fullflush>, or a
+whole new protocol) are defined through the extension mechanism and require a
+cooperating server. See L<PAGI::Spec::Extensions>.
+
+=item *
+
+B<Your own asynchronous events> -- timers, background jobs, external triggers --
+require no server cooperation at all. You model them as L<Future>s and compose
+them with the protocol's events, loop-agnostically. This is covered in
+L<PAGI::Spec::Extensions/"Defining your own events">, and it is the capability
+that lets a framework offer genuinely event-driven features without binding
+itself to one event loop.
+
+=item *
+
+B<Scope keys> under your own namespace (C<< $scope->{'myapp.session'} >>) are how
+middleware passes data down to handlers -- the equivalent of stashing in
+C<< $env >>.
+
+=back
+
+=head1 PATTERNS WORTH KNOWING
+
+Two asynchronous footguns are worth designing away I<for your users>, so they
+do not have to think about them:
+
+=over 4
+
+=item *
+
+B<Orphaned response Futures.> If a user forgets to C<await> a C<$send>, the
+application's Future can resolve before the send actually completes. A framework
+can prevent this entirely by routing all output through a response object that
+collects every send Future and awaits them together when the handler finishes.
+
+=item *
+
+B<Orphaned background Futures.> A background task whose Future nobody holds can
+fail silently or outlive the request. A framework that participates in the
+server's loop (for example by being an L<IO::Async::Notifier> and adopting its
+Futures) can surface those errors and shut the work down coherently.
+
+=back
+
+These are design directions, not prescriptions -- but solving them is a large
+part of what turns "a few conveniences" into a framework people trust.
+
+=head1 SEE ALSO
+
+=over 4
+
+=item L<PAGI::PSGI> - coming to PAGI from PSGI
+
+=item L<PAGI::Tutorial> - the protocol, taught from scratch
+
+=item L<PAGI::Cookbook> - worked, runnable recipes
+
+=item L<PAGI::Spec> - the specification
+
+=item L<PAGI::Spec::Extensions> - the extension mechanism and custom events
+
+=back
+
+And F<examples/mini-framework> for a complete framework in about fifty lines.
+
+=head1 AUTHOR
+
+John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+This software is licensed under the same terms as Perl itself.
+
+=cut

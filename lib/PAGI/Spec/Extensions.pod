@@ -83,6 +83,41 @@ an error.
 Additional extensions (tracing hooks, background task controls, etc.) should
 follow the same pattern.
 
+=head2 Defining your own events
+
+The mechanism above is how a B<server> advertises a capability. A framework or
+application can also introduce its own events, at two different cost levels:
+
+=over
+
+=item -
+
+B<New event types within a scope> (like C<http.fullflush>), or B<new scope
+types> entirely (a protocol beyond C<http>/C<websocket>/C<sse>), require a
+B<cooperating server> -- the server has to produce or accept those events. Use a
+namespaced C<type> (for example C<myproto.message>) and document it as an
+extension so other servers and applications can interoperate.
+
+=item -
+
+B<Your own asynchronous events> -- a timer firing, a background job finishing, a
+message arriving on an external queue -- require B<no server cooperation and no
+protocol changes>. You model them as L<Future>s and compose them with the
+protocol's events using ordinary Future combinators. This is what makes PAGI's
+model loop-agnostic: a handler can wait on its own event sources alongside
+C<$receive>, and the same code runs under any conforming server.
+
+    use Future;
+
+    # Whichever resolves first wins (the loser is cancelled): the next client
+    # message, or our own event -- a job-completion Future from elsewhere in
+    # the program.
+    my $next = await Future->wait_any( $receive->(), $job_done );
+
+=back
+
+See L<PAGI::Building> for using this to build event-driven layers on PAGI.
+
 =head1 SEE ALSO
 
 =over
