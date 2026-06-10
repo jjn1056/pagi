@@ -234,7 +234,7 @@ check, a cleanup callback, and a Future you can race against:
             headers => [ [ 'content-type', 'text/plain' ] ],
         });
 
-        $conn->on_disconnect(sub { warn "client went away\n" });   # cleanup hook
+        $conn->on_disconnect(sub { warn "client went away\n" });   # fires only on an abnormal drop
 
         for my $i (1 .. 100) {
             last unless $conn->is_connected;   # cheap check before each step
@@ -250,6 +250,12 @@ completes, and cancels the other:
 
     my $result = await Future->wait_any( $expensive_work, $conn->disconnect_future );
 
+C<on_disconnect> fires B<only> when something goes wrong -- the client drops, a
+timeout fires, the server aborts. Its counterpart C<on_complete> fires B<only>
+when the response was fully delivered. Exactly one of the two runs per request,
+so they are the natural place to put rollback-vs-commit or abort-vs-finalize
+logic without juggling a flag yourself.
+
 B<WebSocket> and B<SSE> do not get a C<pagi.connection> object: their C<$receive>
 queues carry messages, not a body you must preserve, so awaiting the
 C<websocket.disconnect> / C<sse.disconnect> event is already the clean way to
@@ -257,7 +263,7 @@ notice -- as the WebSocket and SSE recipes do. (The C<PAGI::WebSocket> and
 C<PAGI::SSE> helper objects in C<PAGI-Tools> wrap this for you.)
 
 The full connection-state interface (C<is_connected>, C<disconnect_reason>,
-C<on_disconnect>, C<disconnect_future>) is specified in
+C<on_disconnect>, C<on_complete>, C<disconnect_future>) is specified in
 L<PAGI::Spec::Www/"Connection State">.
 
 =head1 WEBSOCKET

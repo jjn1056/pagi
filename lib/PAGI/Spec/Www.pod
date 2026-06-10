@@ -607,21 +607,39 @@ The connection state object solves this with synchronous, non-destructive checks
 
 =head4 Connection Object Interface
 
-Servers MUST provide a connection state object with these methods:
+The object reports two distinct ways a request can end, through B<separate>
+callbacks, so an application never has to disambiguate them:
 
-B<C<is_connected()>> - Returns true if the connection is still open.
+=over 4
+
+=item *
+
+An B<abnormal disconnect> -- the client goes away, a timeout fires, or an error
+occurs -- B<while the application is still working>.
+
+=item *
+
+The request B<completing successfully> -- the response was fully delivered.
+
+=back
+
+Exactly one of C<on_disconnect> and C<on_complete> fires for a given request.
+
+Servers MUST provide:
+
+B<C<is_connected()>> - Returns true while the connection is open, false once it has closed (for any reason).
 
     my $connected = $conn->is_connected;  # Boolean, synchronous
 
-B<C<disconnect_reason()>> - Returns the disconnect reason string, or C<undef> if still connected.
+B<C<disconnect_reason()>> - Returns the abnormal-disconnect reason string (see L</Standard Disconnect Reasons>), or C<undef> if the connection is still open or completed normally.
 
     my $reason = $conn->disconnect_reason;  # String or undef
 
-B<C<on_disconnect($callback)>> - Registers a callback to be invoked when disconnect occurs.
+B<C<on_disconnect($callback)>> - Registers a callback invoked B<only on abnormal disconnect> (client gone, timeout, error) -- not on normal completion. The callback receives the disconnect reason.
 
     $conn->on_disconnect(sub {
         my ($reason) = @_;
-        cleanup_resources();
+        cancel_work();          # the client is gone; stop and clean up
     });
 
 =over
@@ -636,26 +654,39 @@ Callbacks are invoked in registration order
 
 =item -
 
-If registered after disconnect already occurred, callback is invoked immediately
+If registered after disconnect already occurred, the callback is invoked immediately
 
 =back
 
-B<C<disconnect_future()>> - Returns a Future that resolves when the connection closes.
+Servers SHOULD also provide:
+
+B<C<on_complete($callback)>> - Registers a callback invoked B<only when the request completes successfully> (the response was fully delivered without the client disconnecting). The counterpart to C<on_disconnect>.
+
+    $conn->on_complete(sub {
+        commit_transaction();   # finished cleanly
+    });
+
+B<C<disconnect_future()>> - Returns a Future that resolves, with the reason, on abnormal disconnect -- useful for racing against long-running work, e.g. C<< Future->wait_any($work, $conn->disconnect_future) >>. Returns C<undef> if not supported.
 
     my $future = $conn->disconnect_future;  # Future or undef
     my $reason = await $future;
 
-Servers SHOULD provide this method. Returns C<undef> if not supported.
-
 =head4 Standard Disconnect Reasons
 
-Servers MUST use these standard reason strings:
+Every reason below describes an B<abnormal> end to the request -- the connection
+went away, a timeout fired, or the server aborted the exchange before the
+response was fully delivered. These are the values reported by
+C<disconnect_reason()>, passed to C<on_disconnect> callbacks, and resolved from
+C<disconnect_future()>. A request that completes successfully has B<no> reason
+(C<disconnect_reason()> returns C<undef> and C<on_complete> fires instead).
+
+Servers MUST use these standard reason strings where the condition applies:
 
 =over 4
 
 =item C<client_closed>
 
-Client initiated clean close (TCP FIN)
+Client initiated clean close (TCP FIN) mid-request
 
 =item C<client_timeout>
 
@@ -663,7 +694,11 @@ Client stopped responding (read timeout)
 
 =item C<idle_timeout>
 
-Connection idle too long between requests
+Connection idle too long before the request arrived
+
+=item C<keepalive_timeout>
+
+Keep-alive connection idled out between requests
 
 =item C<write_timeout>
 
@@ -685,9 +720,17 @@ HTTP parse error, invalid request
 
 Server shutting down gracefully
 
+=item C<server_error>
+
+Unhandled server-side error aborted the request
+
 =item C<body_too_large>
 
 Request body exceeded limit
+
+=item C<queue_overflow>
+
+A bounded server queue (e.g. outgoing frames or buffered events) overflowed and the connection was dropped to relieve backpressure
 
 =back
 
@@ -707,17 +750,21 @@ MUST implement C<is_connected()>, C<disconnect_reason()>, and C<on_disconnect()>
 
 =item 3.
 
-SHOULD implement C<disconnect_future()> method returning a Future
+SHOULD implement C<on_complete()> and C<disconnect_future()>
 
 =item 4.
 
-MUST update connection state as soon as disconnect is detected
+MUST fire C<on_disconnect> callbacks B<only> on abnormal disconnect, and C<on_complete> callbacks B<only> on successful completion -- never both for the same request
 
 =item 5.
 
-MUST use standard reason strings where applicable
+MUST update connection state as soon as disconnect is detected
 
 =item 6.
+
+MUST use standard reason strings where applicable
+
+=item 7.
 
 MUST NOT transition C<is_connected()> back to true once false (one-way transition)
 
@@ -725,7 +772,7 @@ MUST NOT transition C<is_connected()> back to true once false (one-way transitio
 
 =head4 State Transition Order
 
-When disconnect is detected, servers MUST update state in this order:
+When an B<abnormal disconnect> is detected, servers MUST update state in this order:
 
 =over
 
@@ -750,6 +797,11 @@ Invoke C<on_disconnect> callbacks in registration order
 Send C<http.disconnect> message to receive queue
 
 =back
+
+When a request B<completes successfully>, servers MUST invoke C<on_complete>
+callbacks in registration order and MUST leave C<disconnect_reason()> as
+C<undef>. C<on_disconnect> callbacks and C<disconnect_future()> MUST NOT fire on
+this path.
 
 =head4 Applicability
 
@@ -789,7 +841,7 @@ WebSocket and SSE have dedicated disconnect events and typically use handler obj
         await $send->({ type => 'http.response.body', body => $result, more => 0 });
     }
 
-=head4 Example: Cleanup on Disconnect
+=head4 Example: Cleanup on Disconnect vs. Completion
 
     async sub handler {
         my ($scope, $receive, $send) = @_;
@@ -797,18 +849,26 @@ WebSocket and SSE have dedicated disconnect events and typically use handler obj
 
         my $temp_file = create_temp_file();
 
-        # Register cleanup - runs automatically if client disconnects
+        # Abnormal end: client vanished, or a timeout/error fired mid-request.
         $conn->on_disconnect(sub {
             my ($reason) = @_;
             $temp_file->unlink;
-            log_info("Client disconnected: $reason");
+            log_info("Aborted, client gone: $reason");
+        });
+
+        # Clean end: the response was fully delivered.
+        $conn->on_complete(sub {
+            $temp_file->unlink;
+            log_info("Delivered OK");
         });
 
         my $result = await process_data($temp_file);
-        $temp_file->unlink;  # Normal cleanup
-
         await send_response($send, $result);
     }
+
+Exactly one of the two callbacks runs, so the temp file is always removed
+exactly once -- no manual cleanup in the request body, and no risk of a
+double-unlink.
 
 =head4 Example: Racing Against Disconnect
 
@@ -1011,7 +1071,7 @@ C<interval> (Number) -- Seconds between ping frames. C<0> disables keepalive.
 
 =item -
 
-C<timeout> (Number, optional) -- Seconds to wait for pong response. If no pong is received within this time, the connection is closed with code 1006 and the application receives a C<websocket.disconnect> event with C<<< reason => 'keepalive timeout' >>>.
+C<timeout> (Number, optional) -- Seconds to wait for pong response. If no pong is received within this time, the connection is closed with code 1006 and the application receives a C<websocket.disconnect> event with C<<< reason => 'keepalive_timeout' >>>.
 
 =back
 
@@ -1054,24 +1114,25 @@ C<type> -- C<"websocket.disconnect">
 
 =item -
 
-C<code> (Int, default C<1005>) -- WebSocket close code per RFC 6455
+C<code> (Int) -- WebSocket close code per RFC 6455. When the peer sent a close frame, this is its code (or C<1005>, "no status received", if the frame carried none). When the connection dropped or was aborted with no close handshake -- timeout, write error, server shutdown -- servers MUST report C<1006> ("abnormal closure").
 
 =item -
 
-C<reason> (String, default empty) -- Human-readable disconnect reason
+C<reason> (String, default empty) -- Disconnect reason. For an abnormal close, servers MUST set this to the matching standard reason string from L</Standard Disconnect Reasons>. For a clean client-initiated close (code 1000) it MAY be empty.
 
 =back
 
-B<Common close codes and reasons:>
+The C<code> carries the RFC 6455 close code; C<reason> supplements it with a standard reason token so an application can branch on a single vocabulary across HTTP, WebSocket, and SSE:
 
-    Code  Reason               Meaning
-    ----  -------------------  -------
-    1000  (from client)        Normal closure
-    1001  'going away'         Client/server going away
-    1006  'keepalive timeout'  No pong received within timeout
-    1006  'send timeout'       Send operation timed out
-    1006  'write error'        Write to socket failed
-    1007  'invalid UTF-8'      Text frame contained invalid UTF-8
+    Code  Reason             Meaning
+    ----  -----------------  -------
+    1000  (empty)            Normal closure initiated by client
+    1001  server_shutdown    Server going away (shutdown/restart)
+    1001  client_closed      Client navigating away
+    1006  keepalive_timeout  No pong received within timeout
+    1006  write_timeout      Send operation timed out
+    1006  write_error        Write to socket failed
+    1007  protocol_error     Text frame contained invalid UTF-8
 
 =head4 Disconnected Client - sending after disconnect
 
@@ -1313,7 +1374,7 @@ C<type> -- C<"sse.disconnect">
 
 =item -
 
-C<reason> (String, default empty) -- Human-readable disconnect reason
+C<reason> (String) -- Standard reason string from L</Standard Disconnect Reasons>
 
 =back
 
@@ -1321,17 +1382,21 @@ B<Common reasons:>
 
 =over 4
 
-=item C<'client disconnect'>
+=item C<client_closed>
 
-Client closed connection normally
+Client closed the connection
 
-=item C<'write error'>
+=item C<write_error>
 
-Failed to write (keepalive or send)
+Failed to write to the socket (keepalive or event)
 
-=item C<'send timeout'>
+=item C<write_timeout>
 
 Send timeout exceeded
+
+=item C<server_shutdown>
+
+Server shut down the stream
 
 =back
 
