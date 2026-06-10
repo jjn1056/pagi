@@ -38,4 +38,4 @@ es.onerror = () => console.log('Connection lost');
 
 ## Spec References
 
-- SSE scope/events – `docs/specs/www.mkdn`
+- SSE scope/events – `PAGI::Spec::Www`

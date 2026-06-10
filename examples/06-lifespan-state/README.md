@@ -33,5 +33,5 @@ Press Ctrl+C to stop the server and observe the clean shutdown sequence in the l
 
 ## Spec References
 
-- Lifespan events – `docs/specs/lifespan.mkdn`
-- HTTP events – `docs/specs/www.mkdn`
+- Lifespan events – `PAGI::Spec::Lifespan`
+- HTTP events – `PAGI::Spec::Www`

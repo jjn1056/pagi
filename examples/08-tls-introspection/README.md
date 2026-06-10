@@ -34,5 +34,5 @@ curl http://localhost:5000/
 
 ## Spec References
 
-- TLS extension – `docs/specs/tls.mkdn`
-- HTTP response events – `docs/specs/www.mkdn`
+- TLS extension – `PAGI::Spec::Tls`
+- HTTP response events – `PAGI::Spec::Www`

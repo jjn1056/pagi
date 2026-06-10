@@ -61,6 +61,29 @@ This document presents a high level overview of L<PAGI>.  If you are a web devel
 who is looking to write PAGI compliant apps, you should also review the tutorial:
 L<PAGI::Tutorial>.
 
+=head2 Why PAGI?
+
+L<PSGI> models an application as a single, synchronous coderef that takes a
+request and returns a response. That model has served Perl well, but it cannot
+express long-lived connections such as long-poll HTTP or WebSockets: there is
+only one path in (the request) and one path out (the response). Even made
+non-blocking, a single request/response path cannot represent protocols that
+deliver B<multiple> incoming events over the life of a connection, such as
+WebSocket frames.
+
+PAGI keeps the simple "your application is a coderef" idea but makes it
+asynchronous and message-based. An application receives a C<$scope> describing
+the connection and two async coderefs: C<$receive> for events arriving from the
+client and C<$send> for events going back. Both return L<Future>s, so
+backpressure is explicit. This allows any number of incoming and outgoing
+events per connection, and leaves room for background work (for example,
+listening on an external trigger like a message queue) alongside the
+request/response flow.
+
+PAGI is also a superset of L<PSGI>: there is a defined translation between the
+two, so existing PSGI applications can run under a PAGI server through a PSGI
+adapter provided in the C<PAGI-Tools> distribution.
+
 =head2 Beta Software Notice
 
 B<WARNING: This is beta software.>
@@ -111,8 +134,9 @@ specification without pulling in a particular server or toolkit:
 =item C<PAGI> (this distribution)
 
 The specification: this module plus the L<PAGI::Spec> documents
-(L<PAGI::Spec>, L<PAGI::Spec::Www>, L<PAGI::Spec::Lifespan>, L<PAGI::Spec::Tls>,
-L<PAGI::Spec::Server>). The specification modules are pure documentation;
+(L<PAGI::Spec>, L<PAGI::Spec::Www>, L<PAGI::Spec::Lifespan>,
+L<PAGI::Spec::Extensions>, L<PAGI::Spec::Tls>, L<PAGI::Spec::Server>). The
+specification modules are pure documentation;
 during the transition from the combined distribution this distribution also
 pulls in C<PAGI-Server> and C<PAGI-Tools> (see
 L</INSTALLATION AND BACKWARD COMPATIBILITY>).
@@ -141,6 +165,10 @@ example applications under F<examples/>. The reference server lives in the
 C<PAGI-Server> distribution and the application toolkit in C<PAGI-Tools>. The
 project repository is L<https://github.com/jjn1056/pagi>; its history holds the
 original combined distribution from before the split.
+
+Beyond the core distributions, other projects build on PAGI -- for example
+L<Thunderhorse>, an asynchronous web framework. See the project repository for
+an up-to-date list of conforming servers, frameworks, and tools.
 
 =head1 INSTALLATION AND BACKWARD COMPATIBILITY
 
@@ -308,6 +336,8 @@ requires L<Future::AsyncAwait>).
 =over 4
 
 =item L<PAGI::Spec> - The full PAGI specification
+
+=item L<PAGI::Spec::Extensions> - The server extension mechanism
 
 =item L<PAGI::Spec::Server> - The server runner contract for swappable servers
 

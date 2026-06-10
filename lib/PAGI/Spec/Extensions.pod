@@ -1,0 +1,100 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::Spec::Extensions - The PAGI server extension mechanism
+
+=head1 Extensions
+
+The PAGI specification provides for server-specific extensions to be used
+outside of the core PAGI specification. This document records the extension
+mechanism and shared extensions so servers and applications can interoperate
+without private agreements.
+
+Each extension is advertised by the server and may add keys to the connection
+scope and define new event types. The L<TLS extension|PAGI::Spec::Tls> is a
+fully specified example with its own document.
+
+=head2 Declaring Extensions
+
+=over
+
+=item -
+
+Servers advertise extensions in C<< scope->{extensions} >>. Each key must be a
+lower-case identifier (e.g., C<fullflush>, C<tls>).
+
+=item -
+
+Extension values are hashrefs whose contents are defined by the extension
+author. Use permitted data types from the core spec.
+
+=item -
+
+Applications must check for the presence of an extension before sending any
+extension-specific events.
+
+=back
+
+When contributing a new extension, document it with:
+
+=over
+
+=item 1.
+
+B<Name & Purpose> -- what problem it solves.
+
+=item 2.
+
+B<Scope Additions> -- keys added to C<< scope->{extensions}{$name} >> or other
+metadata.
+
+=item 3.
+
+B<Events> -- new C<type> values that may flow through C<$send>/C<$receive>.
+
+=item 4.
+
+B<Compatibility> -- how clients should behave if the server omits the
+extension.
+
+=back
+
+=head2 Example: C<fullflush>
+
+Some HTTP servers expose a C<fullflush> capability that immediately flushes
+buffered bytes to the client (useful for server-sent events or debugging).
+
+=over
+
+=item -
+
+B<Scope>: servers set C<< scope->{extensions}{fullflush} = {} >> to indicate
+support.
+
+=item -
+
+B<Event>: applications may send C<< { type => 'http.fullflush' } >> to force a
+flush. Servers that do not advertise the extension must reject the event with
+an error.
+
+=back
+
+Additional extensions (tracing hooks, background task controls, etc.) should
+follow the same pattern.
+
+=head1 SEE ALSO
+
+=over
+
+=item -
+
+L<PAGI::Spec> -- the base specification
+
+=item -
+
+L<PAGI::Spec::Tls> -- the TLS extension, a fully specified example
+
+=back
+
+=cut

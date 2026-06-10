@@ -39,4 +39,4 @@ ws.onopen = () => ws.send('Hello from browser!');
 
 ## Spec References
 
-- WebSocket scope & events – `docs/specs/www.mkdn`
+- WebSocket scope & events – `PAGI::Spec::Www`

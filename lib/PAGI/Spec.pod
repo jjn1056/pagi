@@ -527,6 +527,10 @@ L<PAGI::Spec::Lifespan> - startup and shutdown lifecycle protocol
 
 =item -
 
+L<PAGI::Spec::Extensions> - the server extension mechanism
+
+=item -
+
 L<PAGI::Spec::Tls> - TLS connection information extension
 
 =item -

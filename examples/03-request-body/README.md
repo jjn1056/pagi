@@ -32,4 +32,4 @@ echo "File contents here" | curl -X POST http://localhost:5000/ -d @-
 
 ## Spec References
 
-- HTTP request/response events – `docs/specs/www.mkdn`
+- HTTP request/response events – `PAGI::Spec::Www`

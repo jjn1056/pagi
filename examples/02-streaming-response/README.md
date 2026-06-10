@@ -30,5 +30,5 @@ curl -N http://localhost:5000/
 
 ## Spec References
 
-- HTTP events, trailers, disconnect – `docs/specs/www.mkdn`
-- Cancellation semantics – `docs/specs/main.mkdn`
+- HTTP events, trailers, disconnect – `PAGI::Spec::Www`
+- Cancellation semantics – `PAGI::Spec`

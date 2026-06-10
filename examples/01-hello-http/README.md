@@ -19,5 +19,5 @@ curl http://localhost:5000/
 
 ## Spec References
 
-- Core scope & application contract – `docs/specs/main.mkdn`
-- HTTP response events – `docs/specs/www.mkdn`
+- Core scope & application contract – `PAGI::Spec`
+- HTTP response events – `PAGI::Spec::Www`

@@ -31,5 +31,5 @@ curl -N http://localhost:5000/
 
 ## Spec References
 
-- Extensions section – `docs/specs/main.mkdn`
-- Fullflush example – `docs/extensions.mkdn`
+- Extension mechanism – `PAGI::Spec::Extensions`
+- Fullflush example – `PAGI::Spec::Extensions` (the `fullflush` section)
