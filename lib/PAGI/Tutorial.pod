@@ -132,7 +132,7 @@ To use PAGI, you'll need:
 
 =over 4
 
-=item * Perl 5.16 or later (released May 2012) - required by L<Future::AsyncAwait>
+=item * B<Perl 5.18 or later> - the floor for the PAGI distributions (the specification, the reference server, and the toolkit)
 
 =item * L<Future::AsyncAwait> - Provides async/await syntax
 
@@ -140,9 +140,14 @@ To use PAGI, you'll need:
 
 =back
 
-B<Note:> PAGI applications only require C<Future::AsyncAwait>. The event loop
-(L<IO::Async>) is an implementation detail of L<PAGI::Server>. Using C<Future::IO>
-for timers and I/O keeps your application code portable across different servers.
+B<Note:> A bare PAGI application's only hard dependency is C<Future::AsyncAwait>
+(for async/await syntax), which supports Perl back to 5.16; the event loop
+(L<IO::Async>) is an implementation detail of the server, and using C<Future::IO>
+for timers and I/O keeps your code portable across servers. In practice, though,
+you run on something: the specification, the reference server L<PAGI::Server>,
+and the L<PAGI-Tools|PAGI::Tools> toolkit all require B<Perl 5.18 or later>, and
+another server or a higher-level framework may require a newer Perl still. The
+minimum version you need is the floor of whatever you build on.
 
 =head2 1.2 Installation
 
