@@ -205,6 +205,61 @@ The full example wraps this in an HTML page that also exercises the path and a
 form body. See the UTF-8 sections of L<PAGI::Spec::Www> and L<PAGI> for the
 complete rules.
 
+=head2 Detecting client disconnect
+
+When a client goes away mid-response -- closes the tab, drops the network -- you
+want to stop work, not keep streaming into a dead connection. Every scope type
+delivers a disconnect event (C<http.disconnect>, C<websocket.disconnect>,
+C<sse.disconnect>) to C<$receive>, so the universal way to notice is to receive
+it. Note that sending after a disconnect is simply a no-op -- it never raises --
+so you detect disconnection through these mechanisms, not by checking the result
+of C<$send>.
+
+For B<HTTP>, PAGI additionally gives you a connection-state object at
+C<< $scope->{'pagi.connection'} >>. It exists because calling C<$receive> on an
+HTTP scope just to poll for disconnect would consume request-body data; the
+object lets you check without touching the queue. It offers a cheap synchronous
+check, a cleanup callback, and a Future you can race against:
+
+    use Future;
+    use Future::IO;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        my $conn = $scope->{'pagi.connection'};
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [ [ 'content-type', 'text/plain' ] ],
+        });
+
+        $conn->on_disconnect(sub { warn "client went away\n" });   # cleanup hook
+
+        for my $i (1 .. 100) {
+            last unless $conn->is_connected;   # cheap check before each step
+            await $send->({ type => 'http.response.body', body => "line $i\n", more => 1 });
+            await Future::IO->sleep(1);
+        }
+        await $send->({ type => 'http.response.body', body => '', more => 0 });
+    };
+
+To cancel a long-running task the moment the client leaves, race it against
+C<< $conn->disconnect_future >> -- C<wait_any> resolves as soon as either Future
+completes, and cancels the other:
+
+    my $result = await Future->wait_any( $expensive_work, $conn->disconnect_future );
+
+B<WebSocket> and B<SSE> do not get a C<pagi.connection> object: their C<$receive>
+queues carry messages, not a body you must preserve, so awaiting the
+C<websocket.disconnect> / C<sse.disconnect> event is already the clean way to
+notice -- as the WebSocket and SSE recipes do. (The C<PAGI::WebSocket> and
+C<PAGI::SSE> helper objects in C<PAGI-Tools> wrap this for you.)
+
+The full connection-state interface (C<is_connected>, C<disconnect_reason>,
+C<on_disconnect>, C<disconnect_future>) is specified in
+L<PAGI::Spec::Www/"Connection State">.
+
 =head1 WEBSOCKET
 
 =head2 Echo server
