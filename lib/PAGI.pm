@@ -9,6 +9,8 @@ our $VERSION = '0.002000';
 
 __END__
 
+=encoding UTF-8
+
 =head1 NAME
 
 PAGI - Perl Asynchronous Gateway Interface
