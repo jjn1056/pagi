@@ -58,6 +58,8 @@ structured values), but the information is the same. The mapping:
 
 =item C<CONTENT_TYPE> / C<CONTENT_LENGTH> and the C<HTTP_*> keys are all read from C<< $scope->{headers} >>
 
+=item There is no C<psgi.errors> stream -- error logging is the server's responsibility, not an app-visible filehandle
+
 =back
 
 The one shape change worth noting is headers. PSGI flattens them into a single
@@ -231,10 +233,29 @@ supported way to keep synchronous code synchronous.
 
 =back
 
-One honest caveat: C<PAGI::App::WrapPSGI> today buffers a streaming PSGI response
-fully before sending it, so a PSGI app that relies on incremental flushing will
-not stream through the adapter yet. Ordinary request/response PSGI apps are
-unaffected.
+Two things to know about running synchronous PSGI code under an asynchronous
+server:
+
+=over 4
+
+=item B<A wrapped PSGI app is still blocking.>
+
+It runs synchronously, and while it runs it blocks the worker's event loop --
+under a single-process server, that stalls every other connection on the server.
+Run it the way you already run PSGI: under a pre-forking, multi-worker server.
+L<PAGI::Server>'s worker mode (C<--workers N>) gives each worker its own event
+loop, so a slow PSGI request ties up only its own worker while the others keep
+serving, exactly as it would behind L<Starman>. Your native PAGI handlers are
+asynchronous and unaffected -- only the wrapped synchronous code blocks.
+
+=item B<Streaming buffers today.>
+
+C<PAGI::App::WrapPSGI> currently collects a streaming PSGI response fully before
+sending it, so a PSGI app that relies on incremental flushing will not stream
+through the adapter yet. For a streaming route, write a native PAGI handler
+instead. Ordinary request/response PSGI apps are unaffected.
+
+=back
 
 =head1 FOR FRAMEWORK AUTHORS
 
