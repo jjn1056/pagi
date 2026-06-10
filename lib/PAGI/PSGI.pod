@@ -1,0 +1,279 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::PSGI - coming to PAGI from PSGI
+
+=head1 DESCRIPTION
+
+If you have written PSGI applications or middleware -- and especially if you
+maintain or are building a web framework -- this guide is the fast path into
+PAGI. You already know most of it; the shapes just move around a little.
+
+PSGI models an application as a single B<synchronous> coderef: it takes an
+C<$env> hashref and returns C<[$status, \@headers, \@body]>. That has served
+Perl well for over a decade, but it cannot express a connection that stays open
+and exchanges many messages -- long-poll, Server-Sent Events, WebSockets --
+because there is only one way in (the request) and one way out (the response).
+
+PAGI keeps the idea you like -- B<your application is a coderef> -- but makes it
+asynchronous and message-based. Instead of returning a response, your app is
+handed two coderefs: C<$receive> for events coming from the client and C<$send>
+for events going back, both returning L<Future>s so backpressure is explicit.
+
+The headline for a PSGI user is this: B<PAGI is a superset of PSGI, so you do
+not have to rewrite anything.> You can run your existing PSGI application under
+a PAGI server today and add asynchronous, WebSocket, or SSE endpoints beside it,
+one route at a time. See L</ADOPTING PAGI INCREMENTALLY>.
+
+=head1 THE MENTAL MODEL
+
+Four things move when you go from PSGI to PAGI: the environment becomes a scope,
+the returned response becomes sent events, reading the body becomes receiving
+events, and middleware wraps an C<async sub> instead of a plain one.
+
+=head2 The request: C<$env> becomes C<$scope>
+
+A PAGI application is invoked with a C<$scope> hashref that plays the role of
+PSGI's C<$env>. The keys are renamed and tidied (lower-cased header names,
+structured values), but the information is the same. The mapping:
+
+=over 4
+
+=item C<REQUEST_METHOD> is C<< $scope->{method} >>
+
+=item C<PATH_INFO> is C<< $scope->{path} >> (already UTF-8 decoded; the raw bytes are in C<< $scope->{raw_path} >>)
+
+=item C<SCRIPT_NAME> is C<< $scope->{root_path} >>
+
+=item C<QUERY_STRING> is C<< $scope->{query_string} >>
+
+=item C<SERVER_PROTOCOL> is C<< $scope->{http_version} >>
+
+=item C<psgi.url_scheme> is C<< $scope->{scheme} >>
+
+=item C<SERVER_NAME> / C<SERVER_PORT> are C<< $scope->{server} >>
+
+=item C<REMOTE_ADDR> / C<REMOTE_PORT> are C<< $scope->{client} >>
+
+=item C<CONTENT_TYPE> / C<CONTENT_LENGTH> and the C<HTTP_*> keys are all read from C<< $scope->{headers} >>
+
+=back
+
+The one shape change worth noting is headers. PSGI flattens them into a single
+array with implicit pairs (C<< ['Content-Type', 'text/html', 'X-Custom', 'v'] >>);
+PAGI uses an arrayref of explicit C<[name, value]> tuples with B<lower-case>
+names and byte values:
+
+    [ [ 'content-type', 'text/html' ], [ 'x-custom', 'v' ] ]
+
+This makes duplicate headers (C<Set-Cookie>) and header manipulation
+straightforward, and matches the ASGI model PAGI is modelled on. The full key
+table is in L<PAGI::Spec::Www>.
+
+=head2 The response: returning a value becomes C<await $send>
+
+In PSGI you build the whole response and return it. In PAGI you B<send> it: one
+C<http.response.start> event with the status and headers, then one or more
+C<http.response.body> events, the last carrying C<< more => 0 >>.
+
+PSGI:
+
+    my $app = sub {
+        my ($env) = @_;
+        return [
+            200,
+            [ 'Content-Type' => 'text/plain' ],
+            [ "You asked for $env->{PATH_INFO}\n" ],
+        ];
+    };
+
+PAGI:
+
+    use Future::AsyncAwait;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [ [ 'content-type', 'text/plain' ] ],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => "You asked for $scope->{path}\n",
+            more => 0,
+        });
+    };
+
+Bodies go out as bytes -- encode text yourself, exactly as you would when
+returning bytes from PSGI.
+
+=head2 Reading the body: C<psgi.input> becomes C<$receive>
+
+PSGI hands you a C<psgi.input> stream to read the request body. In PAGI the body
+arrives as a sequence of C<http.request> events; you loop on C<$receive> until
+one has C<< more >> false:
+
+    my $body = '';
+    while (1) {
+        my $event = await $receive->();
+        last if $event->{type} ne 'http.request';   # e.g. http.disconnect
+        $body .= $event->{body} // '';
+        last unless $event->{more};
+    }
+
+As in PSGI, the bytes are raw and undecoded; the application decides how to
+interpret them.
+
+=head2 Streaming and full duplex come for free
+
+PSGI bolts streaming on with C<psgi.streaming> and the delayed-response
+C<< $responder->([...]) >> callback. PAGI has no separate streaming API: to
+stream, you just C<await $send->> more C<http.response.body> events. And because
+you hold C<$receive> and C<$send> at the same time, you can interleave them --
+which is what makes WebSockets and SSE ordinary PAGI applications rather than
+special cases.
+
+=head2 Middleware wraps an C<async sub>
+
+PSGI middleware is a sub that takes the inner C<$app> and returns a new app that
+adjusts C<$env> or rewrites the response. PAGI middleware is exactly the same
+shape, one level async: it takes the inner C<async sub> and returns a new one,
+free to adjust C<$scope> before calling inner, wrap C<$send> to rewrite outgoing
+events, or short-circuit entirely. Adding a response header:
+
+    sub add_header {
+        my ($app) = @_;
+        return async sub {
+            my ($scope, $receive, $send) = @_;
+
+            my $wrapped_send = async sub {
+                my ($event) = @_;
+                if ($event->{type} eq 'http.response.start') {
+                    push @{ $event->{headers} }, [ 'x-wrapped', '1' ];
+                }
+                return await $send->($event);
+            };
+
+            return await $app->($scope, $receive, $wrapped_send);
+        };
+    }
+
+The middleware model for framework authors is covered in depth in
+L<PAGI::Building>. Server-advertised C<psgix.*> extensions become
+C<< $scope->{extensions} >> (see L<PAGI::Spec::Extensions>).
+
+=head1 PAGI IS A SUPERSET OF PSGI
+
+Because the two models map so directly, any PSGI application can be expressed as
+a PAGI application by a thin translation: build a C<%env> from C<$scope>, call
+the PSGI coderef, and turn its returned arrayref into PAGI events. The whole idea
+fits on a screen:
+
+    sub psgi_to_pagi {
+        my ($psgi_app) = @_;
+        return async sub {
+            my ($scope, $receive, $send) = @_;
+
+            # ... read the request body into $body, as shown above ...
+            open my $input, '<', \$body;
+            my %env = (
+                REQUEST_METHOD => $scope->{method},
+                PATH_INFO      => $scope->{path},
+                QUERY_STRING   => $scope->{query_string} // '',
+                'psgi.version' => [ 1, 1 ],
+                'psgi.input'   => $input,
+                # ... plus the HTTP_* headers from $scope->{headers} ...
+            );
+
+            my ($status, $headers, $chunks) = @{ $psgi_app->(\%env) };
+            await $send->({ type => 'http.response.start', status => $status, headers => $headers });
+            await $send->({ type => 'http.response.body', body => join('', @$chunks), more => 0 });
+        };
+    }
+
+B<You do not write this.> It is shown only to make the point that the
+relationship is a thin translation. The production adapter --
+L<PAGI::App::WrapPSGI>, in the C<PAGI-Tools> distribution -- does the full job
+(complete header mapping, C<SCRIPT_NAME>/C<root_path>, body handling, and more).
+
+=head1 ADOPTING PAGI INCREMENTALLY
+
+This is the part that matters: you migrate without a rewrite.
+
+=over 4
+
+=item 1.
+
+B<Run your existing PSGI app under PAGI.> Wrap it once:
+
+    use PAGI::App::WrapPSGI;
+
+    my $pagi_app = PAGI::App::WrapPSGI->new( psgi_app => $my_psgi_app )->to_app;
+
+Now C<$pagi_app> runs on any conforming PAGI server. A runnable demonstration
+ships with C<PAGI-Tools> at F<examples/09-psgi-bridge>.
+
+=item 2.
+
+B<Add native PAGI handlers beside it.> Dispatch new routes -- a WebSocket
+endpoint, an SSE stream, an async HTTP handler that awaits a slow backend -- to
+ordinary PAGI C<async sub>s, and fall back to the wrapped PSGI app for
+everything else.
+
+=item 3.
+
+B<Migrate route by route> as it makes sense, or leave the bulk of your
+application as PSGI forever. The wrapper is not a temporary scaffold; it is a
+supported way to keep synchronous code synchronous.
+
+=back
+
+One honest caveat: C<PAGI::App::WrapPSGI> today buffers a streaming PSGI response
+fully before sending it, so a PSGI app that relies on incremental flushing will
+not stream through the adapter yet. Ordinary request/response PSGI apps are
+unaffected.
+
+=head1 FOR FRAMEWORK AUTHORS
+
+If you maintain a framework, or want to build a new one, PAGI is a good
+foundation precisely because it is small: the entire contract is C<async sub
+($scope, $receive, $send)>, and it is stable (see the stability notice in
+L<PAGI>). Everything your framework offers -- routing, middleware, request and
+response objects, content negotiation -- is a layer over that, exactly as it is
+over PSGI today, with WebSocket, SSE, and async available without leaving the
+framework.
+
+L<PAGI::Building> walks through that layering, and F<examples/mini-framework> is
+a complete little framework -- routing, path parameters, async dispatch -- in
+about fifty lines of plain Perl.
+
+=head1 SEE ALSO
+
+=over 4
+
+=item L<PAGI::Building> - building a framework or toolkit on PAGI
+
+=item L<PAGI::Tutorial> - the protocol, taught from scratch
+
+=item L<PAGI::Cookbook> - worked, runnable recipes
+
+=item L<PAGI::Spec::Www> - the authoritative PSGI-to-PAGI key mapping
+
+=item L<PAGI::App::WrapPSGI> - the PSGI adapter (C<PAGI-Tools> distribution)
+
+=item L<PSGI> - the synchronous predecessor
+
+=back
+
+=head1 AUTHOR
+
+John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+This software is licensed under the same terms as Perl itself.
+
+=cut
