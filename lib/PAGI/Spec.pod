@@ -478,7 +478,7 @@ Applications should do the same when receiving malformed events.
 
 Extra fields in events B<must not> cause errors -- this supports forward-compatible upgrades.
 
-If C<$send> is called after connection closure, it should be a no-op unless specified otherwise.
+If C<$send> is called after the connection has closed, it is a no-op: it neither delivers data nor raises. Applications detect closure through the protocol's disconnect event (and, for HTTP, the C<pagi.connection> state object), not by inspecting the result of C<$send>.
 
 =head3 Extensions
 

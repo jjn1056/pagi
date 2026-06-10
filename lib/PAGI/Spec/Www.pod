@@ -552,11 +552,11 @@ C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers encoded
 
 =back
 
-=head3 Disconnected Client - C<send> exception
+=head3 Disconnected Client - sending after disconnect
 
-If the client disconnects or cancels the connection, servers MUST send an explicit C<disconnect> event to the application.
+If the client disconnects or cancels the connection, servers MUST send an explicit C<disconnect> event to the application and update the connection state (see L</Connection State>).
 
-Any subsequent C<$send> invocation B<must> fail its returned C<Future> (or throw) with a Perl exception class that indicates the disconnect (e.g., C<PAGI::Error::Disconnected>). Servers MUST NOT expose Python exceptions such as C<OSError>.
+A subsequent C<$send> is a B<no-op>: it neither delivers data nor raises. Applications therefore detect disconnection through the C<http.disconnect> event or the C<pagi.connection> connection-state object (see L</Connection State>) -- PAGI's non-destructive, race-friendly mechanism for exactly this -- rather than by inspecting the result of C<$send>.
 
 Applications MUST gracefully handle disconnect events by:
 
@@ -1073,9 +1073,9 @@ B<Common close codes and reasons:>
     1006  'write error'        Write to socket failed
     1007  'invalid UTF-8'      Text frame contained invalid UTF-8
 
-=head4 Disconnected Client - C<send> exception
+=head4 Disconnected Client - sending after disconnect
 
-Raises server-specific subclass of C<OSError>.
+A C<$send> after the connection has closed is a B<no-op>; applications detect a closed WebSocket through the C<websocket.disconnect> event delivered to C<$receive>.
 
 =head4 Close - C<send> event
 

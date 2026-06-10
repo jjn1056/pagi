@@ -12,12 +12,12 @@ Status: ☐ open · ◐ in progress · ☑ done
 
 ## A. Spec contradicts itself — DECIDE first, then propagate
 
-### A1. `$send` after disconnect: must-fail vs no-op ☐
-- **Type:** DECISION → then fix spec (both docs) + server
-- **Divergence:** `Spec::Www` says any `$send` after disconnect MUST fail its Future (or throw) with a disconnect exception class (e.g. `PAGI::Error::Disconnected`). The base `PAGI::Spec` says send-after-close SHOULD be a no-op "unless specified otherwise." The server implements the **no-op** (every send coderef returns `Future->done` once closed), and no `PAGI::Error::Disconnected` class exists.
-- **Spec:** `Www.pod:555-559` (must-fail) vs `Spec.pod:481` (no-op).
-- **Server:** `Connection.pm:2337, 3431, 3143`; h2 `:806, :1005, :1241` (all return `Future->done` when `{closed}`).
-- **Decision needed:** must-fail (richer, lets apps detect disconnect mid-stream; requires defining `PAGI::Error::Disconnected` and server changes) OR no-op (simpler; delete the Www mandate). Whichever wins, make the two spec docs agree and the server conform.
+### A1. `$send` after disconnect: must-fail vs no-op ☑
+- **Type:** DECISION → fix spec (both docs). No server change (already no-op).
+- **Divergence:** `Spec::Www` said any `$send` after disconnect MUST fail its Future with a disconnect exception class; the base `PAGI::Spec` said no-op; the server does no-op; no `PAGI::Error::Disconnected` ever existed.
+- **RESOLVED (no-op):** chose no-op as a *deliberate* divergence from ASGI (which leans SHOULD-raise a server-specific `OSError` subclass, but only as a SHOULD and "not guaranteed"). Justification: PAGI's disconnect detection is richer than ASGI's — every scope type delivers a disconnect *event*, and HTTP adds the `pagi.connection` state object (`is_connected`/`disconnect_reason`/`on_disconnect`/`disconnect_future`), which exists precisely because HTTP's `receive()` would consume body data (a problem WS/SSE don't have). So no-op is well-backed and ergonomically cleaner (a client closing mid-stream is normal, not exceptional).
+- **Done:** `Www.pod` HTTP + WebSocket "Disconnected Client" subsections rewritten to no-op + point at the disconnect event / `pagi.connection`; base `Spec.pod` send-after-close text made affirmative and detection-pointing. (The unrelated `Www:483` file-open-error `$send` failure correctly stays.)
+- **Possible future (non-blocking):** WS/SSE have no dedicated disconnect-only Future like HTTP's `disconnect_future`; consider adding one for symmetry someday.
 
 ### A2. Disconnect-reason taxonomy is inconsistent and partly non-conformant ☐
 - **Type:** DECISION/spec → then fix server
