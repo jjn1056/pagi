@@ -407,6 +407,17 @@ Note: it drives C<IO::Async> timers directly, so it runs only under an
 IO::Async-based server such as PAGI::Server -- see its F<README.md> for how it
 could be made loop-agnostic with L<Future::IO>.
 
+=head1 INTEROP
+
+=head2 Running a PSGI app under PAGI
+
+You do not have to rewrite a PSGI application to use PAGI. Wrap it once with
+L<PAGI::App::WrapPSGI> (from the C<PAGI-Tools> distribution) --
+C<< PAGI::App::WrapPSGI->new( psgi_app => $app )->to_app >> -- and it runs on
+any conforming PAGI server, with native async, WebSocket, or SSE handlers
+dispatched beside it. A runnable demo ships with C<PAGI-Tools> at
+F<examples/09-psgi-bridge>. See L<PAGI::PSGI> for the full migration guide.
+
 =head1 SEE ALSO
 
 =over
@@ -414,6 +425,14 @@ could be made loop-agnostic with L<Future::IO>.
 =item *
 
 L<PAGI::Tutorial> - the protocol taught as a linear path
+
+=item *
+
+L<PAGI::PSGI> - coming to PAGI from PSGI
+
+=item *
+
+L<PAGI::Building> - building a framework on PAGI
 
 =item *
 
