@@ -74,11 +74,11 @@ Status: ☐ open · ◐ in progress · ☑ done
 - **Done:** `Www.pod` WS disconnect `code` field rewritten to spec exactly this (1006 abnormal / 1005 codeless-frame). No server change.
 - **Server (unchanged, correct):** `Connection.pm:2618, 2723, 3361, 3404`; h2 `:945, :1006`; codeless-frame `1005` `:3661`.
 
-### B7. Lifespan `state` may be `undef` rather than HashRef/omitted ☐
-- **Type:** fix server (minor)
-- **Divergence:** Server always sets `state => $self->{state}` even when undef; spec implies a HashRef or omission.
-- **Spec:** `Lifespan.pod:114`.
-- **Server:** `Server.pm:3880`.
+### B7. Lifespan `state` may be `undef` rather than HashRef/omitted ☑ (false positive — already compliant)
+- **Type:** fix server (minor) → turned out to be no fix needed.
+- **Finding:** the audit's "even when undef" premise is wrong. `$self->{state}` is assigned `{}` in `_init` (`Server.pm:2209`) and **never** set to undef/deleted anywhere; `_init` runs at construction for every `PAGI::Server->new` (incl. the worker server `:3508`), and both lifespan callers (`listen` `:2559`, worker `:3579`) run after construction. So the lifespan scope's `state` (`:3880`) is invariantly a defined HashRef — verified empirically (`defined=1 ref=HASH`). The bare `state => $self->{state}` is also intentional: lifespan must hand the app the *live* ref so its mutations persist into request scopes. A `// {}` guard would be dead defensive code, so none added.
+- **Done (PAGI-Server branch `sync-b1-h2-scope-pagi-connection`, commit `03a9871`):** the real gap was that the contract had only a source-grep test. Added a behavioral subtest in `t/lifespan-worker-fields.t` that boots a real server, runs the lifespan, and asserts `state` is a defined, writable HashRef. No code change.
+- **Spec:** `Spec/Lifespan.pod:114` (HashRef or omitted) — already honored.
 
 ### B8. TLS `cipher_suite` effectively always `undef` ☐
 - **Type:** fix server — or accept + document
