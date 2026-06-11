@@ -1416,6 +1416,39 @@ C<undef> if not applicable.
 Servers SHOULD implement C<high_water_mark> and C<low_water_mark> where they use
 a watermark-based backpressure model.
 
+=head3 Backpressure callbacks
+
+The synchronous reads above suit a producer that checks before each send. A
+producer that B<cannot> self-pace with a blocking C<$send> -- an event-driven
+source that pushes a message per incoming event, say -- instead wants to be
+B<told> when to pause and resume. For that, the handle provides two
+edge-triggered callbacks.
+
+B<C<on_high_water($callback)>> -- Registers a callback invoked when the outbound
+buffer reaches or exceeds C<high_water_mark> (backpressure engaged). If the
+buffer is already at or above the mark when the callback is registered, the
+callback is invoked immediately.
+
+    $transport->on_high_water(sub { $source->pause });
+
+B<C<on_drain($callback)>> -- Registers a callback invoked when the outbound
+buffer falls back below C<low_water_mark> after having reached the high mark
+(backpressure released). It is not invoked merely because the buffer is below
+the low mark at registration time -- only on an actual high-then-low transition.
+
+    $transport->on_drain(sub { $source->resume });
+
+The two form a hysteresis cycle: C<on_high_water> fires once when the buffer
+crosses up to the high mark, then C<on_drain> fires once when it falls back
+below the low mark, then the cycle re-arms. The gap between the marks prevents
+flapping when the buffered amount hovers near a single threshold. Multiple
+callbacks may be registered for each and are invoked in registration order; the
+callbacks receive no arguments (read C<buffered_amount> if the current depth is
+needed).
+
+Servers that provide C<pagi.transport> with a watermark-based backpressure model
+SHOULD implement C<on_high_water> and C<on_drain>.
+
 =head3 Applicability
 
 =over 4
