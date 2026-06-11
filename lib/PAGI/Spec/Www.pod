@@ -18,7 +18,7 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 =item -
 
-C<0.2>: Added keepalive events (C<websocket.keepalive>, C<sse.keepalive>), send timeouts, disconnect reasons, SSE support for all HTTP methods (not just GET) with C<sse.request> receive event for request body. Added C<pagi.connection> scope key for non-destructive disconnect detection.
+C<0.2>: Added keepalive events (C<websocket.keepalive>, C<sse.keepalive>), disconnect reasons, SSE support for all HTTP methods (not just GET) with C<sse.request> receive event for request body. Added C<pagi.connection> scope key for non-destructive disconnect detection.
 
 =item -
 
@@ -1047,10 +1047,6 @@ C<bytes> (Bytes, optional)
 
 C<text> (String, optional)
 
-=item -
-
-C<timeout> (Number, optional) -- Send timeout in seconds. If the write does not complete within this time, the Future fails and the connection is closed.
-
 =back
 
 Exactly one of C<bytes> or C<text> must be non-null.
@@ -1340,26 +1336,6 @@ B<Example:>
         type     => 'sse.keepalive',
         interval => 30,
         comment  => 'ping',
-    });
-
-=head3 SSE Send Timeout
-
-The C<sse.send> event supports an optional C<timeout> field:
-
-=over
-
-=item -
-
-C<timeout> (Number, optional) -- Send timeout in seconds. If the write does not complete within this time, the Future fails and the connection is closed.
-
-=back
-
-B<Example:>
-
-    await $send->({
-        type    => 'sse.send',
-        data    => 'hello',
-        timeout => 5,
     });
 
 =head3 SSE Disconnect - C<receive> event

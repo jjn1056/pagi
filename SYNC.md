@@ -53,17 +53,12 @@ Status: ☐ open · ◐ in progress · ☑ done
 - **Why not populate:** the scalar use cases are weak (server already enforces its limits; app has no sound action), and a worker-count signal is an outright footgun (it answers "siblings this process forked," not "is my in-process state global" — which is unanswerable from one process behind a load balancer). ASGI's absence of this is informed convergence ("enforce/assume, don't detect"), not an oversight. John: "I was probably wildly speculating it would be useful... if after working on this so long we've never reached for it, lets pull it for now."
 - **Done:** removed the `features` key + its 4-key sub-list and the clarification bullet from `Spec.pod` (the `pagi` dict is now `{version, spec_version}`, matching ASGI's `asgi` dict); removed `features => {}` from all 6 scope builders in `Connection.pm`. Capability advertisement lives solely in `extensions` (ASGI-aligned). Pulled "for now" — a properly-motivated scalar-introspection mechanism can be reintroduced deliberately if a concrete need ever appears.
 
-### B3. `websocket.send` `timeout` field ignored (HTTP/1.1) ☐
-- **Type:** fix server (implement) — or drop from spec
-- **Divergence:** Spec defines `websocket.send` `timeout` ("Future fails and connection closes"); the server's send handler reads only `text`/`bytes`.
-- **Spec:** `Www.pod:992`.
-- **Server:** `Connection.pm:3500-3530`.
-
-### B4. `sse.send` `timeout` field ignored ☐
-- **Type:** fix server (implement) — or drop from spec
-- **Divergence:** Spec defines `sse.send` `timeout`; the server's SSE send handler never reads it.
-- **Spec:** `Www.pod:1292`.
-- **Server:** `Connection.pm:3200-3216`.
+### B3 + B4. `websocket.send` / `sse.send` per-send `timeout` field ignored ☑ (resolved by DROPPING the field)
+- **Type:** was "fix server (implement) — or drop" → **decided: drop from spec.**
+- **Divergence:** spec defined a per-send `timeout` on `websocket.send` and `sse.send` ("if the write doesn't complete in N s, the Future fails and the connection closes"); both server handlers read only `text`/`bytes`/data, never the field — unimplemented, untested, since 0.2.
+- **Deep research (Node `ws`/Socket.IO, ASGI uvicorn/hypercorn/daphne, Mojolicious, RFC 6455, browser/WHATWG):** a per-send-message timeout that closes the connection is **not a recognized pattern anywhere** — RFC 6455 has no "timeout" at all; ASGI's `websocket.send` is just `type`/`bytes`/`text`; `ws`/Mojo/browser have none (Socket.IO's `socket.timeout(ms).emit` is an *app-ack* round-trip, not a write timeout, and doesn't close the connection). Everyone uses the same triad — **backpressure + ping/pong pong-timeout + idle timeout** — which PAGI already has (and ships more of out-of-the-box than `ws`/hypercorn/Mojo). The field targets a real-but-narrow gap (a wedged write below the heartbeat's resolution) but is redundant with the pong-timeout and blunt (tearing down the whole connection over one slow frame — no spec mandates that).
+- **Done:** removed the `timeout` field from `websocket.send` and the whole "SSE Send Timeout" section from `Www.pod`, and "send timeouts" from the 0.2 changelog. **No server/tools/example change** — nothing ever read or used it. The `write_timeout` *disconnect reason* stays in the standard vocabulary (a server-emitted cause a server MAY produce via connection-level write timeouts; independent of the app-facing field).
+- **Surfaced a real gap instead** → the universal primitive PAGI (like ASGI/Mojo) lacks is **app-visible buffered/queue depth** (the browser/`ws` `bufferedAmount`). Logged for follow-up, NOT part of B3/B4. See TODO.
 
 ### B5. keepalive-timeout `websocket.disconnect` reason is empty → **resolved in A2** ☑
 - **Type:** fix server (instance of A2). Spec requires the token; server now emits it.
