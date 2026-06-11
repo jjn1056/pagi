@@ -41,11 +41,11 @@ Status: ☐ open · ◐ in progress · ☑ done
 
 ## B. Server violates the spec as written — FIX SERVER
 
-### B1. `pagi.connection` set on HTTP/2 WebSocket and SSE scopes ☐
-- **Type:** fix server
-- **Divergence:** Spec marks `pagi.connection` NOT APPLICABLE for `websocket`/`sse`. HTTP/1.1 correctly omits it; the HTTP/2 paths set it — so it's both a spec violation and version-inconsistent.
-- **Spec:** `Www.pod:762-769`.
-- **Server:** h2 WS `Connection.pm:935`, h2 SSE `:1146` (set it); h1 WS `:3318`, h1 SSE `:2957` (correctly omit).
+### B1. `pagi.connection` set on HTTP/2 WebSocket and SSE scopes ☑
+- **Type:** fix server.
+- **Divergence:** Spec marks `pagi.connection` NOT APPLICABLE for `websocket`/`sse`. HTTP/1.1 correctly omits it; the HTTP/2 paths set it — both a spec violation and version-inconsistent. The attached object was also a dead end (local `ConnectionState`, never stored as `current_connection_state`, never marked disconnected — the HTTP marking path is guarded off for WS/SSE), so its `is_connected()` would read a permanently-stale `true`.
+- **Done (PAGI-Server branch `sync-b1-h2-scope-pagi-connection`, commit `2fa6efc`):** removed the `ConnectionState->new` block + `'pagi.connection'` key from `_h2_create_websocket_scope` and `_h2_create_sse_scope`, matching the h1 builders. Both HTTP scope builders (h1 + h2) keep it. New `t/http2/17-h2-ws-sse-no-connection-state.t` (lightweight, no nghttp2) asserts WS/SSE omit the key while HTTP keeps it. Full suite green (85 files / 540 tests). **No PAGI-Tools impact** (verified: only the HTTP `connection` accessors read the key; WS context overrides `is_connected` to handshake state, SSE uses `is_closed`).
+- **Spec:** `Spec/Www.pod` "Applicability" (websocket/sse = NOT APPLICABLE) — already correct, no spec change.
 
 ### B2. `pagi.features` always advertised as `{}` ☐
 - **Type:** fix server (populate) — or spec decides features stay optional/empty
