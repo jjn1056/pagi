@@ -105,30 +105,6 @@ C<<< version => '0.2' >>>
 
 C<<< spec_version => '0.2' >>> (optional; protocol-specific override if it diverges)
 
-=item -
-
-C<features> (optional): a hashref of server-reported capabilities such as:
-
-=over
-
-=item -
-
-C<supports_streaming> => 1 if streaming responses are supported for this scope
-
-=item -
-
-C<max_request_body_size> => maximum accepted request body size (in bytes)
-
-=item -
-
-C<max_concurrent_streams> => maximum streams per HTTP/2/HTTP/3 connection
-
-=item -
-
-C<supports_trailers> => 1 if trailer frames are accepted for the response
-
-=back
-
 =back
 
 Clarification on PAGI version keys:
@@ -142,10 +118,6 @@ C<version>: Signals the core PAGI specification version that governs scopes/even
 =item -
 
 C<spec_version>: Indicates the version for the specific protocol (such as HTTP or WebSocket). Servers may omit it, in which case clients should assume it matches C<version>.
-
-=item -
-
-C<features>: Server-defined key/value pairs that describe optional behaviors for the connection. Values should use the permitted data types from this specification.
 
 =item -
 
