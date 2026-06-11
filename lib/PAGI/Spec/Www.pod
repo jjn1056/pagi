@@ -1376,6 +1376,89 @@ Server shut down the stream
 
 =back
 
+=head2 Transport Flow Control
+
+The C<pagi.transport> scope key provides a synchronous, read-only handle for
+inspecting B<outbound flow control> -- how many bytes the server has queued for
+the client but not yet written to the network. It lets an application observe
+backpressure and make its own delivery decisions (conflate, coalesce, shed
+load, or disconnect a slow client) instead of only blocking until the buffer
+drains. It is the server-side analogue of the browser WebSocket API's
+C<bufferedAmount>, generalized across the C<http>, C<websocket>, and C<sse>
+scope types.
+
+Servers SHOULD provide C<pagi.transport> for C<http>, C<websocket>, and C<sse>
+scopes. A server that cannot determine its outbound buffer state omits the key;
+applications MUST treat its absence as "flow-control introspection unavailable"
+(and the high-level helpers report a buffered amount of C<0>).
+
+=head3 Methods
+
+B<C<buffered_amount()>> -- Returns the number of bytes queued for the client but
+not yet written to the network, as an integer; C<0> when the send buffer is
+fully drained. This is a synchronous, non-blocking, non-destructive read -- it
+neither sends, receives, nor consumes queued messages.
+
+    my $pending = $scope->{'pagi.transport'}->buffered_amount;
+
+If a server provides C<pagi.transport>, it B<must> implement C<buffered_amount>.
+
+B<C<high_water_mark()>> -- Returns the buffered-byte threshold at or above which
+the server applies backpressure: a C<$send> that would exceed it blocks until
+the buffer drains. Applications use it to threshold relative to the ceiling
+rather than hard-coding a byte count. Returns C<undef> if the server has no
+fixed high-water mark.
+
+B<C<low_water_mark()>> -- Returns the buffered-byte threshold the buffer must
+fall back to before the server releases backpressure (the drain point). Returns
+C<undef> if not applicable.
+
+Servers SHOULD implement C<high_water_mark> and C<low_water_mark> where they use
+a watermark-based backpressure model.
+
+=head3 Applicability
+
+=over 4
+
+=item C<http>
+
+Bytes queued for the current (streaming) response.
+
+=item C<websocket>
+
+Bytes queued for the WebSocket session.
+
+=item C<sse>
+
+Bytes queued for the SSE stream.
+
+=back
+
+=head3 Example: conflating a live feed under backpressure
+
+When a client falls behind on a high-frequency stream, sending the next update
+only while the backlog is small keeps the client B<current> (sparse but fresh)
+rather than B<stale> (dense but lagging):
+
+    my $transport = $scope->{'pagi.transport'};
+
+    while (1) {
+        my $update = await next_update();
+
+        # Skip this frame if the client is already behind; it will get the
+        # next, fresher one. Threshold relative to the server's ceiling.
+        if ($transport) {
+            my $ceiling = $transport->high_water_mark // 65536;
+            next if $transport->buffered_amount > $ceiling / 2;
+        }
+
+        await $send->({ type => 'websocket.send', text => $update });
+    }
+
+The high-level helpers in L<PAGI::WebSocket>, L<PAGI::SSE>, and L<PAGI::Request>
+expose these as C<< $obj->buffered_amount >>, C<< $obj->high_water_mark >>, and
+C<< $obj->low_water_mark >>.
+
 =head2 PAGI to PSGI Compatibility
 
 PAGI translates keys explicitly to maintain compatibility with PSGI:
