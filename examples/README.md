@@ -33,6 +33,7 @@ and L<PAGI::Spec>.
 8. `08-tls-introspection` - prints TLS metadata when present
 9. `11-job-runner` - background job processing (uses `IO::Async` directly for timers/subprocesses)
 10. `12-utf8` - UTF-8 handling demonstration
+11. `13-flow-control` - conflation under backpressure via the `pagi.transport` handle
 
 ## More examples
 

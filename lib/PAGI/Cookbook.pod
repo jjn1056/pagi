@@ -343,6 +343,8 @@ non-blocking and loop-agnostic.
 
 =head2 Keeping a slow client current instead of stale
 
+I<Example: F<examples/13-flow-control>> (the same pattern over SSE, easy to run with C<curl>)
+
 Every streaming scope -- C<http>, C<websocket>, and C<sse> -- may carry a
 flow-control handle at C<< $scope->{'pagi.transport'} >>. It reports how many
 bytes the server has queued for the client but B<not yet written to the
