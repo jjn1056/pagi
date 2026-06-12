@@ -552,6 +552,83 @@ C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers encoded
 
 =back
 
+=head3 Server-Supplied Headers and Behaviors
+
+Beyond the headers an application sets on C<http.response.start>, a conforming
+server supplies a few headers and framing details on its own, and may originate
+certain responses without invoking the application. Applications and frameworks
+SHOULD be aware of these so they neither duplicate nor fight them.
+
+=over
+
+=item -
+
+B<C<Date>> -- The server SHOULD add a C<Date> response header in HTTP-date format
+(RFC 7231) when the application did not supply one. (The reference server adds it
+to both HTTP/1.1 and HTTP/2 responses.)
+
+=item -
+
+B<Body framing> -- When the application provides no C<Content-Length> on an
+HTTP/1.1 response, the server frames the body with C<Transfer-Encoding: chunked>.
+Applications SHOULD set C<Content-Length> (byte length) when the size is known.
+HTTP/2 uses its own DATA-frame framing, where neither header applies.
+
+=item -
+
+B<C<Connection> (HTTP/1.0)> -- For HTTP/1.0 clients the server manages the
+C<Connection> header: C<close> when the response carries no C<Content-Length>
+(the close delimits the body), or C<keep-alive> when the client requested
+keep-alive and a C<Content-Length> is present. Applications SHOULD NOT set
+C<Connection> themselves.
+
+=item -
+
+B<C<100 Continue>> -- When an HTTP/1.1 client sends C<Expect: 100-continue>, the
+server sends an interim C<100 Continue> before the application first reads the
+request body, then delivers the body through C<receive> as usual. This is
+transparent to the application. HTTP/2 has no C<Expect: 100-continue> mechanism.
+
+=back
+
+B<Server-generated responses.> A server MAY originate a response on its own --
+before the application runs, or in place of it -- for protocol and resource
+errors it detects, each carrying a short C<text/plain> body. Applications cannot
+intercept these (the request never reaches the application, or the application
+has already failed). A conforming server is expected to generate at least:
+
+=over
+
+=item -
+
+C<400 Bad Request> -- a malformed request line, headers, or message framing.
+
+=item -
+
+C<413 Payload Too Large> -- the request body, or its declared C<Content-Length>,
+exceeds the server's configured C<max_body_size>.
+
+=item -
+
+C<414 URI Too Long> / C<431 Request Header Fields Too Large> -- the request line
+or header section exceeds the server's limits.
+
+=item -
+
+C<500 Internal Server Error> -- the application threw before sending
+C<http.response.start>. (Once the response has started the server can only
+truncate the connection -- see L</Disconnected Client - sending after disconnect>.)
+
+=item -
+
+C<501 Not Implemented> -- an unsupported request, e.g. an unrecognized
+C<Transfer-Encoding>, or an Extended C<CONNECT> without a supported C<:protocol>.
+
+=back
+
+The exact reason phrases and body text are server-defined; applications MUST NOT
+depend on them.
+
 =head3 Disconnected Client - sending after disconnect
 
 If the client disconnects or cancels the connection, servers MUST send an explicit C<disconnect> event to the application and update the connection state (see L</Connection State>).
@@ -1152,6 +1229,75 @@ C<reason> (String, default empty)
 
 =back
 
+=head3 WebSocket Protocol Enforcement
+
+A conforming server enforces the framing rules of RFC 6455 and fails the
+connection with the appropriate close code when a client violates them. The
+reference server sends:
+
+=over
+
+=item -
+
+B<1002 (Protocol Error)> -- a reserved RSV bit is set, a reserved or unknown
+opcode is used, a control frame exceeds 125 bytes, or a C<Close> frame carries a
+malformed length or an out-of-range close code.
+
+=item -
+
+B<1007 (Invalid Frame Payload Data)> -- a text frame, or a C<Close> frame's
+reason, is not valid UTF-8.
+
+=item -
+
+B<1008 (Policy Violation)> -- the application is not draining messages and the
+server's inbound queue limit is reached (backpressure shedding).
+
+=back
+
+A frame whose payload exceeds the server's configured C<max_ws_frame_size> fails
+the connection; the application observes a C<websocket.disconnect> with code
+C<1006> (a server MAY instead send C<1009 Message Too Big>).
+
+B<Transport note:> over HTTP/2 (below) some of these checks are delegated to the
+HTTP/2 and frame-parser layers, so the exact code for a given malformation MAY
+differ; the UTF-8 (1007) and C<Close>-frame validations apply on both transports.
+
+=head3 WebSocket over HTTP/2 (RFC 8441)
+
+A server MAY accept WebSocket connections over HTTP/2 using the bootstrapping
+mechanism of RFC 8441. This is B<transparent to the application>: the C<websocket>
+scope and the C<websocket.*> events are identical to HTTP/1.1 and C<http_version>
+is C<"2">. The differences are confined to the handshake and live entirely in the
+server:
+
+=over
+
+=item -
+
+B<Detection> -- instead of an HTTP/1.1 C<Upgrade>, the client opens an Extended
+C<CONNECT> stream (C<:method> = C<CONNECT>, C<:protocol> = C<websocket>), which the
+server enables by advertising C<SETTINGS_ENABLE_CONNECT_PROTOCOL>.
+
+=item -
+
+B<Accept> -- C<websocket.accept> is answered with HTTP status B<200>, not the
+HTTP/1.1 C<101 Switching Protocols>; C<subprotocol> still maps to
+C<Sec-WebSocket-Protocol>, and there is no C<Upgrade> or C<Sec-WebSocket-Accept>
+header.
+
+=item -
+
+B<Data and close> -- WebSocket frames travel as HTTP/2 C<DATA> frames on the
+stream. Closing the stream (a client C<RST_STREAM>, or END_STREAM) surfaces as a
+C<websocket.disconnect>: an abnormal teardown reports code C<1006>, while a clean
+WebSocket C<Close> frame carries its own code and reason as on HTTP/1.1.
+
+=back
+
+Servers that do not implement RFC 8441 simply never produce a C<websocket> scope
+over HTTP/2; applications need not distinguish the two cases.
+
 =head2 Server-Side Events (SSE)
 
 SSE connections stream C<text/event-stream> data to clients.
@@ -1235,6 +1381,13 @@ C<headers> (ArrayRef[ArrayRef[Bytes]]) -- Must include C<<< content-type => 'tex
 
 =back
 
+On C<sse.start> the server supplies the headers a well-behaved event stream needs
+when the application did not: C<Content-Type: text/event-stream> (if absent) and
+C<Cache-Control: no-cache>. Over HTTP/1.1 it additionally sends
+C<Connection: keep-alive> and a C<Date> header and frames the stream with chunked
+C<Transfer-Encoding>; over HTTP/2 those transport headers do not apply (the stream
+is multiplexed and DATA-framed). Applications need not set any of these.
+
 =head3 Send SSE - C<send> event
 
 C<sse.send> emits a single SSE dispatch. Fields marked "String" are Unicode strings per the core data-type rules and MUST be UTF-8 encoded by the server before transmission.
@@ -1262,6 +1415,14 @@ C<id> (String, optional)
 C<retry> (Int, optional) -- Milliseconds for the C<retry:> directive
 
 =back
+
+B<Field validation.> The C<event> and C<id> fields MUST NOT contain newline
+(C<\n> or C<\r>) characters: a newline there would forge an SSE frame boundary and
+let one dispatch inject another. A server MUST reject such a value -- the reference
+server raises, failing the C<send>. C<retry> MUST be a non-negative integer.
+C<data> is the one field that legitimately contains newlines: the server splits it
+on newlines and emits one C<data:> line per segment, preserving multi-line
+payloads.
 
 To end the SSE stream the application simply returns after the final C<sse.send>. The server will flush buffered events and close the HTTP connection.
 
