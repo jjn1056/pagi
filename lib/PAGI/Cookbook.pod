@@ -339,6 +339,99 @@ you stop when the client closes:
 Using C<< Future::IO->sleep >> rather than C<sleep> keeps the handler
 non-blocking and loop-agnostic.
 
+=head1 FLOW CONTROL
+
+=head2 Keeping a slow client current instead of stale
+
+Every streaming scope -- C<http>, C<websocket>, and C<sse> -- may carry a
+flow-control handle at C<< $scope->{'pagi.transport'} >>. It reports how many
+bytes the server has queued for the client but B<not yet written to the
+network>, so you can make your own delivery decisions instead of only blocking
+until the buffer drains. It is the server-side analogue of the browser's
+C<WebSocket.bufferedAmount> -- a primitive many async stacks do not expose at
+all.
+
+The handle is optional: a server that cannot measure its outbound buffer omits
+it, so guard for C<undef>. The first use is B<conflation> -- on a high-frequency
+feed, skip an update when the client is already behind, because it will get the
+next, fresher one. A sparse-but-current feed beats a dense-but-lagging one:
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'websocket';
+
+        await $receive->();                          # websocket.connect
+        await $send->({ type => 'websocket.accept' });
+
+        my $transport = $scope->{'pagi.transport'};  # undef if unsupported
+
+        while (1) {
+            my $update = await next_update();        # your high-frequency feed
+
+            # Skip this tick if the client is falling behind. Threshold relative
+            # to the server's own ceiling, not a hard-coded byte count.
+            if ($transport) {
+                my $ceiling = $transport->high_water_mark // 65536;
+                next if $transport->buffered_amount > $ceiling / 2;
+            }
+
+            await $send->({ type => 'websocket.send', text => $update });
+        }
+    };
+
+C<buffered_amount> is a synchronous, non-blocking read; C<high_water_mark> and
+C<low_water_mark> report the band at which the server engages and releases
+backpressure. (The C<PAGI-Tools> helpers wrap the same handle as
+C<< $ws->buffered_amount >> and C<< $ws->is_writable >>.)
+
+=head2 Pausing a producer you do not control
+
+Conflation works when B<you> drive the loop and can choose to skip. But
+sometimes an external source -- a pub/sub subscription, a database change feed --
+pushes events B<at> you faster than a slow client drains, and you cannot
+self-pace by awaiting C<$send>. For that the handle offers two edge-triggered
+callbacks: C<on_high_water> fires once when the buffer crosses up to the high
+mark, and C<on_drain> fires once when it falls back below the low mark. Use them
+to pause and resume the source:
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'sse';
+
+        await $send->({
+            type    => 'sse.start',
+            status  => 200,
+            headers => [ [ 'content-type', 'text/event-stream' ] ],
+        });
+
+        my $feed = subscribe_to_feed();         # your external event source
+        $feed->on_event(sub {
+            my ($data) = @_;
+            $send->({ type => 'sse.send', data => $data });   # not awaited
+        });
+
+        # The feed ignores the client's pace, so let the transport throttle it:
+        # pause when the buffer fills, resume when it drains. Each fires once per
+        # crossing, then re-arms.
+        my $transport = $scope->{'pagi.transport'};
+        if ($transport) {
+            $transport->on_high_water(sub { $feed->pause });
+            $transport->on_drain(sub     { $feed->resume });
+        }
+
+        await $receive->();   # park here until sse.disconnect
+        $feed->cancel;
+    };
+
+The two callbacks form a hysteresis cycle -- pause at the high mark, resume at
+the low mark, with a gap between so a buffer hovering near one threshold does not
+flap. They are the push-model counterpart to the synchronous reads: reach for
+the reads when you drive the loop, the callbacks when something else does.
+
+The full interface (C<buffered_amount>, C<high_water_mark>, C<low_water_mark>,
+C<on_high_water>, C<on_drain>) is specified in
+L<PAGI::Spec::Www/"Transport Flow Control">.
+
 =head1 APPLICATION LIFECYCLE
 
 =head2 Lifespan and shared state
