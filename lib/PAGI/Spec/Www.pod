@@ -1392,6 +1392,15 @@ scopes. A server that cannot determine its outbound buffer state omits the key;
 applications MUST treat its absence as "flow-control introspection unavailable"
 (and the high-level helpers report a buffered amount of C<0>).
 
+The long-term goal is universal coverage: every scope type that produces a
+stream of outbound events provides C<pagi.transport>, across every transport a
+server supports, so an application need not know which transport or protocol
+version carries its events. A missing key therefore signals a B<capability
+limitation> -- a server still being built out, or a transport whose outbound
+buffer the server cannot yet measure -- not a steady state for applications to
+design around. Write transport-agnostic code: treat the key's presence as the
+norm and tolerate its absence per the contract above.
+
 =head3 Methods
 
 B<C<buffered_amount()>> -- Returns the number of bytes queued for the client but
