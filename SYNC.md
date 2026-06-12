@@ -75,11 +75,13 @@ Status: ☐ open · ◐ in progress · ☑ done
 - **Done (PAGI-Server branch `sync-b1-h2-scope-pagi-connection`, commit `03a9871`):** the real gap was that the contract had only a source-grep test. Added a behavioral subtest in `t/lifespan-worker-fields.t` that boots a real server, runs the lifespan, and asserts `state` is a defined, writable HashRef. No code change.
 - **Spec:** `Spec/Lifespan.pod:114` (HashRef or omitted) — already honored.
 
-### B8. TLS `cipher_suite` effectively always `undef` ☐
-- **Type:** fix server — or accept + document
-- **Divergence:** The server leaves `cipher_suite` `undef` despite terminating TLS locally, where the value is determinable; spec permits `undef` only when the server cannot determine it.
+### B8. TLS `cipher_suite` effectively always `undef` ☑ (server fixed)
+- **Type:** fix server.
+- **Divergence:** The server left `cipher_suite` `undef` despite terminating TLS locally.
+- **Root cause (two layers, both deeper than the audit saw):** (1) the cipher code called `Net::SSLeay::CIPHER_get_id`, which **does not exist** in any Net::SSLeay — the `eval` silently swallowed "Can't locate auto/Net/SSLeay/CIPHER_get_.al", so the field was always `undef`. Net::SSLeay exposes only the cipher *name*, not the numeric IANA id. (2) The server also **never negotiated TLS 1.3**: `SSL_version => 'TLSv1_2:'` pins to exactly 1.2 (the trailing `:` is NOT "or higher", proven by probe), contradicting both its own code comment and `min_version`'s documented floor semantics — so every TLS connection was 1.2. The two compose: no 1.3 + no numeric id = permanent `undef`.
+- **Decision (John):** fix the version floor (a real, separate security bug — a 2026 reference server with no TLS 1.3 path) AND provide `cipher_suite` via a TLS 1.3 name→id map (Option A). The name→number mapping is only clean for TLS 1.3 (OpenSSL returns the IANA name; 5 frozen suites); TLS 1.2 uses OpenSSL-specific names → left `undef` (spec-permitted when undeterminable).
+- **Done (PAGI-Server `e1b8f68` on `feat-transport-flow-control`):** `SSL_version` rebuilt as a true floor (`SSLv23` minus sub-floor protocols) so TLS 1.3 is offered; `cipher_suite` mapped from the (now TLS 1.3) cipher name via a 5-entry table. `t/08-tls.t`: assert `cipher_suite` is a defined 16-bit id, the tls hash has exactly six keys, and TLS 1.3 is negotiated by default. Full suite 91f/557t green. **No spec change** (server now provides the value when determinable; `undef` stays valid for TLS 1.2).
 - **Spec:** `Tls.pod:103-108`.
-- **Server:** `Connection.pm:2800-2814`.
 
 ---
 
@@ -131,10 +133,12 @@ These are legitimate, necessary HTTP/WS/SSE behaviours the spec is simply silent
 - **Type:** fix spec
 - **Server:** `_format_sse_event` `Connection.pm:3097, 3108, 3114`. **Spec:** `Www.pod:1193-1205` (fields defined, no validation/error behaviour).
 
-### C11. TLS extra diagnostic keys (`*_error`) ☐
-- **Type:** fix spec (document as optional) — or fix server (remove)
-- **Divergence:** Server may add `cipher_extraction_error`, `server_cert_error`, `client_cert_extraction_error` to `extensions->{tls}`; the spec defines exactly six keys and no diagnostics.
-- **Server:** `Connection.pm:2818, 2834, 2878`. **Spec:** `Tls.pod:56-109`.
+### C11. TLS extra diagnostic keys (`*_error`) ☑ (server fixed — keys removed)
+- **Type:** was "fix spec (document) — or fix server (remove)" → **decided: remove from server.**
+- **Divergence:** Server could add `cipher_extraction_error`, `server_cert_error`, `client_cert_extraction_error` to `extensions->{tls}`; the spec defines exactly six keys and no extraction diagnostics.
+- **Research (ASGI TLS extension + nginx):** ASGI's TLS extension (which PAGI's mirrors) defines exactly the same six keys, uses `None`/empty for "can't determine," and has **no** server-extraction-error key; its one error field, `client_cert_error`, is for cert *verification* failure (a security event), not retrieval failure. nginx is the same (empty value when unavailable; `$ssl_client_verify` for the verify case). So extraction-error keys are not a recognized need anywhere, are redundant with the spec's `undef`-means-unavailable convention, and would bless one implementation's internals into a cross-server spec. (Steel-manned an app use case with John; none survives — apps branch on the *fact* a value is absent, not the server-side *reason*, which is a log concern.)
+- **Done (PAGI-Server `e1b8f68`):** removed the three key assignments; the `tls` hash now carries exactly the six spec keys (verified by `t/08-tls.t` exact-keys assertions, with and without a client cert). Extraction failures are still `warn`-logged. The documented `client_cert_error` (verification failure) stays.
+- **Spec:** `Tls.pod:56-109` (already correct — no spec change).
 
 ---
 
