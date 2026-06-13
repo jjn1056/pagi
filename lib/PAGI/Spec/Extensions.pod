@@ -6,6 +6,8 @@ PAGI::Spec::Extensions - The PAGI server extension mechanism
 
 =head1 Extensions
 
+B<Version>: 0.3 (Draft)
+
 The PAGI specification provides for server-specific extensions to be used
 outside of the core PAGI specification. This document records the extension
 mechanism and shared extensions so servers and applications can interoperate
@@ -51,7 +53,7 @@ metadata.
 
 =item 3.
 
-B<Events> -- new C<type> values that may flow through C<$send>/C<$receive>.
+B<Events> -- new C<type> values that may flow through C<$receive>/C<$send>.
 
 =item 4.
 
@@ -145,6 +147,20 @@ C<$receive>, and the same code runs under any conforming server.
 =back
 
 See L<PAGI::Building> for using this to build event-driven layers on PAGI.
+
+=head2 Version History
+
+=over
+
+=item -
+
+0.3 (Draft): Added the "Defined extensions" registry (C<tls>, C<websocket.http.response>) and the C<pagi.connection>/C<pagi.transport> clarification note.
+
+=item -
+
+0.2 (Draft): Initial extensions-mechanism documentation.
+
+=back
 
 =head1 SEE ALSO
 
