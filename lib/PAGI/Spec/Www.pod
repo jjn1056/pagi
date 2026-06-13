@@ -1298,6 +1298,68 @@ WebSocket C<Close> frame carries its own code and reason as on HTTP/1.1.
 Servers that do not implement RFC 8441 simply never produce a C<websocket> scope
 over HTTP/2; applications need not distinguish the two cases.
 
+=head3 WebSocket Denial Response (extension)
+
+By default an application rejects a handshake by sending C<websocket.close>
+before C<websocket.accept>, and the server replies with a bare
+C<403 Forbidden>. The B<denial response> extension lets the application reject
+with a B<custom> HTTP response instead -- a C<401> with a C<WWW-Authenticate>
+header, a C<429> with C<Retry-After>, a redirect, a JSON error body, and so on.
+It mirrors ASGI's C<websocket.http.response> extension.
+
+A server that supports it advertises C<<< extensions->{'websocket.http.response'} >>>
+as an empty hashref on the C<websocket> scope. To deny, the application sends two
+events B<in place of> C<websocket.accept>, only valid before the connection is
+accepted:
+
+=over
+
+=item -
+
+B<C<websocket.http.response.start>> -- C<{ status (Int), headers (ArrayRef[ArrayRef[Bytes]]) }>,
+structured exactly like C<http.response.start>.
+
+=item -
+
+B<C<websocket.http.response.body>> -- C<{ body (Bytes, default C<"">), more (Int, default C<0>) }>,
+structured exactly like C<http.response.body>; set C<<< more => 1 >>> to send the
+body in multiple events.
+
+=back
+
+The server sends the resulting HTTP response and then closes the connection; the
+WebSocket is never established, so no C<websocket.disconnect> is delivered. After
+C<websocket.accept> these events are invalid and MUST be ignored.
+
+    # Reject the handshake with a custom 401 instead of a bare 403:
+    my $connect = await $receive->();   # websocket.connect
+    if (!authorized($scope)) {
+        await $send->({
+            type    => 'websocket.http.response.start',
+            status  => 401,
+            headers => [
+                [ 'content-type',     'application/json' ],
+                [ 'www-authenticate', 'Bearer' ],
+            ],
+        });
+        await $send->({
+            type => 'websocket.http.response.body',
+            body => '{"error":"unauthorized"}',
+        });
+        return;
+    }
+    await $send->({ type => 'websocket.accept' });
+
+Applications SHOULD check for the extension and fall back to C<websocket.close>
+when it is absent:
+
+    if ($scope->{extensions}{'websocket.http.response'}) { ... deny with a response ... }
+    else                                                 { await $send->({ type => 'websocket.close' }) }
+
+The C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
+C<< $ws->deny(status => 401, headers => [...], body => ...) >>, falling back to a
+plain close when the server does not advertise the extension.
+
 =head2 Server-Side Events (SSE)
 
 SSE connections stream C<text/event-stream> data to clients.
