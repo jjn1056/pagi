@@ -158,7 +158,9 @@ These are legitimate, necessary HTTP/WS/SSE behaviours the spec is simply silent
 
 ## E. The ASGI gap that started this — FIX SPEC (extension) + FIX SERVER
 
-### E1. WebSocket Denial Response ☐
+**DONE (2026-06-13).** Implemented the `websocket.http.response` extension end-to-end (spec + server h1/h2 + Tools), subagent-driven TDD from plan `docs/superpowers/plans/2026-06-12-websocket-denial-response.md`. **Two-event ASGI-aligned shape** — `websocket.http.response.start` `{status, headers}` + `websocket.http.response.body` `{body, more}`, sent in place of `websocket.accept`. John's call over a simpler single `websocket.deny`: "the ASGI people thought it out well, there's probably a reason we don't know" (the single-event advantages — atomicity, simpler server, WS-event-model consistency — were real, but ASGI parity + the Tools `deny()` helper hiding the ergonomics won). Server advertises `extensions.'websocket.http.response'` on both WS scope builders, buffers the body, then writes one complete response and closes (h1 `serialize_response_start` + `close_when_empty`; h2 `submit_response` + END_STREAM); `EventValidator` learns the new types. Tools: `PAGI::WebSocket->deny(status, headers, body)` + `supports_denial_response()`, graceful fallback to a plain close when unsupported. Bare-403 `websocket.close`-before-accept is unchanged (back-compat). Commits: PAGI `a8ab8f3` (spec) · PAGI-Server `0db86a7` (h1) + `2907814` (h2) · PAGI-Tools `89b0e1d` (deny). **All of SYNC A–E is now resolved.**
+
+### E1. WebSocket Denial Response ☑
 - **Type:** fix spec (new extension) + fix server
 - **Divergence:** ASGI's `websocket.http.response` extension lets an app refuse a handshake with a *custom* HTTP response (status + headers + body). PAGI can only reject with a hardcoded bare `403 Forbidden` (`websocket.close` before `accept`) — no custom status, headers, or body, in either protocol path.
 - **Server:** h1 `Connection.pm:3534` (`_send_error_response(403,'Forbidden')`); h2 `:1075-1078` (hardcoded `403`).
