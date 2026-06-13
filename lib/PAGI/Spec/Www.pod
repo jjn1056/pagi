@@ -8,7 +8,7 @@ PAGI::Spec::Www - PAGI message formats for HTTP, WebSocket, and SSE
 
 B<Version>: 0.3 (Draft)
 
-The HTTP, WebSocket & SSE PAGI sub-specification defines how HTTP/1.1, HTTP/2, WebSocket, and Server-Side Events (SSE) connections are transported within PAGI.
+The HTTP, WebSocket & SSE PAGI sub-specification defines how HTTP/1.1, HTTP/2, WebSocket, and Server-Sent Events (SSE) connections are transported within PAGI.
 
 It is designed to be a superset of the PSGI specification and specifies how to translate between PAGI and PSGI for compatible requests.
 
@@ -37,7 +37,7 @@ non-destructive disconnect detection.
 
 =item -
 
-C<0.1>: Initial draft, based on ASGI 2.5, including Server-Side Events support.
+C<0.1>: Initial draft, based on ASGI 2.5, including Server-Sent Events support.
 
 =back
 
@@ -263,7 +263,7 @@ B<PUSH_PROMISE>: not supported; servers must reject push promises.
 
 Only HTTP/2 over TLS (C<h2>) is required for the initial implementation; cleartext HTTP/2 (C<h2c>) is optional.
 
-The HTTP version is available in the scope. Pseudo headers (like C<:authority>) from HTTP/2 and HTTP/3 must be removed; if C<:authority> is present, its value must be used to populate or override the C<host> header.
+The HTTP version is available in the scope. Pseudo headers (like C<:authority>) from HTTP/2 must be removed; if C<:authority> is present, its value must be used to populate or override the C<host> header.
 
 Multiple C<Set-Cookie> headers must be preserved individually, and C<Cookie> headers should be combined or split according to the version-specific rules (as per RFC 7230, RFC 6265, and RFC 9113).
 
@@ -313,11 +313,11 @@ C<type> (String) -- C<"http">
 
 =item -
 
-C<pagi["version"]> (String) -- PAGI version
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.3'>)
 
 =item -
 
-C<pagi["spec_version"]> (String) -- PAGI HTTP spec version (default C<"0.3">)
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (optional; if omitted, assume it matches C<version>)
 
 =item -
 
@@ -365,7 +365,11 @@ C<state> (HashRef, optional) -- State namespace from lifespan
 
 =item -
 
-C<pagi.connection> (Object) -- Connection state object for disconnect detection. See L<Connection State|#connection-state> below.
+C<pagi.connection> (Object) -- Connection state object for disconnect detection. See L</Connection State> below.
+
+=item -
+
+C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>). Each present key names an extension mapping to a hashref of extension data; applications check for a key before relying on it. See L<PAGI::Spec::Extensions>.
 
 =back
 
@@ -646,7 +650,7 @@ depend on them.
 
 =head3 Disconnected Client - sending after disconnect
 
-If the client disconnects or cancels the connection, servers MUST send an explicit C<disconnect> event to the application and update the connection state (see L</Connection State>).
+If the client disconnects or cancels the connection, servers MUST send an explicit C<http.disconnect> event to the application and update the connection state (see L</Connection State>).
 
 A subsequent C<$send> is a B<no-op>: it neither delivers data nor raises. Applications therefore detect disconnection through the C<http.disconnect> event or the C<pagi.connection> connection-state object (see L</Connection State>) -- PAGI's non-destructive, race-friendly mechanism for exactly this -- rather than by inspecting the result of C<$send>.
 
@@ -715,7 +719,7 @@ The request B<completing successfully> -- the response was fully delivered.
 
 =back
 
-Exactly one of C<on_disconnect> and C<on_complete> fires for a given request.
+B<When a server provides C<on_complete>>, exactly one of C<on_disconnect> and C<on_complete> fires for a given request.
 
 Servers MUST provide:
 
@@ -996,11 +1000,11 @@ C<type> (String) -- C<"websocket">
 
 =item -
 
-C<pagi["version"]> (String) -- PAGI version
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.3'>)
 
 =item -
 
-C<pagi["spec_version"]> (String) -- PAGI HTTP spec version (default C<"0.3">)
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (optional; if omitted, assume it matches C<version>)
 
 =item -
 
@@ -1045,6 +1049,10 @@ C<subprotocols> (ArrayRef[String], default C<[]>)
 =item -
 
 C<state> (HashRef, optional)
+
+=item -
+
+C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>, C<websocket.http.response>). See L<PAGI::Spec::Extensions>.
 
 =back
 
@@ -1202,25 +1210,48 @@ C<type> -- C<"websocket.disconnect">
 
 =item -
 
-C<code> (Int) -- WebSocket close code per RFC 6455. When the peer sent a close frame, this is its code (or C<1005>, "no status received", if the frame carried none). When the connection dropped or was aborted with no close handshake -- timeout, write error, server shutdown -- servers MUST report C<1006> ("abnormal closure").
+C<code> (Int) -- WebSocket close code per RFC 6455. When the peer sent a close frame, this is its code (or C<1005>, "no status received", if the frame carried none). When the connection dropped or was aborted with no close handshake -- timeout, write error, server shutdown -- servers MUST report C<1006> ("abnormal closure"). When the server itself closes after a protocol violation, C<code> is the close code it sent (e.g. C<1002> for a framing error or C<1007> for an invalid UTF-8 payload).
 
 =item -
 
-C<reason> (String, default empty) -- Disconnect reason. For an abnormal close, servers MUST set this to the matching standard reason string from L</Standard Disconnect Reasons>. For a clean client-initiated close (code 1000) it MAY be empty.
+C<reason> (String, default empty) -- For a server-detected abnormal close, the matching standard token from L</Standard Disconnect Reasons>. When the peer sent the Close frame, this is the peer's own reason text, which MAY be empty.
 
 =back
 
-The C<code> carries the RFC 6455 close code; C<reason> supplements it with a standard reason token so an application can branch on a single vocabulary across HTTP, WebSocket, and SSE:
+The C<code> carries the RFC 6455 close code and C<reason> supplements it with a
+standard token (see L</Standard Disconnect Reasons>), so an application can branch
+on one reason vocabulary across HTTP, WebSocket, and SSE. How the two pair up
+depends on how the connection ended:
 
-    Code  Reason             Meaning
-    ----  -----------------  -------
-    1000  (empty)            Normal closure initiated by client
-    1001  server_shutdown    Server going away (shutdown/restart)
-    1001  client_closed      Client navigating away
-    1006  keepalive_timeout  No pong received within timeout
-    1006  write_timeout      Send operation timed out
-    1006  write_error        Write to socket failed
-    1007  protocol_error     Text frame contained invalid UTF-8
+=over 4
+
+=item *
+
+B<The peer sent a Close frame.> C<code> is the peer's own close code (C<1005> if
+the frame carried none) and C<reason> is the peer's reason text, commonly empty.
+The server does not substitute a PAGI token in this case.
+
+=item *
+
+B<Abnormal drop with no close handshake> -- a bare TCP FIN, a timeout, or a write
+failure. C<code> is C<1006> ("abnormal closure") and C<reason> is the token for
+the condition: C<client_closed>, C<keepalive_timeout>, C<write_timeout>,
+C<write_error>, or C<server_shutdown>.
+
+=item *
+
+B<Server-initiated protocol close> -- the server detected a framing or protocol
+violation and sent the Close frame itself. C<code> is the RFC 6455 code for the
+fault (C<1002> for a framing/protocol error, C<1007> for an invalid UTF-8
+payload) with C<reason> C<protocol_error>; a bounded-queue overflow closes with
+C<1008> and C<reason> C<queue_overflow>.
+
+=back
+
+These pairings describe the reference server. The binding contract is only that
+C<code> is a valid RFC 6455 close code and C<reason>, when the server can name
+one, is a token from L</Standard Disconnect Reasons>; applications SHOULD branch
+on C<reason> rather than C<code>.
 
 =head4 Disconnected Client - sending after disconnect
 
@@ -1337,8 +1368,9 @@ structured exactly like C<http.response.start>.
 =item -
 
 B<C<websocket.http.response.body>> -- C<{ body (Bytes, default ""), more (Int, default 0) }>,
-structured exactly like C<http.response.body>; set C<<< more => 1 >>> to send the
-body in multiple events.
+structured exactly like C<http.response.body> (only the C<body> form applies;
+C<file>/C<fh> are not used for denial responses); set C<<< more => 1 >>> to send
+the body in multiple events.
 
 =back
 
@@ -1375,7 +1407,7 @@ The C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
 C<< $ws->deny(status => 401, headers => [...], body => ...) >>, falling back to a
 plain close when the server does not advertise the extension.
 
-=head2 Server-Side Events (SSE)
+=head2 Server-Sent Events (SSE)
 
 SSE connections stream C<text/event-stream> data to clients.
 
@@ -1403,7 +1435,7 @@ Routing based on URL or application logic is not used to infer SSE.
 
 =head3 SSE Connection Scope
 
-SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, etc.) but set C<<< type => 'sse' >>>. Header casing rules follow the HTTP section.
+SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, and C<extensions>) but set C<<< type => 'sse' >>>. Header casing rules follow the HTTP section.
 
 =head3 Request Body - C<receive> event
 
