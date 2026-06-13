@@ -2,7 +2,7 @@
 
 =head1 NAME
 
-PAGI::Spec::Lifespan - The PAGI lifespan protocol for startup and shutdown events
+PAGI::Spec::Lifespan - The PAGI Lifespan protocol for startup and shutdown events
 
 =head1 Lifespan Protocol
 
@@ -95,19 +95,19 @@ C<type> (String) - C<"lifespan">.
 
 =item -
 
-C<pagi["version"]> (String) - The version of the PAGI core spec that governs the worker.
+The C<version> key of the C<pagi> hashref (accessed as C<< $scope->{pagi}{version} >>) (String) - The version of the PAGI core spec that governs the worker.
 
 =item -
 
-C<pagi["spec_version"]> (String) - The version of this lifespan sub-specification. Optional; if missing it defaults to C<"0.3">.
+The C<spec_version> key of the C<pagi> hashref (accessed as C<< $scope->{pagi}{spec_version} >>) (String) - The version of this lifespan sub-specification. Optional; if missing, assume it matches C<version>.
 
 =item -
 
-C<pagi["is_worker"]> (Int, optional) - C<1> if running as a worker in a multi-process deployment, C<0> or absent for single-process mode. Applications can use this to avoid duplicate initialization (e.g., only print startup messages from worker 1).
+The C<is_worker> key of the C<pagi> hashref (accessed as C<< $scope->{pagi}{is_worker} >>) (Int, optional) - C<1> when running as a worker in a multi-process deployment; C<0> in single-process mode. May be absent on servers that do not distinguish workers. Applications can use this to avoid duplicate initialization (e.g., only print startup messages from worker 1).
 
 =item -
 
-C<pagi["worker_num"]> (Int, optional) - Worker identifier (1, 2, 3, ...) in multi-process mode. Absent or C<undef> for single-process mode. Combined with C<is_worker>, applications can identify which worker they are running in.
+The C<worker_num> key of the C<pagi> hashref (accessed as C<< $scope->{pagi}{worker_num} >>) (Int, optional) - Worker identifier (1, 2, 3, ...) in multi-process mode. Absent or C<undef> for single-process mode. Combined with C<is_worker>, applications can identify which worker they are running in.
 
 =item -
 
@@ -135,10 +135,10 @@ global mutable state or having to worry about references to stale/closed connect
 PAGI servers that implement this feature will provide
 C<state> as part of the C<lifespan> scope:
 
-    "scope": {
+    my $scope = {
         ...
-        "state": {},
-    }
+        state => {},
+    };
 
 The namespace is controlled completely by the PAGI application; the server will not
 interact with it other than to copy it.
@@ -205,7 +205,7 @@ B<Keys>:
 
 =item -
 
-C<type> (String) -  C<"lifespan.shutdown">.
+C<type> (String) - C<"lifespan.shutdown">.
 
 =back
 
