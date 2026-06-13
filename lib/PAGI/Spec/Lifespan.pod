@@ -6,7 +6,7 @@ PAGI::Spec::Lifespan - The PAGI lifespan protocol for startup and shutdown event
 
 =head1 Lifespan Protocol
 
-B<Version>: 0.2 (Draft)
+B<Version>: 0.3 (Draft)
 
 The Lifespan B<PAGI> sub-specification outlines how to communicate
 lifespan events such as startup and shutdown within PAGI.
@@ -99,7 +99,7 @@ C<pagi["version"]> (String) - The version of the PAGI core spec that governs the
 
 =item -
 
-C<pagi["spec_version"]> (String) - The version of this lifespan sub-specification. Optional; if missing it defaults to C<"0.2">.
+C<pagi["spec_version"]> (String) - The version of this lifespan sub-specification. Optional; if missing it defaults to C<"0.3">.
 
 =item -
 
@@ -246,6 +246,10 @@ C<message> (String) - Optional; if missing defaults to C<"">.
 =head2 Version History
 
 =over
+
+=item -
+
+0.3 (Draft): No changes from 0.2
 
 =item -
 

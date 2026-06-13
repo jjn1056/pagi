@@ -6,7 +6,7 @@ PAGI::Spec::Tls - The PAGI TLS extension for reporting connection security in sc
 
 =head1 PAGI TLS Extension
 
-B<Version>: 0.2 (Draft)
+B<Version>: 0.3 (Draft)
 
 This specification outlines how to report TLS (or SSL) connection information
 in the PAGI I<connection scope> object.
@@ -258,6 +258,10 @@ years. So in practice it will be fine.
 =head2 Version History
 
 =over
+
+=item -
+
+0.3 (Draft): No changes from 0.2
 
 =item -
 

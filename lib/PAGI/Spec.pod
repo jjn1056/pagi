@@ -9,7 +9,7 @@ PAGI::Spec - The base PAGI specification: application interface and core concept
 I<Note: code examples are illustrative; their style is a documentation
 convenience, not a requirement of the specification.>
 
-B<Version>: 0.2 (Draft)
+B<Version>: 0.3 (Draft)
 
 =head2 Introduction
 
@@ -99,11 +99,11 @@ C<pagi>: A hashref with at least:
 
 =item -
 
-C<<< version => '0.2' >>>
+C<<< version => '0.3' >>>
 
 =item -
 
-C<<< spec_version => '0.2' >>> (optional; protocol-specific override if it diverges)
+C<<< spec_version => '0.3' >>> (optional; protocol-specific override if it diverges)
 
 =back
 
@@ -475,6 +475,11 @@ Byte content (e.g., body payloads) must be passed as Perl scalars B<without> the
 =head2 Version History
 
 =over
+
+=item -
+
+0.3 (Draft): Removed C<pagi.features> (superseded by the C<extensions>
+mechanism). See L<PAGI::Spec::Www> for the HTTP/WebSocket/SSE 0.3 changes.
 
 =item -
 
