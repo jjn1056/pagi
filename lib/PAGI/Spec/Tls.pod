@@ -102,9 +102,9 @@ determine the version must use C<undef>.
 
 B<cipher_suite> (Int or C<undef>)
 
-The negotiated cipher suite encoded as a 16-bit unsigned integer in network
-byte order (e.g., C<0x1301> for C<TLS_AES_128_GCM_SHA256>). Servers that cannot
-determine the value must use C<undef>.
+The negotiated cipher suite as a 16-bit unsigned integer (e.g., C<0x1301> for
+C<TLS_AES_128_GCM_SHA256>). Servers that cannot determine the value must use
+C<undef>.
 
 =back
 
@@ -151,7 +151,7 @@ clients and servers are unlikely to get wrong.
 =item -
 
 Makes it much easier to write this specification. There is no standard
-documented format for a parsed certificate in Python, and we would need to
+documented format for a parsed certificate in Perl, and we would need to
 write one.
 
 =item -
@@ -273,12 +273,6 @@ years. So in practice it will be fine.
 
 =back
 
-=head2 Copyright
-
-This document has been placed in the public domain.
-
-================================================================================
-
 =head2 Example Usage in Modern Perl
 
 Below is a short example of how a B<PAGI> application might check for TLS
@@ -326,4 +320,8 @@ Note that real-world usage may involve more checks or error handling.
             die "Unsupported protocol type: $scope->{type}";
         }
     }
+
+=head2 Copyright
+
+This document has been placed in the public domain.
 
