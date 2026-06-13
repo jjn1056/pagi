@@ -1382,11 +1382,11 @@ C<headers> (ArrayRef[ArrayRef[Bytes]]) -- Must include C<<< content-type => 'tex
 =back
 
 On C<sse.start> the server supplies the headers a well-behaved event stream needs
-when the application did not: C<Content-Type: text/event-stream> (if absent) and
-C<Cache-Control: no-cache>. Over HTTP/1.1 it additionally sends
-C<Connection: keep-alive> and a C<Date> header and frames the stream with chunked
-C<Transfer-Encoding>; over HTTP/2 those transport headers do not apply (the stream
-is multiplexed and DATA-framed). Applications need not set any of these.
+when the application did not: C<Content-Type: text/event-stream> (if absent),
+C<Cache-Control: no-cache>, and a C<Date> header. Over HTTP/1.1 it additionally
+sends C<Connection: keep-alive> and frames the stream with chunked
+C<Transfer-Encoding>; HTTP/2 multiplexes and DATA-frames the stream, so those
+connection-specific headers do not apply. Applications need not set any of these.
 
 =head3 Send SSE - C<send> event
 

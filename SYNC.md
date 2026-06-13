@@ -87,49 +87,51 @@ Status: ☐ open · ◐ in progress · ☑ done
 
 ## C. Server is correct; the SPEC needs to catch up — FIX SPEC (document)
 
+**ALL DONE (2026-06-12).** C1-C10 documented in `Www.pod` (PAGI `984ecfd`; C7 reworded so `Date` reads as both-transports after the h2 fix). C1 also added the HTTP/2 `Date` response header for h1/h2 parity (PAGI-Server `d90e180`, `t/http2/21-http-date-header.t`, on both the regular and SSE h2 paths). C11 was resolved with B8 (extraction-error keys removed). C2-C10 needed no server change — the server was already correct; the spec now matches it.
+
 These are legitimate, necessary HTTP/WS/SSE behaviours the spec is simply silent on. Mostly spec writing.
 
-### C1. Server-supplied `Date` header (and H1/H2 inconsistency) ☐
+### C1. Server-supplied `Date` header (and H1/H2 inconsistency) ☑
 - **Type:** fix spec + fix server (consistency)
 - **Divergence:** HTTP/1.1 injects a `Date` response header; HTTP/2 does not; the spec mentions neither. Document that the server supplies `Date`, and make H1/H2 agree.
 - **Spec:** silent (`Www.pod:391-405` lists only `type`/`status`/`headers`/`trailers`).
 - **Server:** h1 `Connection.pm:2371`; h2 absent `:810-819`.
 
-### C2. Auto chunked Transfer-Encoding when no `Content-Length` ☐
+### C2. Auto chunked Transfer-Encoding when no `Content-Length` ☑
 - **Type:** fix spec
 - **Divergence:** Server frames the body as chunked when the app set no `Content-Length`; spec says only "ignore app-set Transfer-Encoding," not that the server auto-frames.
 - **Spec:** `Www.pod:383`. **Server:** `Connection.pm:2388`.
 
-### C3. HTTP/1.0 `Connection: close`/`keep-alive` injection ☐
+### C3. HTTP/1.0 `Connection: close`/`keep-alive` injection ☑
 - **Type:** fix spec (brief note)
 - **Server:** `Connection.pm:2380, 2384`. **Spec:** silent.
 
-### C4. Server-generated error responses (`413/500/403/501`) + bodies/reasons ☐
+### C4. Server-generated error responses (`413/500/403/501`) + bodies/reasons ☑
 - **Type:** fix spec (document the server-originated error surface)
 - **Server:** `_send_error_response` body `Connection.pm:2517-2536`; `500` `:1996, :2935, :3285`; `413` `:1902, :2217`, h2 `:493, :543`; `403` `:3534`, h2 `:1078`; `501` h2 `:443`. **Spec:** defines no status codes/reason phrases/error bodies.
 
-### C5. `max_body_size` enforced as `413` ☐
+### C5. `max_body_size` enforced as `413` ☑
 - **Type:** fix spec
 - **Server:** `Connection.pm:1899-1906, 2215-2221`, h2 `:481-502`. **Spec:** `Spec.pod:122` (feature key only, no enforcement contract).
 
-### C6. `Expect: 100-continue` → interim `100 Continue` ☐
+### C6. `Expect: 100-continue` → interim `100 Continue` ☑
 - **Type:** fix spec
 - **Server:** `Connection.pm:2176-2178`. **Spec:** silent.
 
-### C7. SSE auto-injected `Cache-Control: no-cache` / `Connection: keep-alive` ☐
+### C7. SSE auto-injected `Cache-Control: no-cache` / `Connection: keep-alive` ☑
 - **Type:** fix spec
 - **Server:** `Connection.pm:3180-3182`, h2 `:1280`. **Spec:** `Www.pod:1167-1178` (content-type auto-add is spec'd; these are not).
 
-### C8. WebSocket close-code / protocol-error enforcement (RFC 6455) ☐
+### C8. WebSocket close-code / protocol-error enforcement (RFC 6455) ☑
 - **Type:** fix spec (enumerate or reference RFC 6455)
 - **Divergence:** Server enforces `1002` (RSV/reserved-opcode/oversized-control/invalid-close-code), `1007` (invalid UTF-8), `1008` (receive-queue overflow); spec mentions only the `1007` UTF-8 rule.
 - **Server:** `Connection.pm:3603, 3612, 3620, 3689` (1002); `:3630, :3699` (1007); `:3636, :3649` (1008). **Spec:** `Www.pod:971, 1074`.
 
-### C9. `max_ws_frame_size` frame-size enforcement ☐
+### C9. `max_ws_frame_size` frame-size enforcement ☑
 - **Type:** fix spec
 - **Server:** `Connection.pm:3483-3485`, caught `:300-327`. **Spec:** silent.
 
-### C10. SSE `event`/`id`/`retry` newline-injection validation (throws) ☐
+### C10. SSE `event`/`id`/`retry` newline-injection validation (throws) ☑
 - **Type:** fix spec
 - **Server:** `_format_sse_event` `Connection.pm:3097, 3108, 3114`. **Spec:** `Www.pod:1193-1205` (fields defined, no validation/error behaviour).
 
@@ -144,7 +146,9 @@ These are legitimate, necessary HTTP/WS/SSE behaviours the spec is simply silent
 
 ## D. A whole feature the spec doesn't describe — FIX SPEC (new section)
 
-### D1. WebSocket over HTTP/2 (RFC 8441) ☐
+**DONE (2026-06-12).** Documented as a new "WebSocket over HTTP/2 (RFC 8441)" section in `Www.pod` (PAGI `984ecfd`) — Extended CONNECT detection, `200`-not-`101` accept, RST/close → `websocket.disconnect`. Transparent to the app (same `websocket` scope + events). Server already implemented it; spec-only.
+
+### D1. WebSocket over HTTP/2 (RFC 8441) ☑
 - **Type:** fix spec (new section)
 - **Divergence:** The server implements WebSocket-over-HTTP/2: Extended CONNECT detection, `websocket.accept` answered with HTTP `200` (not `101`), and `websocket.disconnect`/`sse.disconnect` mappings on `RST_STREAM`/stream-close. The spec's WebSocket section describes only the HTTP/1.1 `101`/`403` handshake.
 - **Server:** detect `Connection.pm:429-449`; `200` accept `:1015, :1034`; h2 close→disconnect `:578-591`.
