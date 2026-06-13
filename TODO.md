@@ -8,6 +8,7 @@ distribution:
 - **[Server]** — PAGI-Server (`PAGI::Server::*`, `bin/pagi-server`)
 - **[Tools]** — PAGI-Tools (`PAGI::Middleware::*`, `PAGI::App::*`, `PAGI::Endpoint::*`, `PAGI::Request`/`Response`/`SSE`/`WebSocket`)
 - **[Thunderhorse]** — the framework built on PAGI, not PAGI core
+- **[New dist]** — a planned standalone distribution in the PAGI ecosystem
 
 Tiers are ordered by current priority: fix what is broken or misleading first,
 then lower the adoption barrier, then add features as demand appears.
@@ -135,6 +136,12 @@ Genuinely useful, but pull them forward only when someone asks.
 - **[Server] Early Hints (HTTP 103) extension.**
   Add an `http.response.early_hint` event so apps can push `Link: rel=preload`
   hints before the main response.
+
+- **[New dist] JSON-RPC 2.0 middleware, as its own distribution.**
+  A JSON-RPC 2.0 layer over PAGI HTTP — a good idea at low urgency. Ship it as a
+  standalone distribution rather than folding it into PAGI-Tools. A pre-split
+  reference implementation (middleware + tutorial) lives on the `jsonrpc` branch
+  in the PAGI repo to start from.
 
 ---
 
