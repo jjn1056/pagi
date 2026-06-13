@@ -18,7 +18,18 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 =item -
 
-C<0.2>: Added keepalive events (C<websocket.keepalive>, C<sse.keepalive>), disconnect reasons, SSE support for all HTTP methods (not just GET) with C<sse.request> receive event for request body. Added C<pagi.connection> scope key for non-destructive disconnect detection.
+C<0.2>: Added C<pagi.transport> outbound flow-control introspection
+(C<buffered_amount>, high/low watermarks, C<on_high_water>/C<on_drain> callbacks)
+and the C<websocket.http.response> WebSocket denial-response extension. Reworked
+disconnect handling into one abnormal-only reason vocabulary, with
+C<on_disconnect> (abnormal drops) and C<on_complete> (successful completion) on
+the C<pagi.connection> object. Added keepalive events (C<websocket.keepalive>,
+C<sse.keepalive>), SSE support for all HTTP methods (not just GET) with the
+C<sse.request> receive event, and the C<pagi.connection> scope key for
+non-destructive disconnect detection. Documented the server-supplied HTTP, SSE,
+and WebSocket behaviors and WebSocket over HTTP/2 (RFC 8441). B<Removed>
+C<pagi.features> (superseded by C<extensions>) and the per-send C<timeout> field
+(superseded by transport backpressure and keepalive timeouts).
 
 =item -
 
@@ -1321,7 +1332,7 @@ structured exactly like C<http.response.start>.
 
 =item -
 
-B<C<websocket.http.response.body>> -- C<{ body (Bytes, default C<"">), more (Int, default C<0>) }>,
+B<C<websocket.http.response.body>> -- C<{ body (Bytes, default ""), more (Int, default 0) }>,
 structured exactly like C<http.response.body>; set C<<< more => 1 >>> to send the
 body in multiple events.
 
@@ -1836,8 +1847,12 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 
 =item -
 
-C<0.2> (Draft): SSE POST method support, keepalive events, disconnect reasons,
-clarified scope fields (method required for HTTP/SSE, not for WebSocket)
+C<0.2> (Draft): C<pagi.transport> flow control; C<websocket.http.response>
+denial-response extension; C<on_complete> plus reworked abnormal-only disconnect
+reasons; keepalive events; SSE POST method support (C<sse.request>);
+C<pagi.connection>; documented server-supplied behaviors and WebSocket over
+HTTP/2; clarified scope fields. Removed C<pagi.features> and the per-send
+C<timeout> field.
 
 =item -
 

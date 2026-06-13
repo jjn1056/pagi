@@ -83,6 +83,34 @@ an error.
 Additional extensions (tracing hooks, background task controls, etc.) should
 follow the same pattern.
 
+=head2 Defined extensions
+
+The PAGI specification defines these extensions. A server advertises the ones it
+supports in C<< scope->{extensions} >>; an application checks for a key's
+presence before relying on it.
+
+=over
+
+=item -
+
+C<fullflush> -- force-flush buffered output to the client (described above).
+
+=item -
+
+C<tls> -- metadata about a TLS connection (PEM certificates, negotiated version,
+cipher suite). See L<PAGI::Spec::Tls>.
+
+=item -
+
+C<websocket.http.response> -- reject a WebSocket handshake with a custom HTTP
+response (status, headers, body) instead of a bare C<403 Forbidden>. See
+L<PAGI::Spec::Www/"WebSocket Denial Response (extension)">.
+
+=back
+
+(The C<pagi.connection> and C<pagi.transport> introspection handles are
+C<pagi.*> scope keys rather than C<extensions> entries; see L<PAGI::Spec::Www>.)
+
 =head2 Defining your own events
 
 The mechanism above is how a B<server> advertises a capability. A framework or
