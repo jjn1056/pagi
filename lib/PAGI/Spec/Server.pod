@@ -9,7 +9,7 @@ PAGI::Spec::Server - The PAGI server runner contract for swappable servers
 B<Version>: 0.1 (Draft)
 
 This document specifies the interface a PAGI server class implements so
-that application runners (C<PAGI::Server::Runner>'s C<-s CLASS> option, deployment
+that application runners (L<PAGI::Server::Runner>'s C<-s CLASS> option, deployment
 tooling, etc.) can construct and start it without server-specific
 knowledge. It is the server-side counterpart of the application
 interface described in L<the main specification|PAGI::Spec>.
@@ -108,8 +108,8 @@ privilege dropping before calling it.
 
 =back
 
-See C<PAGI::Server::Runner> for the reference runner implementation and
-C<PAGI::Server> for the reference server.
+See L<PAGI::Server::Runner> for the reference runner implementation and
+L<PAGI::Server> for the reference server.
 
 =head2 Version History
 
