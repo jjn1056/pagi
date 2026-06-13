@@ -13,7 +13,7 @@ B<Version>: 0.3 (Draft)
 
 =head2 Introduction
 
-While work has been done to support asynchronous response handling in PSGI (the C<psgi.nonblocking> environment key), support for protocols with multiple input events (such as WebSockets) remained hacks. The use of non-blocking or asynchronous handling based on PSGI never took off. The PSGI specification hasn't changed since July 2013. Since then, asynchronous programming in has taken off in many programming languages, including in Perl: although Perl does not natively support the C<async/await> pattern like Python or JavaScript, the module C<Future::AsyncAwait> implements the pattern since 24 January 2018 for Perl versions 5.16 and up.
+While work has been done to support asynchronous response handling in PSGI (the C<psgi.nonblocking> environment key), support for protocols with multiple input events (such as WebSockets) remained hacks. The use of non-blocking or asynchronous handling based on PSGI never took off. The PSGI specification hasn't changed since July 2013. Since then, asynchronous programming has taken off in many programming languages, including in Perl: although Perl does not natively support the C<async/await> pattern like Python or JavaScript, the module C<Future::AsyncAwait> implements the pattern since 24 January 2018 for Perl versions 5.16 and up.
 
 Considering the above and the fact that similar specifications have existed for several years now for other languages, the time has arrived to create a fully asynchronous webserver gateway interface specification for Perl.
 
@@ -63,7 +63,7 @@ An I<application> which is invoked once per connection and communicates via asyn
 
 =back
 
-Applications are written as asynchronous subroutines using C<Future::AsyncAwait>. They receive a C<scope> describing the connection, and two coderefs, C<$recv> and C<$send>, which return Futures representing event input and output.
+Applications are written as asynchronous subroutines using C<Future::AsyncAwait>. They receive a C<scope> describing the connection, and two coderefs, C<$receive> and C<$send>, which return Futures representing event input and output.
 
 Unlike PSGI, PAGI applications persist for the entire connection lifecycle. They process incoming events from the server and emit outgoing events in response.
 
@@ -97,15 +97,29 @@ C<type>: Protocol type, e.g., C<http>, C<websocket>
 
 C<pagi>: A hashref with at least:
 
-=item -
-
-C<<< version => '0.3' >>>
+=over
 
 =item -
 
-C<<< spec_version => '0.3' >>> (optional; protocol-specific override if it diverges)
+C<version> -- the core PAGI specification version, e.g. C<'0.3'>
+
+=item -
+
+C<spec_version> -- the protocol sub-spec version (optional; if omitted, assume it matches C<version>), e.g. C<'0.3'>
 
 =back
+
+=item -
+
+C<extensions>: A hashref in which the server advertises optional capabilities (see below).
+
+=back
+
+The C<extensions> hashref advertises optional server capabilities. Each present
+key names an extension (e.g. C<tls>, C<websocket.http.response>) mapping to a
+(possibly empty) hashref of extension data; applications check for a key's
+presence before relying on it. An absent or empty C<extensions> means none are
+available. See L<PAGI::Spec::Extensions>.
 
 Clarification on PAGI version keys:
 
@@ -117,7 +131,7 @@ C<version>: Signals the core PAGI specification version that governs scopes/even
 
 =item -
 
-C<spec_version>: Indicates the version for the specific protocol (such as HTTP or WebSocket). Servers may omit it, in which case clients should assume it matches C<version>.
+C<spec_version>: Indicates the version for the specific protocol (such as HTTP or WebSocket). Servers may omit it, in which case applications should assume it matches C<version>.
 
 =item -
 
@@ -181,7 +195,7 @@ C<ext.> -- reserved for experimental or nonstandard events
 
 Custom user-defined protocols should avoid clashing with these prefixes.
 
-    my $event = await $recv->();
+    my $event = await $receive->();
     await $send->({ type => 'http.response.start', ... });
 
 =head4 Permitted Event Data Types
@@ -257,7 +271,7 @@ Each application is expected to run for the duration of a connection and may rem
     use Future::AsyncAwait;
 
     async sub application {
-        my ($scope, $recv, $send) = @_;
+        my ($scope, $receive, $send) = @_;
         if ($scope->{type} ne 'http') {
             die "Unsupported protocol type: $scope->{type}";
         }
@@ -285,7 +299,7 @@ C<$scope>: Hashref with connection metadata
 
 =item -
 
-C<$recv>: Coderef returning a C<Future> resolving to the next event
+C<$receive>: Coderef returning a C<Future> resolving to the next event
 
 =item -
 
@@ -303,14 +317,14 @@ Applications B<must> await all C<$send> calls before their Future completes:
 
     # CORRECT: await all sends
     async sub app {
-        my ($scope, $recv, $send) = @_;
+        my ($scope, $receive, $send) = @_;
         await $send->({ type => 'http.response.start', status => 200, headers => [] });
         await $send->({ type => 'http.response.body', body => 'Hello' });
     }
 
     # WRONG: send not awaited, app Future resolves before send completes
     async sub app {
-        my ($scope, $recv, $send) = @_;
+        my ($scope, $receive, $send) = @_;
         $send->({ type => 'http.response.body', body => 'Hello' })->retain;
         return;  # App Future resolves immediately, send may not complete!
     }
@@ -337,7 +351,7 @@ Scope format
 
 =item -
 
-Event types for C<$recv> and C<$send>
+Event types for C<$receive> and C<$send>
 
 =back
 
@@ -385,11 +399,11 @@ PAGI middleware wraps an application:
     sub middleware {
         my ($app) = @_;
         return async sub {
-            my ($scope, $recv, $send) = @_;
+            my ($scope, $receive, $send) = @_;
             my $modified_scope = { %$scope };
             $modified_scope->{custom} = 1;
 
-            my $result = eval { await $app->($modified_scope, $recv, $send) };
+            my $result = eval { await $app->($modified_scope, $receive, $send) };
             if (my $error = $@) {
                 # Middleware MUST propagate exceptions clearly without silently swallowing them.
                 # Optionally, middleware can log or handle the error explicitly before rethrowing.
@@ -417,6 +431,10 @@ HTTP: C<<< { type => 'http.disconnect' } >>>
 =item -
 
 WebSocket: C<<< { type => 'websocket.disconnect' } >>>
+
+=item -
+
+SSE: C<<< { type => 'sse.disconnect' } >>>
 
 =item -
 
