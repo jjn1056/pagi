@@ -254,7 +254,11 @@ C<on_disconnect> fires B<only> when something goes wrong -- the client drops, a
 timeout fires, the server aborts. Its counterpart C<on_complete> fires B<only>
 when the response was fully delivered. Exactly one of the two runs per request,
 so they are the natural place to put rollback-vs-commit or abort-vs-finalize
-logic without juggling a flag yourself.
+logic without juggling a flag yourself:
+
+    my $txn = $db->begin_work;
+    $conn->on_complete(sub   { $txn->commit   });   # response fully delivered
+    $conn->on_disconnect(sub { $txn->rollback });   # client left, or aborted
 
 B<WebSocket> and B<SSE> do not get a C<pagi.connection> object: their C<$receive>
 queues carry messages, not a body you must preserve, so awaiting the
@@ -300,6 +304,50 @@ spans the whole connection:
             }
         }
     };
+
+=head2 Rejecting a handshake with a custom response
+
+Sending C<websocket.close> before C<websocket.accept> rejects a handshake with a
+bare C<403>. To reject with a B<custom> response -- a C<401> with a
+C<WWW-Authenticate> header, a C<429>, a redirect -- send a
+C<websocket.http.response.start> + C<websocket.http.response.body> pair instead
+of C<websocket.accept>, when the server advertises the C<websocket.http.response>
+extension:
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'websocket';
+
+        await $receive->();   # websocket.connect
+
+        if (!authorized($scope)) {                       # your auth check
+            if ($scope->{extensions}{'websocket.http.response'}) {
+                await $send->({
+                    type    => 'websocket.http.response.start',
+                    status  => 401,
+                    headers => [ [ 'content-type',     'application/json' ],
+                                 [ 'www-authenticate', 'Bearer' ] ],
+                });
+                await $send->({
+                    type => 'websocket.http.response.body',
+                    body => '{"error":"unauthorized"}',
+                });
+            }
+            else {
+                await $send->({ type => 'websocket.close' });   # bare 403 fallback
+            }
+            return;
+        }
+
+        await $send->({ type => 'websocket.accept' });
+        # ... normal session ...
+    };
+
+These events are valid only before C<websocket.accept>: the server writes the
+HTTP response and closes, so the WebSocket never opens. The C<PAGI::WebSocket>
+helper in C<PAGI-Tools> wraps this as
+C<< $ws->deny(status => 401, headers => [...], body => ...) >>, with the same
+fallback. See L<PAGI::Spec::Www/"WebSocket Denial Response (extension)">.
 
 =head1 SERVER-SENT EVENTS
 

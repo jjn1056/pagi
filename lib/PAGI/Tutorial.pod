@@ -979,6 +979,12 @@ Key points:
 
 See L<PAGI::WebSocket> for higher-level utilities that make WebSocket handling easier.
 
+To reject a handshake, send C<websocket.close> before C<websocket.accept> (a bare
+C<403>), or -- where the server advertises the C<websocket.http.response>
+extension -- a C<websocket.http.response.start>/C<.body> pair for a custom
+response such as a C<401>. See the cookbook's "Rejecting a handshake with a
+custom response" and L<PAGI::Spec::Www/"WebSocket Denial Response (extension)">.
+
 =head2 2.5 SSE (Raw)
 
 Server-Sent Events allow the server to push updates to clients over HTTP. Here's a clock that sends the current time every second:
