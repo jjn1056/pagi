@@ -47,10 +47,6 @@ Documented-but-missing behaviour is worse than a gap, so these come first.
   ignores v6 is dangerous — support IPv6, or at minimum document IPv4-only
   loudly in POD (not just an inline comment).
 
-- **[Tools] Lifespan shutdown errors are swallowed.**
-  `PAGI::Lifespan` `eval`s the shutdown handler but never checks `$@`
-  (startup does). Report shutdown failures.
-
 - **[Tools] `PAGI::App::Throttle` shares one `%buckets` across all instances.**
   Package-global state means two throttles interfere. Make it per-instance (or
   add a namespace option) and warn in POD.
