@@ -169,6 +169,8 @@ part of what turns "a few conveniences" into a framework people trust.
 
 =item L<PAGI::Spec::Extensions> - the extension mechanism and custom events
 
+=item L<PAGI::EventLoops> - event loops, non-blocking I/O, and binding a server to a loop
+
 =back
 
 And F<examples/mini-framework> for a complete framework in about fifty lines.
