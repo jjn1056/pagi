@@ -121,10 +121,10 @@ Prefer this tier for code you intend to be portable across servers.
 =head2 Tier 2: IO::Async-native, once you accept an IO::Async loop is running
 
 If you are content to require that an L<IO::Async> loop is the running loop, you
-can use IO::Async facilities directly -- C<IO::Async::Loop-E<gt>new>,
-C<watch_time>, the C<Net::Async::*> client modules, and so on. Under
-L<PAGI::Server> this requirement is free: the reference server I<is> IO::Async,
-so an IO::Async loop is always running and IO::Async-native code just works.
+can use IO::Async facilities directly -- timers (C<watch_time>), the
+C<Net::Async::*> client modules, and so on. Under L<PAGI::Server> this
+requirement is free: the reference server I<is> IO::Async, so an IO::Async loop
+is always running and IO::Async-native code just works.
 
 This is convenient and idiomatic on PAGI::Server. The trade-off is that you have
 named a loop, so the portability of Tier 1 is gone.
@@ -229,6 +229,9 @@ request -- nothing is blocked:
                 { count => $count, hint => 'GET /next to wait for the next tick' });
         }
     };
+
+(C<reply> is a small JSON-response helper; the full runnable version is in
+F<examples/14-periodic-events>.)
 
 This is the whole pattern: a source that resolves Futures, and a handler that
 awaits them. It composes with C<$receive> through ordinary Future combinators --
@@ -345,6 +348,17 @@ loop. If the server and the Future::IO implementation ended up on different
 loops, the handler's Futures would be scheduled on a loop that nobody is turning,
 and requests would hang. With the env var set up front they share a single EV
 loop, and everything ticks.
+
+Note: the C<BEGIN>/env-var approach is what you use when B<you> own the loop
+(embedding). When you let L<PAGI::Server> own the loop via C<run()> instead,
+there is a native shortcut -- the C<loop_type> constructor option:
+
+    PAGI::Server->new(app => $app, port => 5016, loop_type => 'EV')->run;
+
+This tells the server to create an EV-backed loop directly (it loads
+C<IO::Async::Loop::EV> internally) without requiring a C<BEGIN> block in your
+code. C<Future::IO> wiring is still handled automatically, as with any
+C<pagi-server>-owned loop.
 
 The runnable, verified version is F<examples/16-foreign-loop>.
 

@@ -32,11 +32,13 @@ so you know the server is ready before the host app prints its "listening" line.
 **1. Start the server:**
 
 ```bash
-# Against an uninstalled checkout of PAGI-Server:
-perl -I ~/Desktop/PAGI-Server/lib examples/15-embedded-ioasync/server.pl
-
-# Against an installed PAGI::Server:
 perl examples/15-embedded-ioasync/server.pl
+```
+
+From an uninstalled PAGI-Server checkout, add `-I /path/to/PAGI-Server/lib`:
+
+```bash
+perl -I /path/to/PAGI-Server/lib examples/15-embedded-ioasync/server.pl
 ```
 
 **2. Demo with curl:**

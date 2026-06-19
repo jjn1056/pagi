@@ -21,11 +21,13 @@ not assume any particular loop: it runs on whatever loop the server provides.
 **1. Start the server:**
 
 ```bash
-# Installed server:
 pagi-server --app examples/14-periodic-events/app.pl --port 5014
+```
 
-# Or run against an uninstalled checkout of PAGI-Server:
-perl -I ~/Desktop/PAGI-Server/lib ~/Desktop/PAGI-Server/bin/pagi-server \
+From an uninstalled PAGI-Server checkout, add `-I /path/to/PAGI-Server/lib`:
+
+```bash
+perl -I /path/to/PAGI-Server/lib /path/to/PAGI-Server/bin/pagi-server \
   --app examples/14-periodic-events/app.pl --port 5014
 ```
 

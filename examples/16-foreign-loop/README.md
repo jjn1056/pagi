@@ -55,9 +55,15 @@ on the EV-backed loop. Both server I/O and `Future::IO` are driven by EV.
 ## Running
 
 ```bash
-perl -I /path/to/PAGI-Server/lib server.pl
+perl examples/16-foreign-loop/server.pl
 # In another terminal:
 curl localhost:5016/
+```
+
+From an uninstalled PAGI-Server checkout, add `-I /path/to/PAGI-Server/lib`:
+
+```bash
+perl -I /path/to/PAGI-Server/lib examples/16-foreign-loop/server.pl
 ```
 
 ## See also
