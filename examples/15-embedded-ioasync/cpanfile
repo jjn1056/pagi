@@ -1,0 +1,6 @@
+# Run: perl server.pl   (then curl localhost:5015)
+requires 'perl', '5.018';
+requires 'IO::Async';
+requires 'Future::AsyncAwait';
+requires 'Future::IO';
+requires 'PAGI::Server';
