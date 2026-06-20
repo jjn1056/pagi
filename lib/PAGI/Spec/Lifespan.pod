@@ -115,8 +115,25 @@ C<state> (HashRef, optional) - A namespace where the application can persist val
 
 =back
 
-If an exception is raised when calling the application coderef with a
-C<lifespan.startup> message (or when a C<lifespan> scope is created), the server must cease sending further lifespan events for that worker. The server should log the error and may either exit or continue starting without lifespan support, depending on operator configuration. Applications that wish to prevent startup entirely should explicitly send C<lifespan.startup.failed> with a message.
+If the application B<declines> the lifespan protocol -- either by raising an
+exception when called with the C<lifespan> scope, or by returning without ever
+sending C<lifespan.startup.complete> or C<lifespan.startup.failed> -- the server
+B<must> treat lifespan as unsupported: it B<must> continue startup, B<must not>
+send further lifespan events for that worker, and B<should> log this at an
+informational level. A raised exception and a clean return are resolved
+identically, and the server B<must not> block startup indefinitely waiting for a
+lifespan signal.
+
+To prevent startup entirely, an application B<must> send
+C<lifespan.startup.failed> with a message; on receiving it the server B<must>
+abort startup (it B<must not> begin accepting connections) and B<should> log the
+message. This is the B<only> application signal that prevents the server from
+starting -- a clean return B<must not>.
+
+If the application raises an exception B<after> it has sent
+C<lifespan.startup.complete> -- for example, a long-lived background task started
+during lifespan crashes -- the server B<should> log the error at error level and
+B<may> continue running in a degraded state. It is not required to shut down.
 
 =head2 Lifespan State
 
