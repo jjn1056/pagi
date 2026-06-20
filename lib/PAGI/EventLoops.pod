@@ -446,33 +446,55 @@ above is exactly what such a layer implements for the single-process case.
 
 The hub above is the easy way, and it works -- but look at how a handler gets a
 tick. It reaches into C<< $scope->{state} >> for the hub and calls
-C<< $hub->next_tick >>. You can improve on that by multiplexing your source against
-the protocol stream right in the handler:
+C<< $hub->next_tick >>. You can multiplex your source against the protocol stream
+right in the handler instead. The one rule: B<never let the race cancel the live
+C<$receive>> -- cancelling it ends the connection (the next C<$receive-E<gt>()>
+yields a cancelled future). So race with a small helper that watches both sides
+and cancels neither:
 
-    # handle a client message OR a tick, whichever arrives first
-    my $event = await Future->wait_any($receive->(), $hub->next_tick);
+    # resolve as soon as either future is ready -- cancelling neither
+    async sub await_either {
+        my @futures = @_;
+        my $first = Future->new;
+        $_->on_ready(sub { $first->done unless $first->is_ready }) for @futures;
+        await $first;
+        return;
+    }
 
-(In a streaming I<loop>, take care: C<wait_any> cancels the loser, so racing a
-re-requested C<$receive> this way would cancel the live receive and end the
-stream. F<examples/14-periodic-events> shows the C</stream> handler doing it
-safely -- racing without cancelling.)
+    # a streaming handler: emit each tick, stop on disconnect
+    my $disconnect = $receive->();
+    while (1) {
+        my $tick_f = $hub->next_tick;
+        await await_either($disconnect, $tick_f);
+        last if $disconnect->is_ready;          # client gone
+        my $tick = $tick_f->get;
+        await $send->({ type => 'http.response.body',
+                        body => qq({"tick":$tick}\n), more => 1 });
+    }
+
+That is F<examples/14-periodic-events>'s C</stream> exactly.
 
 But the B<right> shape is to stop reaching for the source at all, and let your own
 events arrive the way protocol events already do: through C<$receive>. A small
-middleware owns the source and wraps the C<$receive> it hands to the app:
+middleware owns the source and wraps the C<$receive> it hands to the app -- racing
+with the same C<await_either>, so the long-lived receive is never cancelled:
 
     # in a middleware that started the ticker on lifespan startup
+    my $protocol_f;
     my $wrapped_receive = async sub {
-        my $protocol_f = $receive->();         # http.request, http.disconnect, ...
-        my $tick_f = $hub->next_tick           # your own source...
-            ->transform(done => sub { +{ type => 'tick', count => $_[0] } });  # ...shaped as an event
-        await Future->wait_any($protocol_f, $tick_f);
+        $protocol_f //= $receive->();           # one outstanding receive, kept alive
+        my $tick_f = $hub->next_tick;
+        await await_either($protocol_f, $tick_f);
+        if ($protocol_f->is_ready) {            # a protocol event arrived
+            my $event = $protocol_f->get;
+            undef $protocol_f;                  # consumed -- fetch a fresh one next time
+            return $event;
+        }
+        return { type => 'tick', count => $tick_f->get };   # a tick, shaped as an event
     };
     await $inner_app->($scope, $wrapped_receive, $send);
 
-(That C<wait_any> is simplified for the page: a real wrapper must not cancel the
-long-lived C<$receive> when a tick wins. The runnable F<examples/17-event-middleware>
-does the race safely and is verified end to end.)
+The runnable, verified version is F<examples/17-event-middleware>.
 
 Now the handler never sees the hub. It does exactly what it already does for every
 other event -- C<await $receive-E<gt>()> and switch on C<type>:
