@@ -80,6 +80,18 @@ curl -N localhost:5014/stream
 # => {"tick":5}      (a new line every ~2s, driven by the background source)
 ```
 
+## A note on workers
+
+This example assumes **single-worker mode** (the default). In multi-worker mode
+(`--workers N`), each worker is a separate process that runs the lifespan
+independently — so each worker gets its own `TickHub` and its own ticker. A
+streaming connection is pinned to one worker and stays internally consistent, but
+the tick `count` is per-worker, and two clients can land on different workers with
+different counts. There is no tick shared across workers: `$scope->{state}` is
+in-memory and per-process. To fan one event source out to every worker (or every
+host), publish through an external broker instead of an in-memory hub — e.g. the
+`PAGI::Middleware::Channels` Redis backend.
+
 ## Spec References
 
 - Writing your own event source – `PAGI::EventLoops` (the chain/tree-of-futures section)
