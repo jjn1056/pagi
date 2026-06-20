@@ -116,6 +116,17 @@ async sub handle_lifespan {
     await $send->({ type => 'lifespan.shutdown.complete' });
 }
 
+# Resolve as soon as ANY of the given futures is ready, leaving them all intact.
+# (Future->wait_any cancels the losers; here we must not cancel the long-lived
+# $receive future, so we just watch each with on_ready.)
+async sub await_either {
+    my @futures = @_;
+    my $first = Future->new;
+    $_->on_ready(sub { $first->done unless $first->is_ready }) for @futures;
+    await $first;
+    return;
+}
+
 async sub handle_http {
     my ($scope, $receive, $send) = @_;
 
@@ -139,10 +150,16 @@ async sub handle_http {
             headers => [ ['content-type', 'application/x-ndjson'] ],
         });
 
-        my $disconnect = $receive->();   # a Future that is ready on http.disconnect
+        # The in-handler multiplex (the "level 2" idiom): await the next tick OR a
+        # client disconnect, whichever comes first, so a disconnect stops the
+        # stream promptly. We race with await_either rather than Future->wait_any,
+        # which would cancel the disconnect future and end $receive.
+        my $disconnect = $receive->();
         while (1) {
-            my $tick = await $hub->next_tick;   # block until the next background tick
+            my $tick_f = $hub->next_tick;
+            await await_either($disconnect, $tick_f);
             last if $disconnect->is_ready;      # client gone -- stop the stream
+            my $tick = $tick_f->get;
             await $send->({
                 type => 'http.response.body',
                 body => qq({"tick":$tick}\n),
