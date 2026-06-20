@@ -36,6 +36,7 @@ and L<PAGI::Spec>.
 11. `13-flow-control` - conflation under backpressure via the `pagi.transport` handle
 12. `14-periodic-events` - an in-app periodic event source, the *easy way*: a long-poll endpoint, a long-running `/stream`, and two sources on one `Future::Selector` (handlers pull from a shared hub)
 13. `17-event-middleware` - the same source the *right way*: a middleware owns it and delivers its events through `$receive`, so the app just awaits events and switches on `type`
+14. `18-bidirectional-websocket` - full-duplex WebSocket: a receive-loop and an unsolicited server send-loop running concurrently (two branches joined with `wait_any`)
 
 ## Embedding & event loops
 
