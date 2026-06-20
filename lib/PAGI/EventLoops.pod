@@ -179,9 +179,10 @@ L<Future::IO::Impl::IOAsync>:
 
     # server.pl -- you own the loop, so you wire the backend
     use IO::Async::Loop;
-    use Future::IO::Impl::IOAsync;   # 1. select the backend FIRST,
-    use Async::Redis;                # 2. ...before any Future::IO-based library,
-    use PAGI::Server;                #    so all of them resolve on one loop
+    use Future::IO;                  # the loop-neutral interface your handler calls
+    use Future::IO::Impl::IOAsync;   # select its backend -- before any library below
+    use Async::Redis;                # a Future::IO-based library (now uses that backend)
+    use PAGI::Server;
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
