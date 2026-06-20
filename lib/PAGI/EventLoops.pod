@@ -173,13 +173,34 @@ and run it with nothing special:
 =item *
 
 B<You wire it yourself.> When you embed a server in your own program -- so you own
-the loop -- B<you> select the backend. For an IO::Async loop that is
+the loop -- B<you> select the backend, by loading a Future::IO implementation
+B<before> any Future::IO-based library. For an IO::Async loop that backend is
+L<Future::IO::Impl::IOAsync>:
 
-    use Future::IO::Impl::IOAsync;
+    # server.pl -- you own the loop, so you wire the backend
+    use IO::Async::Loop;
+    use Future::IO::Impl::IOAsync;   # 1. select the backend FIRST,
+    use Async::Redis;                # 2. ...before any Future::IO-based library,
+    use PAGI::Server;                #    so all of them resolve on one loop
 
-before loading any Future::IO-based libraries, so Future::IO resolves its
-primitives on the loop you are running. (A server built on a different reactor
-would have you load that reactor's Future::IO backend instead.)
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await Future::IO->sleep(1);  # resolves on the loop created below
+        ...
+    };
+
+    my $loop   = IO::Async::Loop->new;
+    my $server = PAGI::Server->new(app => $app, port => 5000);
+    $loop->add($server);
+    $server->listen->get;
+    $loop->run;
+
+The load order is the load-bearing part: C<Future::IO::Impl::IOAsync> must be in
+effect before anything calls Future::IO, or a library could bind a different (or
+missing) backend first. A server built on a different reactor would have you load
+that reactor's Future::IO backend instead. The embedding mechanics themselves --
+C<add>, C<listen>, C<run>, and sharing one loop with a host application -- are
+covered in Part 4.
 
 =back
 
