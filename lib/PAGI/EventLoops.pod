@@ -148,7 +148,22 @@ application. Two cases:
 
 B<Running under C<bin/pagi-server>:> the Future::IO-to-IO::Async backend is
 configured B<automatically> (when Future::IO is installed). You write
-Future::IO-based handlers and they tick; you do nothing.
+Future::IO-based handlers and they tick; you do nothing -- note there is no
+backend-wiring line in the app at all:
+
+    # app.pl
+    use Future::IO;                  # and NO `use Future::IO::Impl::IOAsync`
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        await Future::IO->sleep(1);  # ticks; the server already wired the backend
+        ...
+    };
+    $app;
+
+Run it with nothing special:
+
+    pagi-server --app app.pl --port 5000
 
 =item *
 
