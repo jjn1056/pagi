@@ -571,25 +571,26 @@ C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers encoded
 
 =back
 
-=head3 Incomplete Responses
+=head3 Application Produced No Response
 
-If an HTTP application's Future resolves while the response is incomplete, and the client is B<still connected>, the server MUST surface it rather than silently closing the connection as finished:
+If an HTTP application's Future resolves without any C<http.response.start> having
+been sent, and the client is B<still connected>, the client is left waiting for a
+response that will never come. As a last-resort B<backstop> the server produces a
+C<500> response, logs it, and closes the connection so the client is not left
+hanging.
 
-=over
+This is a backstop, B<not> a completion policy. Which terminal response to produce
+-- a C<404>, a C<204>, an error page, or anything else -- is the application's or
+framework's responsibility, and a well-behaved application always produces one
+before its Future resolves. PAGI exposes only the observer-independent fact that
+no response was started (see the C<pagi.connection> object and the application's
+own bookkeeping); it makes B<no> judgment about whether a response is "complete".
+An application that does not handle the C<http> scope may decline by raising an
+exception, which the server treats identically -- the same C<500> backstop.
 
-=item -
-
-If no C<http.response.start> was sent, the server MUST send a C<500> response and log the error.
-
-=item -
-
-If C<http.response.start> was sent but the body was not completed, the server MUST close the connection and log the error. A status line has already been transmitted, so a C<500> is no longer possible.
-
-=back
-
-If the client has B<already disconnected> (see L</Disconnect - C<receive> event>), neither case is an application error: the server MUST NOT synthesize a C<500> and MUST NOT log an error.
-
-This is the same handling the server applies when an application B<declines> the C<http> scope by raising an exception (see L<PAGI::Spec/Applications>): C<500> if no response was started, otherwise close. Declining by raising is the required idiom; a bare return that starts no response is treated identically but is a programming error rather than an intentional signal.
+If the client has B<already disconnected> (see L</Disconnect - C<receive> event>),
+this is not an application error: the server MUST NOT synthesize a C<500> and MUST
+NOT log an error.
 
 =head3 Server-Supplied Headers and Behaviors
 
