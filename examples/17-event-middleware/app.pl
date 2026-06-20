@@ -33,6 +33,17 @@ package TickHub {
 
 # The middleware: owns the source (rooted in lifespan) and folds its events into
 # the inner app's $receive.
+# Resolve as soon as ANY of the given futures is ready, cancelling none of them.
+# (Future->wait_any cancels the losers; cancelling the long-lived $receive would
+# end the connection, so we watch each with on_ready instead.)
+async sub await_either {
+    my @futures = @_;
+    my $first = Future->new;
+    $_->on_ready(sub { $first->done unless $first->is_ready }) for @futures;
+    await $first;
+    return;
+}
+
 sub with_ticks {
     my ($inner) = @_;
     my $hub;   # created on lifespan startup; one per worker, shared by all scopes
@@ -63,34 +74,21 @@ sub with_ticks {
         }
 
         # Every other scope: wrap $receive so a tick arrives as an event alongside
-        # the protocol events, then hand off to the inner app unchanged.
-        #
-        # Keep ONE outstanding protocol future across calls and race it with
-        # ->without_cancel: a losing tick must NOT cancel $receive, or the next
-        # call would await a dead future. When the protocol future actually fires,
-        # consume it and fetch a fresh one next time.
+        # the protocol events, then hand off to the inner app unchanged. Keep ONE
+        # outstanding protocol future across calls and race it with await_either,
+        # which never cancels the long-lived $receive (cancelling it would end the
+        # stream). When a protocol event fires, consume it and fetch a fresh one.
         my $protocol_f;
         my $wrapped_receive = async sub {
-            $protocol_f //= $receive->();    # one outstanding protocol future, kept alive
+            $protocol_f //= $receive->();    # one outstanding receive, kept alive
             my $tick_f = $hub->next_tick;    # the source's next event
-
-            # Race the two by signalling a fresh future from each side's on_ready.
-            # Using on_ready (rather than wait_any, which would cancel the loser)
-            # means we never cancel the long-lived protocol future -- cancelling
-            # $receive would end the stream -- nor derive a throwaway sequence
-            # future from it each round.
-            my $race = Future->new;
-            $protocol_f->on_ready(sub { $race->done('protocol') unless $race->is_ready });
-            $tick_f->on_ready(sub    { $race->done('tick')     unless $race->is_ready });
-            my $which = await $race;
-
-            if ($which eq 'protocol') {
-                $tick_f->cancel;             # the unused tick waiter -- safe to drop
+            await await_either($protocol_f, $tick_f);
+            if ($protocol_f->is_ready) {     # a protocol event arrived
                 my $event = $protocol_f->get;
                 undef $protocol_f;           # consumed -> fetch a fresh one next time
                 return $event;
             }
-            return { type => 'tick', count => $tick_f->get };   # shape the tick as an event
+            return { type => 'tick', count => $tick_f->get };   # a tick, shaped as an event
         };
         return await $inner->($scope, $wrapped_receive, $send);
     };
