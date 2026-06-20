@@ -22,6 +22,28 @@ this one.
 Examples assume you understand the core specification -- see L<PAGI::Tutorial>
 and L<PAGI::Spec>.
 
+## Testing the examples
+
+How you poke an example depends on its protocol:
+
+- **HTTP, streaming, SSE** -- `curl`. Add `-N` (unbuffered) for streaming and SSE
+  endpoints so you see events as they arrive: `curl -N localhost:5000/`.
+- **WebSocket** -- a WebSocket-aware client. `curl` and `socat` **can't** speak
+  it: WebSocket needs an HTTP `Upgrade` handshake and client-side frame masking
+  that raw TCP tools don't do. Use [`websocat`](https://github.com/vi/websocat):
+
+  ```bash
+  websocat ws://localhost:5018/
+  ```
+
+  ...or, with nothing to install, your browser's dev console:
+
+  ```js
+  let ws = new WebSocket('ws://localhost:5018/');
+  ws.onmessage = e => console.log(e.data);
+  ws.onopen    = () => ws.send('hello');
+  ```
+
 ## Example List
 1. `01-hello-http` - minimal HTTP response
 2. `02-streaming-response` - chunked body, trailers, disconnect handling
