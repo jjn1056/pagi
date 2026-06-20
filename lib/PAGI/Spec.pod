@@ -331,6 +331,8 @@ Applications B<must> await all C<$send> calls before their Future completes:
 
 Work scheduled via C<<< ->retain >>> or other fire-and-forget patterns will race with connection cleanup and produce undefined behavior. The server has no visibility into retained Futures - they exist outside the application's Future tree.
 
+If the application's Future resolves B<without> the scope's protocol having been completed -- for example, an C<http> application returns having sent no C<http.response.start> -- the server B<must not> treat the connection as cleanly finished. It surfaces the incompleteness in a protocol-specific way (for HTTP, see L<PAGI::Spec::Www/Incomplete Responses>; for the lifespan scope, see L<PAGI::Spec::Lifespan>). This is distinct from declining: an application that does not handle a scope at all B<must> raise an exception (see L</Applications>), not return -- a clean return that completes nothing is a programming error a server cannot distinguish from a bug.
+
 B<Use C<PAGI::Middleware::Lint>> during development to detect incomplete responses.
 
 =head3 Legacy Applications

@@ -571,6 +571,26 @@ C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers encoded
 
 =back
 
+=head3 Incomplete Responses
+
+If an HTTP application's Future resolves while the response is incomplete, and the client is B<still connected>, the server MUST surface it rather than silently closing the connection as finished:
+
+=over
+
+=item -
+
+If no C<http.response.start> was sent, the server MUST send a C<500> response and log the error.
+
+=item -
+
+If C<http.response.start> was sent but the body was not completed, the server MUST close the connection and log the error. A status line has already been transmitted, so a C<500> is no longer possible.
+
+=back
+
+If the client has B<already disconnected> (see L</Disconnect - C<receive> event>), neither case is an application error: the server MUST NOT synthesize a C<500> and MUST NOT log an error.
+
+This is the same handling the server applies when an application B<declines> the C<http> scope by raising an exception (see L<PAGI::Spec/Applications>): C<500> if no response was started, otherwise close. Declining by raising is the required idiom; a bare return that starts no response is treated identically but is a programming error rather than an intentional signal.
+
 =head3 Server-Supplied Headers and Behaviors
 
 Beyond the headers an application sets on C<http.response.start>, a conforming
