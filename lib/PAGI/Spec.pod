@@ -331,7 +331,18 @@ Applications B<must> await all C<$send> calls before their Future completes:
 
 Work scheduled via C<<< ->retain >>> or other fire-and-forget patterns will race with connection cleanup and produce undefined behavior. The server has no visibility into retained Futures - they exist outside the application's Future tree.
 
-If the application's Future resolves B<without> the scope's protocol having been completed -- for example, an C<http> application returns having sent no C<http.response.start> -- the server B<must not> treat the connection as cleanly finished. It surfaces the incompleteness in a protocol-specific way (for HTTP, see L<PAGI::Spec::Www/Incomplete Responses>; for the lifespan scope, see L<PAGI::Spec::Lifespan>). This is distinct from declining: an application that does not handle a scope at all B<must> raise an exception (see L</Applications>), not return -- a clean return that completes nothing is a programming error a server cannot distinguish from a bug.
+If an C<http> application's Future resolves without any C<http.response.start>
+having been sent -- and the client is still connected -- the client is left
+waiting for a response that will never arrive. As a last-resort B<backstop> the
+server produces a response (a C<500>) and logs it; see
+L<PAGI::Spec::Www/"Application Produced No Response">. This is a backstop, B<not> a
+completion policy: which terminal response to produce (a C<404>, a C<204>, an
+error page, ...) is the application's or framework's concern, and a well-behaved
+application always produces one before its Future resolves. PAGI exposes only the
+observer-independent fact that no response was started; it makes no judgment about
+whether a response is "complete". An application that does not handle a scope at
+all should decline by raising (see L</Applications>), which the server surfaces
+the same way. (For the lifespan scope, see L<PAGI::Spec::Lifespan>.)
 
 B<Use C<PAGI::Middleware::Lint>> during development to detect incomplete responses.
 
