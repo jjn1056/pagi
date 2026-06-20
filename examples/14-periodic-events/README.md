@@ -80,17 +80,26 @@ curl -N localhost:5014/stream
 # => {"tick":5}      (a new line every ~2s, driven by the background source)
 ```
 
-## A note on workers
+## Scope: one node, one process
 
-This example assumes **single-worker mode** (the default). In multi-worker mode
-(`--workers N`), each worker is a separate process that runs the lifespan
-independently — so each worker gets its own `TickHub` and its own ticker. A
-streaming connection is pinned to one worker and stays internally consistent, but
-the tick `count` is per-worker, and two clients can land on different workers with
-different counts. There is no tick shared across workers: `$scope->{state}` is
-in-memory and per-process. To fan one event source out to every worker (or every
-host), publish through an external broker instead of an in-memory hub — e.g. the
-`PAGI::Middleware::Channels` Redis backend.
+For teaching, this example deliberately runs as a **single process on a single
+node** — that is exactly what makes the in-memory `TickHub` a valid place for the
+source and the requests to rendezvous.
+
+The moment there is more than one process, an in-memory hub stops being shared:
+
+- **Multiple workers** (`--workers N`): each worker is a separate process running
+  its own lifespan, so each has its own `TickHub` and ticker. A streaming
+  connection is pinned to one worker and stays internally consistent, but the
+  `count` differs between workers and two clients can land on different ones.
+- **Multiple nodes** (e.g. scaling pods on Kubernetes): the same thing across
+  hosts — nothing in `$scope->{state}` crosses a process or a machine boundary.
+
+To fan one event source out to every worker and every node, publish through an
+external broker instead of an in-memory hub — e.g. `PAGI::Middleware::Channels`
+with its Redis backend, which keeps the same `subscribe`/`publish` shape this
+example hand-rolls. See `PAGI::EventLoops` for the in-process pattern and where
+the broker takes over.
 
 ## Spec References
 

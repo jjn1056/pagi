@@ -292,16 +292,18 @@ until the client disconnects -- a stream whose content is driven entirely by
 events B<outside> the request. This is the shape of live feeds, progress streams,
 and notification endpoints. F<examples/14-periodic-events> exposes it at C</stream>.
 
-One limit to keep in mind: this hub lives in C<< $scope->{state} >>, which is
-in-memory and B<per worker>. In multi-worker mode (C<pagi-server --workers N>)
-each worker runs its own lifespan, and so its own ticker and hub -- there is no
-tick shared across workers, and the C<count> differs between them. The example is
-written for single-worker mode.
+One limit to keep in mind, and the reason this is a I<teaching> example: the hub
+lives in C<< $scope->{state} >>, which is in-memory and B<per process>. It is
+shared only within one process on one node. Run more than one process -- multiple
+workers (C<pagi-server --workers N>), or multiple nodes (scaling pods on
+Kubernetes, say) -- and each gets its own ticker and hub: there is no tick shared
+across them, and the C<count> differs between them.
 
-For anything beyond a worked example -- or to share one source across workers and
-hosts -- reach for a real pub/sub layer backed by an external broker, such as the
-C<PAGI::Middleware::Channels> distribution, rather than hand-rolling an in-memory
-hub. The pattern above is what such a layer implements underneath.
+To fan one event source out across every worker and node, publish through an
+external broker instead of an in-memory hub -- such as the
+C<PAGI::Middleware::Channels> distribution with its Redis backend, which keeps the
+same C<subscribe>/C<publish> shape this example hand-rolls. The in-memory pattern
+above is exactly what such a layer implements for the single-process case.
 
 =head2 A lifetime footgun: orphaned futures
 
