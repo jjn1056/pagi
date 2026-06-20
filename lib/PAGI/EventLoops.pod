@@ -100,7 +100,7 @@ Future::IO backend> below).
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
-        return unless ($scope->{type} // '') eq 'http';
+        die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         # Non-blocking pause: the loop keeps serving other clients meanwhile.
         await Future::IO->sleep(1);
@@ -217,7 +217,7 @@ request -- nothing is blocked:
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
-        return unless ($scope->{type} // '') eq 'http';
+        die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
         if ($scope->{path} eq '/next') {
             my $f = Future->new;
