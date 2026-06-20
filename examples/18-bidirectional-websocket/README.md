@@ -44,7 +44,10 @@ perl -I /path/to/PAGI-Server/lib /path/to/PAGI-Server/bin/pagi-server \
   --app examples/18-bidirectional-websocket/app.pl --port 5018
 ```
 
-Connect with any WebSocket client — e.g. [`websocat`](https://github.com/vi/websocat):
+Connect with a **WebSocket-aware** client — not `curl` or `socat`, which can't
+speak WebSocket (it needs the HTTP `Upgrade` handshake and client-side frame
+masking that raw TCP tools don't do). With
+[`websocat`](https://github.com/vi/websocat):
 
 ```bash
 websocat ws://localhost:5018/
@@ -53,6 +56,14 @@ hello                       <- you type this
 you said: HELLO             <- echoed back, uppercased
 # server tick #2
 # server tick #3
+```
+
+Or straight from a browser console, nothing to install:
+
+```js
+let ws = new WebSocket('ws://localhost:5018/');
+ws.onmessage = e => console.log(e.data);   // server ticks + your echoes
+ws.onopen    = () => ws.send('hello');
 ```
 
 The `tick` lines keep arriving whether or not you type — that's the outgoing
