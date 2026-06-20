@@ -1158,7 +1158,9 @@ the full interface.
 
 =head2 2.7 Lifespan Protocol (Application Lifecycle)
 
-The lifespan protocol allows your application to initialize resources on startup and clean them up on shutdown. The key feature is C<$scope-E<gt>{state}> - a hash that persists across all requests within a worker process.
+The lifespan protocol allows your application to initialize resources on startup and clean them up on shutdown. The key feature is C<$scope-E<gt>{state}> - a hash for sharing resources (database pools, caches) from startup with every request in a worker process.
+
+Each request scope receives a B<shallow copy> of this hash: the I<values> you store -- a database pool, a cache handle -- are shared by reference with every request, but the top-level keys are private to each copy. So store your shared resources B<once> at startup and use them through their references; do not expect a top-level key you assign B<in a request> (or reassign in the lifespan once requests are running) to be seen elsewhere. See L<PAGI::Spec::Lifespan/Lifespan State>.
 
 B<Important:> In worker mode (C<--workers N>), each worker runs lifespan independently after forking. This means each worker initializes its own database connections, cache handles, etc. This is actually good - most database connections can't be shared across forks anyway.
 
@@ -1171,7 +1173,7 @@ B<Important:> In worker mode (C<--workers N>), each worker runs lifespan indepen
 
       # Handle lifespan events (startup then shutdown - a fixed sequence)
       if ($scope->{type} eq 'lifespan') {
-          my $state = $scope->{state};  # Shared with all requests in this worker
+          my $state = $scope->{state};  # store resources here; shared by reference with every request
 
           # Wait for startup event
           my $event = await $receive->();
@@ -1210,7 +1212,7 @@ B<Important:> In worker mode (C<--workers N>), each worker runs lifespan indepen
 
       # Handle HTTP requests
       if ($scope->{type} eq 'http') {
-          my $state = $scope->{state};  # Same hash from lifespan!
+          my $state = $scope->{state};  # shallow copy of lifespan state; $db comes through by reference
           my $db = $state->{db};
 
           my $data = $db->selectrow_hashref('SELECT * FROM users LIMIT 1');
