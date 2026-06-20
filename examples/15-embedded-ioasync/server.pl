@@ -8,7 +8,7 @@ use PAGI::Server;
 
 my $app = async sub {
     my ($scope, $receive, $send) = @_;
-    return unless ($scope->{type} // '') eq 'http';
+    die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
     await $send->({
         type    => 'http.response.start',
         status  => 200,

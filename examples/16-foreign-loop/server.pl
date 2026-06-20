@@ -12,7 +12,7 @@ use PAGI::Server;
 
 my $app = async sub {
     my ($scope, $receive, $send) = @_;
-    return unless ($scope->{type} // '') eq 'http';
+    die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
     # Exercise Future::IO under the foreign loop: if this resolves, Future::IO
     # is ticking on the EV loop. If the request hangs here, it is not.
     await Future::IO->sleep(1);

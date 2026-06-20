@@ -34,9 +34,10 @@ $TICKER->on_fail(sub { warn "periodic source failed: $_[0]\n" });
 my $app = async sub {
     my ($scope, $receive, $send) = @_;
 
-    # Only handle HTTP. Other scopes (e.g. lifespan) reach the app too; decline
-    # them rather than sending an HTTP response into the wrong protocol.
-    return unless ($scope->{type} // '') eq 'http';
+    # Decline any non-HTTP scope (e.g. lifespan) by raising -- a PAGI app signals
+    # "I don't handle this scope" with an exception, not a bare return. The server
+    # treats a raise on the lifespan scope as "lifespan unsupported" and continues.
+    die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
     if ($scope->{path} eq '/next') {
         # "Listen" for the next event: await a Future the source resolves.
