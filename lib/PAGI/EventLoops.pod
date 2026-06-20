@@ -12,6 +12,16 @@ not assume IO::Async, or any loop, is already set up>. L<PAGI::Server> is the
 I<reference> implementation, not I<the> implementation; other servers are
 expected, and your app should run unchanged on any of them.
 
+That the protocol B<names no event loop> is a deliberate stance, not an
+oversight. Perl's event-loop landscape is genuinely fragmented -- L<IO::Async>,
+L<AnyEvent>, L<POE>, L<Mojo::IOLoop>, and others, each with its own reactor and
+ecosystem, none of them I<the> standard. PAGI does not try to end that by
+crowning a winner, and it does not add yet another loop of its own. It
+B<embraces> the fragmentation instead: because the contract is just Futures and
+C<await>, which name no loop, an application composes against whichever reactor
+happens to be running, and the choice of loop is pushed out to the server and its
+deployment -- where it belongs.
+
 This document has four parts, meant to be read in order:
 
 =over 4
