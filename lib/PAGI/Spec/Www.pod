@@ -361,7 +361,7 @@ C<server> (ArrayRef[String, Optional[Int]], optional) -- C<[host, port]> or C<[p
 
 =item -
 
-C<state> (HashRef, optional) -- State namespace from lifespan
+C<state> (HashRef, optional) -- A shallow copy of the lifespan C<state> namespace. Top-level keys are private to this request; values (object references) are shared. See L<PAGI::Spec::Lifespan/Lifespan State> for how to share mutable data safely.
 
 =item -
 

@@ -531,7 +531,13 @@ C<< $scope->{state} >>. This complete app handles both scope types:
 
 Not every server or run drives lifespan, so an app should still work when the
 startup event never arrives (hence the C<// {}> and C<// 'Hello'> fallbacks).
-See L<PAGI::Spec::Lifespan>.
+
+Each request gets a B<shallow copy> of C<state>, so this read-only pattern -- set
+a value at startup, read it in requests -- is exactly what it is built for. To
+share something B<mutable>, store a single object or container at startup and
+mutate it through that shared reference; never reassign a top-level C<state> key
+from a request, which changes only that request's copy. See
+L<PAGI::Spec::Lifespan/Lifespan State>.
 
 =head1 SERVER EXTENSIONS
 

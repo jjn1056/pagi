@@ -24,13 +24,27 @@ assume any particular loop.
 ## Routes
 
 - `GET /` – returns the current tick `count` immediately.
-- `GET /next` – *listens* for the next tick (long-poll). It pushes a fresh
-  `Future` onto the waiter list and awaits it; the background source resolves
-  that Future on the next tick. The await is non-blocking, so other requests are
-  served while this one waits.
+- `GET /next` – *listens* for the next tick (long-poll): it calls
+  `$hub->next_tick` to get a `Future` the background source resolves on the next
+  tick, and awaits it. Non-blocking, so other requests are served while this one
+  waits.
+- `GET /stream` – a **long-running stream**: it holds the connection open and
+  emits one NDJSON line (`{"tick":N}`) every time the background source ticks,
+  until the client disconnects. The handler produces nothing on its own — it just
+  relays events from a source *outside* the request code. This is the pattern for
+  streaming apps (live feeds, progress, notifications) that react to events
+  happening elsewhere.
 
-State (`count`, the waiter list) lives in `$scope->{state}`, which the lifespan
-handler seeds and every request scope can read.
+## Sharing state with the background source
+
+The source and the request handlers rendezvous through a small **hub object**
+stored once in `$scope->{state}` at startup. This is deliberate. Each request
+scope gets a **shallow copy** of the lifespan `state`: the top-level keys are
+private to that copy, but the *values* (object references) are shared. So we
+store one hub and reach it through that shared reference — we never *replace* a
+top-level `state` key (e.g. `$state->{count}++` in a request would change only
+that request's copy and silently desync the rest). The hub encapsulates the
+rule: it owns its waiter list and only ever mutates it in place.
 
 ## Quick Start
 
@@ -58,6 +72,12 @@ time curl -s localhost:5014/next ; echo
 
 curl -s localhost:5014/ ; echo
 # => {"count":2,...}   (count advanced while you waited)
+
+# Watch the live stream -- one line per tick, until you Ctrl-C:
+curl -N localhost:5014/stream
+# => {"tick":3}
+# => {"tick":4}
+# => {"tick":5}      (a new line every ~2s, driven by the background source)
 ```
 
 ## Spec References

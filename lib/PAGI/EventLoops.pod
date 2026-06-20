@@ -205,16 +205,42 @@ A worked example: a ticker that fires every couple of seconds, plus a long-poll
 endpoint that lets a client wait for the next tick. The runnable version is
 F<examples/14-periodic-events>; the essentials follow.
 
+The source and the request handlers must rendezvous: the source produces ticks,
+the handlers wait for them. Share that rendezvous as a small B<object> stored in
+C<< $scope->{state} >>. This matters because each request scope receives a
+B<shallow copy> of the lifespan state -- the I<values> (object references) are
+shared, but the top-level keys are private to each copy. So store one object and
+reach it through that shared reference; never reassign a top-level C<state> key
+and expect other scopes to see it (see L<PAGI::Spec::Lifespan/Lifespan State>).
+The hub owns its waiter list and only ever mutates it in place:
+
+    package TickHub {
+        sub new       { bless { count => 0, waiters => [] }, shift }
+        sub count     { $_[0]{count} }
+        sub next_tick {                          # subscribe: a Future for the next tick
+            my $self = shift;
+            push @{ $self->{waiters} }, my $f = Future->new;
+            return $f;
+        }
+        sub publish {                            # advance, then wake everyone waiting
+            my $self = shift;
+            $self->{count}++;
+            # splice drains the list IN PLACE (never reassigns the slot); iterating
+            # the drained copy means a subscriber that re-subscribes synchronously
+            # cannot grow the list we are walking.
+            $_->done($self->{count}) for splice @{ $self->{waiters} };
+        }
+    }
+
 Start the source in the lifespan handler and hold it in a L<Future::Selector> -- a
 container that keeps a set of pending futures alive and propagates their failures.
 Because the selector lives in the lifespan handler's frame, and the server holds
 that handler, the source is retained for the app's lifetime with B<no file-scoped
-variables>. Shared state lives in C<< $scope->{state} >>, which every request
-scope can read:
+variables>:
 
     async sub handle_lifespan {
         my ($scope, $receive, $send) = @_;
-        my $state = $scope->{state} //= { count => 0, waiters => [] };
+        my $hub = ($scope->{state} //= {})->{ticks} = TickHub->new;   # stored once
 
         while (1) { last if (await $receive->())->{type} eq 'lifespan.startup' }
         await $send->({ type => 'lifespan.startup.complete' });
@@ -222,10 +248,7 @@ scope can read:
         my $selector = Future::Selector->new;
         $selector->add(data => 'ticker', gen => async sub {
             await Future::IO->sleep(2);          # a Future::IO timer names no loop
-            $state->{count}++;
-            my $waiters = $state->{waiters};
-            $state->{waiters} = [];
-            $_->done($state->{count}) for @$waiters;
+            $hub->publish;
             return;
         });
 
@@ -240,21 +263,20 @@ scope can read:
         await $send->({ type => 'lifespan.shutdown.complete' });
     }
 
-The HTTP handler "listens" for the next tick by creating a Future, registering it,
-and awaiting it. While it waits, the loop serves every other request:
+The HTTP handler "listens" for the next tick by subscribing to the hub and
+awaiting the Future it returns. While it waits, the loop serves every other
+request:
 
     async sub handle_http {
         my ($scope, $receive, $send) = @_;
-        my $state = $scope->{state};
+        my $hub = $scope->{state}{ticks};
         # ... drain the request body ...
 
         if (($scope->{path} // '/') eq '/next') {
-            my $f = Future->new;
-            push @{ $state->{waiters} }, $f;
-            await reply($send, 200, { tick => await $f });    # wakes on the next tick
+            await reply($send, 200, { tick => await $hub->next_tick });   # wakes on the next tick
         }
         else {
-            await reply($send, 200, { count => $state->{count} });
+            await reply($send, 200, { count => $hub->count });
         }
     }
 
@@ -262,6 +284,17 @@ That is the whole pattern: a source on a branch of the tree resolving Futures, a
 a handler that awaits them. It composes with C<$receive> through ordinary Future
 combinators -- C<Future-E<gt>wait_any($receive-E<gt>(), $my_event)> waits on a
 client message or your own event, whichever arrives first.
+
+The same hub also powers a B<long-running stream>. Instead of awaiting one tick
+and replying, a handler can hold the connection open and, in a loop, await
+C<< $hub->next_tick >> and emit each one as a response-body chunk (C<more =E<gt> 1>)
+until the client disconnects -- a stream whose content is driven entirely by
+events B<outside> the request. This is the shape of live feeds, progress streams,
+and notification endpoints. F<examples/14-periodic-events> exposes it at C</stream>.
+
+For anything beyond a worked example, reach for a real pub/sub layer -- such as
+the C<PAGI::Middleware::Channels> distribution -- rather than hand-rolling the hub.
+The pattern above is what such a layer implements underneath.
 
 =head2 A lifetime footgun: orphaned futures
 
