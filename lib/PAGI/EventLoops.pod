@@ -420,9 +420,7 @@ request:
     }
 
 That is the whole pattern: a source on a branch of the tree resolving Futures, and
-a handler that awaits them. It composes with C<$receive> through ordinary Future
-combinators -- C<Future-E<gt>wait_any($receive-E<gt>(), $my_event)> waits on a
-client message or your own event, whichever arrives first.
+a handler that awaits them.
 
 The same hub also powers a B<long-running stream>. Instead of awaiting one tick
 and replying, a handler can hold the connection open and, in a loop, await
@@ -443,6 +441,85 @@ external broker instead of an in-memory hub -- such as the
 C<PAGI::Middleware::Channels> distribution with its Redis backend, which keeps the
 same C<subscribe>/C<publish> shape this example hand-rolls. The in-memory pattern
 above is exactly what such a layer implements for the single-process case.
+
+=head2 The easy way, and the right way: deliver events through C<$receive>
+
+The hub above is the easy way, and it works -- but look at how a handler gets a
+tick. It reaches into C<< $scope->{state} >> for the hub and calls
+C<< $hub->next_tick >>. You can improve on that by multiplexing your source against
+the protocol stream right in the handler:
+
+    # handle a client message OR a tick, whichever arrives first
+    my $event = await Future->wait_any($receive->(), $hub->next_tick);
+
+But the B<right> shape is to stop reaching for the source at all, and let your own
+events arrive the way protocol events already do: through C<$receive>. A small
+middleware owns the source and wraps the C<$receive> it hands to the app:
+
+    # in a middleware that started the ticker on lifespan startup
+    my $wrapped_receive = async sub {
+        my $protocol_f = $receive->();         # http.request, http.disconnect, ...
+        my $tick_f = $hub->next_tick           # your own source...
+            ->transform(done => sub { +{ type => 'tick', count => $_[0] } });  # ...shaped as an event
+        await Future->wait_any($protocol_f, $tick_f);
+    };
+    await $inner_app->($scope, $wrapped_receive, $send);
+
+Now the handler never sees the hub. It does exactly what it already does for every
+other event -- C<await $receive-E<gt>()> and switch on C<type>:
+
+    my $event = await $receive->();
+    if    ($event->{type} eq 'http.request') { ... }
+    elsif ($event->{type} eq 'tick')         { ... }   # your event, arriving like any other
+
+That indirection earns its keep. Here is B<why it is the right design>, not merely
+a tidier one:
+
+=over 4
+
+=item *
+
+B<It composes -- this is the whole reason.> Because your events ride I<in the
+C<$receive> stream> as ordinary typed events, every other middleware in the stack
+can act on them: log them, rate-limit them, authorize them, transform them, drop
+them, or fold in still more events -- the I<same> wrapping it already does to
+protocol events. A hub in C<state> is a B<side-channel>: it routes around the
+middleware pipeline, so nothing downstream can see it or compose with it. Events
+on C<$receive> are first-class members of that pipeline; method calls on a
+state-stashed object are invisible to it. That is the difference between an event
+source the whole ecosystem can build on and one only its author can use.
+
+=item *
+
+B<The handler is decoupled from the source.> It depends only on the event contract
+-- a C<type> and some fields -- never on a concrete hub. Replace the source (an
+in-memory ticker today, a Redis channel tomorrow) and not one line of the handler
+changes. With C<< $hub->next_tick >> wired into the handler, that same swap is a
+rewrite.
+
+=item *
+
+B<One model, not two.> Your events and the server's events are awaited the same
+way and dispatched the same way. There is no second API to learn, no shared-state
+convention to remember, and no decision about I<when> to poll the hub -- the
+handler is always just awaiting the next event.
+
+=item *
+
+B<The source's lifetime lives in one place.> The middleware starts the ticker on
+C<lifespan> startup and tears it down on shutdown, rooted in its own frame (the
+same lifespan-rooting the example uses, moved out of the app). The handler carries
+none of that bookkeeping.
+
+=back
+
+This is not hypothetical: it is precisely what L<PAGI::Middleware::Channels> does.
+Its C<$receive> wrapper is the C<wait_any($protocol_f, $channel_f)> shape shown
+above, with the source being a channel backend -- in-memory, or the Redis backend
+from the scaling note when the events must cross processes. So writing your event
+source to B<deliver through C<$receive>> is what lets it drop into that ecosystem:
+the very middleware that fans events across workers can itself be wrapped, in turn,
+by every other middleware in your stack.
 
 =head2 A lifetime footgun: orphaned futures
 
