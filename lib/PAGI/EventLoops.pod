@@ -223,6 +223,38 @@ natural parent for app-lifetime work is the B<lifespan scope>: the lifespan
 handler is invoked once and stays suspended for the whole life of the app, so the
 server holds it -- and anything it holds -- until shutdown.
 
+=head2 Composing branches: from one future to many
+
+A handler usually awaits one thing at a time, but a branch of the tree often needs
+several at once. Three tools cover the range:
+
+=over 4
+
+=item *
+
+B<One future:> C<await $f> -- a single timer, request, or query (the Future::IO
+examples above).
+
+=item *
+
+B<A fixed set:> the Future combinators. C<Future-E<gt>wait_any(@f)> resolves on the
+first to finish and cancels the rest; C<Future-E<gt>needs_all(@f)> waits for all
+and fails if any one does. Reach for these when you know the futures up front.
+
+=item *
+
+B<An ongoing set:> L<Future::Selector>. It holds a set of B<generators>, each
+producing a future; when one completes, the selector calls that generator again
+for the next. C<< $selector->run >> drives the whole set and B<fails if any source
+fails>, so a crashing background source surfaces instead of vanishing silently.
+Reach for it when you have one or more long-lived sources that keep producing.
+
+=back
+
+The periodic source below uses all three: Future::IO timers (one future each), a
+Future::Selector to keep two sources regenerating and to propagate their failures,
+and C<wait_any> to race the running selector against shutdown.
+
 =head2 A periodic source, rooted in lifespan
 
 A worked example: a ticker that fires every couple of seconds, plus a long-poll
@@ -256,10 +288,10 @@ The hub owns its waiter list and only ever mutates it in place:
         }
     }
 
-Start the source in the lifespan handler and hold it in a L<Future::Selector> -- a
-container that keeps a set of pending futures alive and propagates their failures.
-Because the selector lives in the lifespan handler's frame, and the server holds
-that handler, the source is retained for the app's lifetime with B<no file-scoped
+Start the sources in the lifespan handler and hold them in a L<Future::Selector>.
+Two share one selector here -- a fast C<ticker> and a slower C<heartbeat>. Because
+the selector lives in the lifespan handler's frame, and the server holds that
+handler, the sources are retained for the app's lifetime with B<no file-scoped
 variables>:
 
     async sub handle_lifespan {
@@ -273,6 +305,11 @@ variables>:
         $selector->add(data => 'ticker', gen => async sub {
             await Future::IO->sleep(2);          # a Future::IO timer names no loop
             $hub->publish;
+            return;
+        });
+        $selector->add(data => 'heartbeat', gen => async sub {
+            await Future::IO->sleep(5);          # a second, independent source
+            $hub->beat;
             return;
         });
 
@@ -300,7 +337,7 @@ request:
             await reply($send, 200, { tick => await $hub->next_tick });   # wakes on the next tick
         }
         else {
-            await reply($send, 200, { count => $hub->count });
+            await reply($send, 200, { count => $hub->count, beats => $hub->beats });
         }
     }
 
