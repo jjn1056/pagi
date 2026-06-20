@@ -138,18 +138,23 @@ Write your handlers this way unless you have a specific reason not to.
 
 =head2 Who wires the Future::IO backend
 
-L<Future::IO> is loop-neutral until something tells it which backend to use, and
-choosing that backend is the job of the B<server or the deployer>, not the
-application. Two cases:
+L<Future::IO> is loop-neutral until something selects a backend for it, and that
+selection is the job of the B<server or the deployer>, not the application. Your
+handler just calls C<< Future::IO->sleep >> (and friends) and stays
+backend-agnostic; something underneath it must have pointed Future::IO at the loop
+that is actually running, B<before> your handlers load.
+
+I<How> that happens is server-specific. The two patterns below use the reference
+server, L<PAGI::Server>, as the example -- another PAGI server would wire its own
+loop's backend its own way, and your application would not change:
 
 =over 4
 
 =item *
 
-B<Running under C<bin/pagi-server>:> the Future::IO-to-IO::Async backend is
-configured B<automatically> (when Future::IO is installed). You write
-Future::IO-based handlers and they tick; you do nothing -- note there is no
-backend-wiring line in the app at all:
+B<The server wires it for you.> Under C<bin/pagi-server> the
+Future::IO-to-IO::Async backend is configured B<automatically> (when Future::IO is
+installed), before your app loads -- so the app carries no wiring line at all:
 
     # app.pl
     use Future::IO;                  # and NO `use Future::IO::Impl::IOAsync`
@@ -161,23 +166,27 @@ backend-wiring line in the app at all:
     };
     $app;
 
-Run it with nothing special:
+and run it with nothing special:
 
     pagi-server --app app.pl --port 5000
 
 =item *
 
-B<Embedding L<PAGI::Server> yourself:> B<you> must wire it. Add
+B<You wire it yourself.> When you embed a server in your own program -- so you own
+the loop -- B<you> select the backend. For an IO::Async loop that is
 
     use Future::IO::Impl::IOAsync;
 
-before loading any Future::IO-based libraries, so that Future::IO resolves its
-primitives on the IO::Async loop your embedded server is running.
+before loading any Future::IO-based libraries, so Future::IO resolves its
+primitives on the loop you are running. (A server built on a different reactor
+would have you load that reactor's Future::IO backend instead.)
 
 =back
 
-This is documented in full on the server side; rather than repeat it here, see
-L<PAGI::Server/LOOP INTEROPERABILITY>.
+The principle is the constant -- a backend must be wired before your handlers run.
+The patterns are only where that wiring ends up: inside the server's startup, or
+in your own embedding script. For the L<PAGI::Server> specifics, see
+L<PAGI::Server/LOOP INTEROPERABILITY> and Part 4 below.
 
 =head2 The exception: using IO::Async directly
 
