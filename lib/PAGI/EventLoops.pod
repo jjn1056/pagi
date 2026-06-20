@@ -6,28 +6,41 @@ PAGI::EventLoops - how PAGI stays loop-agnostic, how not to block, and how a ser
 
 =head1 DESCRIPTION
 
-The protocol names no event loop. A PAGI application is C<async sub ($scope,
-$receive, $send)> -- Futures and async/await, nothing more. C<await> is
-loop-neutral: it suspends on a Future, and I<which loop resumes it> depends only
-on what created the leaf Future you awaited. So the loop never enters through
-your control flow -- only through the I/O primitives you call.
+A PAGI application is C<async sub ($scope, $receive, $send)> -- Futures and
+async/await, nothing more. The protocol names no event loop, and your app B<must
+not assume IO::Async, or any loop, is already set up>. L<PAGI::Server> is the
+I<reference> implementation, not I<the> implementation; other servers are
+expected, and your app should run unchanged on any of them.
 
-Compose those awaits and the whole application becomes a B<tree of futures> --
-chains where work is sequential, branches where it runs concurrently -- and the
-loop's only job is to turn the root. That picture is the through-line here, and it
-is what makes background work (part three) correct rather than a footgun.
+This document has four parts, meant to be read in order:
 
-A PAGI app B<must not assume IO::Async, or any loop, is already set up.>
-L<PAGI::Server> is the I<reference> implementation, not I<the> implementation;
-other servers are expected, and your app should run unchanged on any of them.
+=over 4
 
-This document has four parts. First, why PAGI is loop-agnostic at all. Second,
-how to do real work in a handler without blocking the loop. Third, how to write
-your own event sources (timers, background jobs, external triggers) as Futures.
-Fourth -- as reference-server specifics -- how L<PAGI::Server> binds to a loop,
-including embedding it in an application that owns the loop itself.
+=item 1.
 
-=head1 PAGI IS LOOP-AGNOSTIC
+B<Why PAGI is loop-agnostic> -- what the application contract does, and does not,
+say about the loop.
+
+=item 2.
+
+B<Not blocking the loop> -- how to do real work (I/O, timers, calls to other
+services) in a handler without stalling every other connection.
+
+=item 3.
+
+B<Writing your own event sources> -- timers, background jobs, and external
+triggers, modelled as Futures and rooted so they do not leak.
+
+=item 4.
+
+B<Binding a server to a loop> -- reference-server specifics: how L<PAGI::Server>
+attaches to its own loop, or embeds in an application that owns the loop.
+
+=back
+
+Parts 1 and 2 are what most applications need; parts 3 and 4 build on them.
+
+=head1 PART 1: WHY PAGI IS LOOP-AGNOSTIC
 
 Look at the application contract and notice what is I<not> there:
 
@@ -57,7 +70,7 @@ L<PAGI::Server> happens to be built on L<IO::Async>. That is an implementation
 choice of one reference server, not a requirement of the protocol. Write to the
 contract -- Futures and C<await> -- and you are portable by construction.
 
-=head1 NOT BLOCKING INSIDE YOUR APP
+=head1 PART 2: NOT BLOCKING THE LOOP
 
 Loop-agnostic does not mean loop-immune. There is exactly one rule that matters
 for performance: B<a handler must never block the loop>. A single-threaded event
@@ -121,18 +134,46 @@ backend> below), so it stays portable across servers and loops.
         });
     };
 
-Write your handlers this way unless you have a specific reason not to. The rest of
-this section is the exception, not the rule.
+Write your handlers this way unless you have a specific reason not to.
 
-=head2 Addendum: using IO::Async directly, if you accept the coupling
+=head2 Who wires the Future::IO backend
 
-If you are running on L<PAGI::Server> and you do not mind tying your handler to
-its loop, you can skip Future::IO and use L<IO::Async> directly -- its timers, and
-the whole C<Net::Async::*> family of client modules. The reference server I<is>
-IO::Async, so an IO::Async loop is always running, and a handler reaches it
-through the ordinary constructor: C<< IO::Async::Loop->new >> returns the
-already-running loop (a cached singleton), not a fresh one. So you add a client to
-the loop that is already turning and C<await> it:
+L<Future::IO> is loop-neutral until something tells it which backend to use, and
+choosing that backend is the job of the B<server or the deployer>, not the
+application. Two cases:
+
+=over 4
+
+=item *
+
+B<Running under C<bin/pagi-server>:> the Future::IO-to-IO::Async backend is
+configured B<automatically> (when Future::IO is installed). You write
+Future::IO-based handlers and they tick; you do nothing.
+
+=item *
+
+B<Embedding L<PAGI::Server> yourself:> B<you> must wire it. Add
+
+    use Future::IO::Impl::IOAsync;
+
+before loading any Future::IO-based libraries, so that Future::IO resolves its
+primitives on the IO::Async loop your embedded server is running.
+
+=back
+
+This is documented in full on the server side; rather than repeat it here, see
+L<PAGI::Server/LOOP INTEROPERABILITY>.
+
+=head2 The exception: using IO::Async directly
+
+Everything above keeps your handler portable. If instead you are running on
+L<PAGI::Server> and you do not mind tying the handler to its loop, you can skip
+Future::IO and use L<IO::Async> directly -- its timers, and the whole
+C<Net::Async::*> family of client modules. The reference server I<is> IO::Async,
+so an IO::Async loop is always running, and a handler reaches it through the
+ordinary constructor: C<< IO::Async::Loop->new >> returns the already-running loop
+(a cached singleton), not a fresh one. So you add a client to the loop that is
+already turning and C<await> it:
 
     use IO::Async::Loop;
     use Net::Async::HTTP;
@@ -169,35 +210,7 @@ the loop actually turning. What it cannot do is run where no IO::Async loop is i
 play at all: there is nothing there to schedule it. Future::IO has no such
 constraint, which is the whole reason it stays the default.
 
-=head2 Who wires the Future::IO backend
-
-L<Future::IO> is loop-neutral until something tells it which backend to use, and
-choosing that backend is the job of the B<server or the deployer>, not the
-application. Two cases:
-
-=over 4
-
-=item *
-
-B<Running under C<bin/pagi-server>:> the Future::IO-to-IO::Async backend is
-configured B<automatically> (when Future::IO is installed). You write
-Future::IO-based handlers and they tick; you do nothing.
-
-=item *
-
-B<Embedding L<PAGI::Server> yourself:> B<you> must wire it. Add
-
-    use Future::IO::Impl::IOAsync;
-
-before loading any Future::IO-based libraries, so that Future::IO resolves its
-primitives on the IO::Async loop your embedded server is running.
-
-=back
-
-This is documented in full on the server side; rather than repeat it here, see
-L<PAGI::Server/LOOP INTEROPERABILITY>.
-
-=head1 WRITING YOUR OWN EVENT SOURCE
+=head1 PART 3: WRITING YOUR OWN EVENT SOURCES
 
 The protocol gives you C<$receive> for client-driven events. But a handler often
 needs to wait on something the client did not send: a timer firing, a background
@@ -393,7 +406,7 @@ propagates its errors, and cancels it cleanly on shutdown.
 See also L<PAGI::Building> for using this pattern to build event-driven layers
 on PAGI.
 
-=head1 BINDING A SERVER TO AN EVENT LOOP
+=head1 PART 4: BINDING A SERVER TO A LOOP
 
 Everything above is protocol-level and server-neutral. This section is different:
 it is about L<PAGI::Server> specifically -- the reference server -- and how it
