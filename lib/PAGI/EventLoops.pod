@@ -91,15 +91,15 @@ holds the loop just as surely as a blocking read. Yield, offload, or chunk it.
 =back
 
 The cure is to use an asynchronous equivalent that returns a Future and to
-C<await> it. There are three tiers of how to get one, in order of portability.
+C<await> it.
 
-=head2 Tier 1: default to Future::IO
+=head2 Use Future::IO
 
-L<Future::IO> is the portable choice. It provides loop-neutral primitives --
-C<sleep>, socket reads and writes, and so on -- that return Futures without your
-code naming any loop. A handler written against Future::IO runs under any server
-whose deployment has wired a Future::IO backend (see L</Who wires the
-Future::IO backend> below).
+L<Future::IO> is what you want. It provides loop-neutral primitives -- C<sleep>,
+socket reads and writes, and so on -- that return Futures without your code naming
+any loop. A handler written against Future::IO runs under any server whose
+deployment has wired a Future::IO backend (see L</Who wires the Future::IO
+backend> below), so it stays portable across servers and loops.
 
     use Future::IO;
 
@@ -121,29 +121,53 @@ Future::IO backend> below).
         });
     };
 
-Prefer this tier for code you intend to be portable across servers.
+Write your handlers this way unless you have a specific reason not to. The rest of
+this section is the exception, not the rule.
 
-=head2 Tier 2: IO::Async-native, once you accept an IO::Async loop is running
+=head2 Addendum: using IO::Async directly, if you accept the coupling
 
-If you are content to require that an L<IO::Async> loop is the running loop, you
-can use IO::Async facilities directly -- timers (C<watch_time>), the
-C<Net::Async::*> client modules, and so on. Under L<PAGI::Server> this
-requirement is free: the reference server I<is> IO::Async, so an IO::Async loop
-is always running and IO::Async-native code just works.
+If you are running on L<PAGI::Server> and you do not mind tying your handler to
+its loop, you can skip Future::IO and use L<IO::Async> directly -- its timers, and
+the whole C<Net::Async::*> family of client modules. The reference server I<is>
+IO::Async, so an IO::Async loop is always running, and a handler reaches it
+through the ordinary constructor: C<< IO::Async::Loop->new >> returns the
+already-running loop (a cached singleton), not a fresh one. So you add a client to
+the loop that is already turning and C<await> it:
 
-This is convenient and idiomatic on PAGI::Server. The trade-off is that you have
-named a loop, so the portability of Tier 1 is gone.
+    use IO::Async::Loop;
+    use Net::Async::HTTP;
 
-=head2 Tier 3: the honest caveat
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
-IO::Async-native code is not strictly tied to PAGI::Server, but it is tied to
-I<an IO::Async loop being the running loop>. IO::Async ships adapter loops
-(C<IO::Async::Loop::EV>, C<IO::Async::Loop::Glib>, and others) that let an
-IO::Async loop drive a foreign reactor. So Tier-2 code can run on a non-IO::Async
-host B<only> when an IO::Async loop -- possibly an adapter -- is the loop that is
-actually turning. If a host runs a different reactor with no IO::Async loop in
-play, Tier-2 code has nothing to schedule it. Tier-1 (Future::IO) code does not
-have this problem, which is exactly why it is the default recommendation.
+        my $loop = IO::Async::Loop->new;   # the server's running loop, not a new one
+        my $http = Net::Async::HTTP->new;
+        $loop->add($http);
+
+        # Non-blocking: the loop serves other clients while this request is in flight.
+        my $res = await $http->GET('http://example.com/');
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [ ['content-type', 'text/plain'] ],
+        });
+        await $send->({ type => 'http.response.body', body => $res->content });
+    };
+
+The trade-off is the whole point: you have named a loop. The portability
+Future::IO gave you is gone -- this handler assumes an IO::Async loop is the one
+running.
+
+That assumption is softer than it first sounds, because B<IO::Async is itself
+loop-agnostic, after a fashion>. It ships adapter loops (C<IO::Async::Loop::EV>,
+C<IO::Async::Loop::Glib>, and others) that let an IO::Async loop drive a foreign
+reactor. So the handler above can still run on a non-IO::Async host -- B<as long
+as> an IO::Async loop (possibly an adapter sitting over the host's own reactor) is
+the loop actually turning. What it cannot do is run where no IO::Async loop is in
+play at all: there is nothing there to schedule it. Future::IO has no such
+constraint, which is the whole reason it stays the default.
 
 =head2 Who wires the Future::IO backend
 
