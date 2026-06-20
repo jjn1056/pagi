@@ -111,7 +111,7 @@ The C<worker_num> key of the C<pagi> hashref (accessed as C<< $scope->{pagi}{wor
 
 =item -
 
-C<state> (HashRef, optional) - A namespace where the application can persist values to be copied into subsequent request scopes. Servers omit this key if the feature is unsupported.
+C<state> (HashRef, optional) - A namespace where the application can persist values to be copied (as a shallow copy; see L</Lifespan State>) into subsequent request scopes. Servers omit this key if the feature is unsupported.
 
 =back
 
@@ -161,6 +161,32 @@ The namespace is controlled completely by the PAGI application; the server will 
 interact with it other than to copy it.
 Nonetheless, applications should be cooperative by properly naming their keys such that they
 will not collide with other frameworks or middleware.
+
+Because the copy is I<shallow>, take care how you share B<mutable> data:
+
+=over
+
+=item *
+
+The B<values> in C<state> (object references -- a database pool, a queue, a
+pub/sub hub) are shared. Every request scope sees the same object, so mutating
+it through that reference (calling a method, C<push>-ing onto an arrayref) is
+visible everywhere.
+
+=item *
+
+The B<top-level keys> are private to each copy. Assigning a top-level key in one
+scope -- C<< $scope->{state}{count}++ >> in a request, or
+C<< $state->{queue} = [] >> in the lifespan once requests are running -- changes
+only that scope's copy. Other scopes keep their own and silently desync.
+
+=back
+
+So to share mutable data, store a container or object B<once> at startup and
+mutate it B<through its reference>; never B<replace> a top-level C<state> key and
+expect other scopes to see it. This mirrors the database-connection example
+above: you store the pool once and use it everywhere -- you never reassign it
+per request.
 
 =head2 Startup - C<receive> event
 
