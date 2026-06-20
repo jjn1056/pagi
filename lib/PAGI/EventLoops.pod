@@ -114,6 +114,7 @@ any loop. A handler written against Future::IO runs under any server whose
 deployment has wired a Future::IO backend (see L</Who wires the Future::IO
 backend> below), so it stays portable across servers and loops.
 
+    use Future::AsyncAwait;
     use Future::IO;
 
     my $app = async sub {
@@ -157,6 +158,7 @@ Future::IO-to-IO::Async backend is configured B<automatically> (when Future::IO 
 installed), before your app loads -- so the app carries no wiring line at all:
 
     # app.pl
+    use Future::AsyncAwait;
     use Future::IO;                  # and NO `use Future::IO::Impl::IOAsync`
 
     my $app = async sub {
@@ -178,6 +180,7 @@ B<before> any Future::IO-based library. For an IO::Async loop that backend is
 L<Future::IO::Impl::IOAsync>:
 
     # server.pl -- you own the loop, so you wire the backend
+    use Future::AsyncAwait;
     use IO::Async::Loop;
     use Future::IO;                  # the loop-neutral interface your handler calls
     use Future::IO::Impl::IOAsync;   # select its backend -- before any library below
@@ -210,17 +213,22 @@ The patterns are only where that wiring ends up: inside the server's startup, or
 in your own embedding script. For the L<PAGI::Server> specifics, see
 L<PAGI::Server/LOOP INTEROPERABILITY> and Part 4 below.
 
-=head2 The exception: using IO::Async directly
+=head2 A pragmatic alternative: IO::Async directly
 
-Everything above keeps your handler portable. If instead you are running on
-L<PAGI::Server> and you do not mind tying the handler to its loop, you can skip
-Future::IO and use L<IO::Async> directly -- its timers, and the whole
-C<Net::Async::*> family of client modules. The reference server I<is> IO::Async,
-so an IO::Async loop is always running, and a handler reaches it through the
-ordinary constructor: C<< IO::Async::Loop->new >> returns the already-running loop
-(a cached singleton), not a fresh one. So you add a client to the loop that is
-already turning and C<await> it:
+Future::IO is the portable choice, but it is also the I<newer> one. Its ecosystem
+of backends and client libraries is still growing, whereas L<IO::Async> is mature
+and brings a deep, battle-tested catalogue of C<Net::Async::*> clients. So
+reaching for IO::Async directly -- its timers and those clients -- is a perfectly
+reasonable choice today, B<as long as you accept the trade-off>: the handler names
+a loop, and is no longer portable to a server that is not running IO::Async.
 
+On L<PAGI::Server> that loop is always there -- the reference server I<is>
+IO::Async -- and a handler reaches it through the ordinary constructor:
+C<< IO::Async::Loop->new >> returns the already-running loop (a cached singleton),
+not a fresh one. So you add a client to the loop that is already turning and
+C<await> it:
+
+    use Future::AsyncAwait;
     use IO::Async::Loop;
     use Net::Async::HTTP;
 
@@ -243,18 +251,19 @@ already turning and C<await> it:
         await $send->({ type => 'http.response.body', body => $res->content });
     };
 
-The trade-off is the whole point: you have named a loop. The portability
-Future::IO gave you is gone -- this handler assumes an IO::Async loop is the one
-running.
+And the coupling is gentler than "you named a loop" makes it sound, because
+B<IO::Async is itself a kind of super-loop>: it ships adapter loops
+(C<IO::Async::Loop::EV>, C<IO::Async::Loop::Glib>, and others) that let one
+IO::Async loop drive a foreign reactor. So this handler still runs on a
+non-IO::Async host -- B<as long as> an IO::Async loop (possibly an adapter sitting
+over that host's own reactor) is the one actually turning. What it cannot do is
+run where no IO::Async loop is in play at all.
 
-That assumption is softer than it first sounds, because B<IO::Async is itself
-loop-agnostic, after a fashion>. It ships adapter loops (C<IO::Async::Loop::EV>,
-C<IO::Async::Loop::Glib>, and others) that let an IO::Async loop drive a foreign
-reactor. So the handler above can still run on a non-IO::Async host -- B<as long
-as> an IO::Async loop (possibly an adapter sitting over the host's own reactor) is
-the loop actually turning. What it cannot do is run where no IO::Async loop is in
-play at all: there is nothing there to schedule it. Future::IO has no such
-constraint, which is the whole reason it stays the default.
+The preference still stands: where you can, write against Future::IO, and consider
+contributing a backend or a client to it -- that is how the younger ecosystem
+catches up. But using IO::Async directly, when its clients save you real work
+today, is a reasonable call rather than a mistake; just make it knowing which loop
+you have named.
 
 =head1 PART 3: WRITING YOUR OWN EVENT SOURCES
 
