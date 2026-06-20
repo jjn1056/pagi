@@ -1,0 +1,6 @@
+# Run this example with the reference server:
+#   pagi-server app.pl --port 5018
+requires 'perl', '5.018';
+requires 'Future::AsyncAwait';
+requires 'Future::IO';
+requires 'PAGI::Server';   # the reference server (provides pagi-server)
