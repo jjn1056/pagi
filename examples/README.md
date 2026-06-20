@@ -34,7 +34,8 @@ and L<PAGI::Spec>.
 9. `11-job-runner` - background job processing (uses `IO::Async` directly for timers/subprocesses)
 10. `12-utf8` - UTF-8 handling demonstration
 11. `13-flow-control` - conflation under backpressure via the `pagi.transport` handle
-12. `14-periodic-events` - an in-app periodic event source (Future::IO timer) with a long-poll listener
+12. `14-periodic-events` - an in-app periodic event source, the *easy way*: a long-poll endpoint, a long-running `/stream`, and two sources on one `Future::Selector` (handlers pull from a shared hub)
+13. `17-event-middleware` - the same source the *right way*: a middleware owns it and delivers its events through `$receive`, so the app just awaits events and switches on `type`
 
 ## Embedding & event loops
 

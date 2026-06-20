@@ -452,6 +452,11 @@ the protocol stream right in the handler:
     # handle a client message OR a tick, whichever arrives first
     my $event = await Future->wait_any($receive->(), $hub->next_tick);
 
+(In a streaming I<loop>, take care: C<wait_any> cancels the loser, so racing a
+re-requested C<$receive> this way would cancel the live receive and end the
+stream. F<examples/14-periodic-events> shows the C</stream> handler doing it
+safely -- racing without cancelling.)
+
 But the B<right> shape is to stop reaching for the source at all, and let your own
 events arrive the way protocol events already do: through C<$receive>. A small
 middleware owns the source and wraps the C<$receive> it hands to the app:
@@ -464,6 +469,10 @@ middleware owns the source and wraps the C<$receive> it hands to the app:
         await Future->wait_any($protocol_f, $tick_f);
     };
     await $inner_app->($scope, $wrapped_receive, $send);
+
+(That C<wait_any> is simplified for the page: a real wrapper must not cancel the
+long-lived C<$receive> when a tick wins. The runnable F<examples/17-event-middleware>
+does the race safely and is verified end to end.)
 
 Now the handler never sees the hub. It does exactly what it already does for every
 other event -- C<await $receive-E<gt>()> and switch on C<type>:
