@@ -12,6 +12,11 @@ loop-neutral: it suspends on a Future, and I<which loop resumes it> depends only
 on what created the leaf Future you awaited. So the loop never enters through
 your control flow -- only through the I/O primitives you call.
 
+Compose those awaits and the whole application becomes a B<tree of futures> --
+chains where work is sequential, branches where it runs concurrently -- and the
+loop's only job is to turn the root. That picture is the through-line here, and it
+is what makes background work (part three) correct rather than a footgun.
+
 A PAGI app B<must not assume IO::Async, or any loop, is already set up.>
 L<PAGI::Server> is the I<reference> implementation, not I<the> implementation;
 other servers are expected, and your app should run unchanged on any of them.
@@ -179,82 +184,108 @@ server cooperation -- the source is just ordinary Future plumbing inside your
 program. (See L<PAGI::Spec::Extensions/"Defining your own events"> for where
 this sits in the extension model.)
 
-A worked example: a background ticker that fires every couple of seconds, plus a
-long-poll endpoint that lets a client wait for the next tick. The runnable
-version is F<examples/14-periodic-events>; the teaching essentials follow.
+=head2 An app is a tree of futures
 
-First, keep the source out of C<main::> and give it its own package. The reason
-is not cosmetic -- see the lifetime note below.
+Think of an event-driven application as a single B<tree of futures>. A linear
+C<await> sequence is a chain; concurrent work B<branches> -- a node awaits several
+children at once. The event loop's only job is to turn the root; everything else
+is a child held by its parent.
 
-    package PeriodicEvents;
+This frame is what makes background work correct. A long-lived source -- a ticker,
+a queue listener, a health probe -- is a B<branch> of the tree, and it must have a
+parent that holds it. A future with no parent is an orphan, and an orphan is
+exactly the "lost its returning future" footgun (see below). In a raw PAGI app the
+natural parent for app-lifetime work is the B<lifespan scope>: the lifespan
+handler is invoked once and stays suspended for the whole life of the app, so the
+server holds it -- and anything it holds -- until shutdown.
 
-    use Future::AsyncAwait;
-    use Future::IO;
+=head2 A periodic source, rooted in lifespan
 
-    my $INTERVAL = 2;
-    my $count    = 0;
-    my @waiters;   # Futures awaiting the next tick
+A worked example: a ticker that fires every couple of seconds, plus a long-poll
+endpoint that lets a client wait for the next tick. The runnable version is
+F<examples/14-periodic-events>; the essentials follow.
 
-The source itself is an async loop whose only timer is a C<Future::IO-E<gt>sleep>,
-so it names no event loop -- it runs on whatever loop the server is using. Each
-tick resolves every Future currently waiting:
+Start the source in the lifespan handler and hold it in a L<Future::Selector> -- a
+container that keeps a set of pending futures alive and propagates their failures.
+Because the selector lives in the lifespan handler's frame, and the server holds
+that handler, the source is retained for the app's lifetime with B<no file-scoped
+variables>. Shared state lives in C<< $scope->{state} >>, which every request
+scope can read:
 
-    our $TICKER = (async sub {
-        while (1) {
-            await Future::IO->sleep($INTERVAL);
-            $count++;
-            my $result = { tick => $count, at => time };
-            my @pending = @waiters;
-            @waiters = ();
-            $_->done($result) for @pending;
-        }
-    })->();
-    $TICKER->on_fail(sub { warn "periodic source failed: $_[0]\n" });
-
-The handler "listens" for the next event by creating a Future, pushing it onto
-the waiter list, and awaiting it. While it waits, the loop serves every other
-request -- nothing is blocked:
-
-    my $app = async sub {
+    async sub handle_lifespan {
         my ($scope, $receive, $send) = @_;
-        die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
+        my $state = $scope->{state} //= { count => 0, waiters => [] };
 
-        if ($scope->{path} eq '/next') {
+        while (1) { last if (await $receive->())->{type} eq 'lifespan.startup' }
+        await $send->({ type => 'lifespan.startup.complete' });
+
+        my $selector = Future::Selector->new;
+        $selector->add(data => 'ticker', gen => async sub {
+            await Future::IO->sleep(2);          # a Future::IO timer names no loop
+            $state->{count}++;
+            my $waiters = $state->{waiters};
+            $state->{waiters} = [];
+            $_->done($state->{count}) for @$waiters;
+            return;
+        });
+
+        # Run the source until shutdown. If a source fails, run() fails and the
+        # error propagates out of this handler for the server to log -- it does
+        # not vanish.
+        my $shutdown = (async sub {
+            while (1) { return if (await $receive->())->{type} eq 'lifespan.shutdown' }
+        })->();
+        await Future->wait_any($shutdown, $selector->run);
+
+        await $send->({ type => 'lifespan.shutdown.complete' });
+    }
+
+The HTTP handler "listens" for the next tick by creating a Future, registering it,
+and awaiting it. While it waits, the loop serves every other request:
+
+    async sub handle_http {
+        my ($scope, $receive, $send) = @_;
+        my $state = $scope->{state};
+        # ... drain the request body ...
+
+        if (($scope->{path} // '/') eq '/next') {
             my $f = Future->new;
-            push @waiters, $f;
-            await reply($send, 200, await $f);
+            push @{ $state->{waiters} }, $f;
+            await reply($send, 200, { tick => await $f });    # wakes on the next tick
         }
         else {
-            await reply($send, 200,
-                { count => $count, hint => 'GET /next to wait for the next tick' });
+            await reply($send, 200, { count => $state->{count} });
         }
-    };
+    }
 
-(C<reply> is a small JSON-response helper; the full runnable version is in
-F<examples/14-periodic-events>.)
+That is the whole pattern: a source on a branch of the tree resolving Futures, and
+a handler that awaits them. It composes with C<$receive> through ordinary Future
+combinators -- C<Future-E<gt>wait_any($receive-E<gt>(), $my_event)> waits on a
+client message or your own event, whichever arrives first.
 
-This is the whole pattern: a source that resolves Futures, and a handler that
-awaits them. It composes with C<$receive> through ordinary Future combinators --
-C<Future-E<gt>wait_any($receive-E<gt>(), $my_event)> waits on a client message
-or your own event, whichever arrives first.
+=head2 A lifetime footgun: orphaned futures
 
-=head2 A lifetime footgun
-
-The C<our $TICKER> above is not a style choice -- it is load-bearing. A
-background task whose Future is held only in a file-scoped C<my> is garbage
-collected once the app finishes loading. Under C<pagi-server> the app is loaded
-with C<do $file>, which returns the C<$app> closure; that closure does not close
-over a file-scoped C<my $ticker>, so the only reference to the running task goes
-out of scope and the task is silently destroyed. The sole symptom is a cryptic
+If you skip the tree and start a background task at file scope, you get a future
+with no parent -- and Perl reaps it. Under C<pagi-server> the app is loaded with
+C<do $file>, which returns the C<$app> closure; that closure does not close over a
+file-scoped C<my $ticker>, so the only reference to the running task goes out of
+scope and the task is silently destroyed. The sole symptom is a cryptic
 
     ... lost its returning future ...
 
-warning, and your timer simply never fires again.
+warning (emitted by L<Future::AsyncAwait>), and your timer simply never fires.
 
-Keep any long-lived background Future in B<package scope> so it outlives the
-load. That is the entire reason the example uses C<package PeriodicEvents; our
-$TICKER = ...> instead of a lexical. State this rule to anyone building event
-sources on PAGI before they spend an afternoon on it.
+The B<wrong> fix is to pin the orphan in a package variable:
+
+    # ANTI-PATTERN: a side-pointer that compensates for a missing parent
+    package PeriodicEvents;
+    our $TICKER = (async sub { ... })->();
+
+That stops the garbage collection, but it is a side-pointer outside the tree: the
+source's failures go nowhere (you must bolt on your own C<< ->on_fail >>), and
+nothing coordinates its shutdown. The B<right> fix is to give the future a parent
+-- root it in the lifespan scope as above, where the selector retains it,
+propagates its errors, and cancels it cleanly on shutdown.
 
 See also L<PAGI::Building> for using this pattern to build event-driven layers
 on PAGI.
