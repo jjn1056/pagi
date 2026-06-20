@@ -31,9 +31,10 @@ use JSON::PP ();
 # (which would only change one scope's copy and silently desync the rest). The
 # hub owns its waiter list and only ever mutates it in place.
 package TickHub {
-    sub new { bless { count => 0, waiters => [] }, shift }
+    sub new { bless { count => 0, beats => 0, waiters => [] }, shift }
 
     sub count { $_[0]{count} }
+    sub beats { $_[0]{beats} }
 
     # Subscribe to the next tick: returns a Future that resolves with the new
     # tick count. Non-blocking -- the caller awaits it while others are served.
@@ -55,6 +56,9 @@ package TickHub {
         $_->done($self->{count}) for @waiters;
         return;
     }
+
+    # A second, slower source -- it has no subscribers, it just advances a counter.
+    sub beat { $_[0]{beats}++; return; }
 }
 
 async sub handle_lifespan {
@@ -72,17 +76,28 @@ async sub handle_lifespan {
     }
     await $send->({ type => 'lifespan.startup.complete' });
 
-    # The event source: every $INTERVAL seconds publish a tick to the hub, waking
-    # anyone listening on /next or /stream. Future::IO->sleep names no event loop
-    # -- it runs on whatever loop the server uses. The selector holds the source's
-    # futures, so it is retained without any `our`.
-    my $INTERVAL = 2;
-    my $selector = Future::Selector->new;
+    # Two independent background sources on ONE Future::Selector. The ticker
+    # publishes to the hub every $INTERVAL seconds (waking /next and /stream); the
+    # heartbeat just advances a counter every $HEARTBEAT seconds. Future::IO->sleep
+    # names no event loop -- it runs on whatever loop the server uses. The selector
+    # multiplexes both, holds their futures (so nothing needs an `our`), and if
+    # either source fails, $selector->run fails and the error surfaces.
+    my $INTERVAL  = 2;
+    my $HEARTBEAT = 5;
+    my $selector  = Future::Selector->new;
     $selector->add(
         data => 'ticker',
         gen  => async sub {
             await Future::IO->sleep($INTERVAL);
             $hub->publish;
+            return;
+        },
+    );
+    $selector->add(
+        data => 'heartbeat',
+        gen  => async sub {
+            await Future::IO->sleep($HEARTBEAT);
+            $hub->beat;
             return;
         },
     );
@@ -144,7 +159,8 @@ async sub handle_http {
     }
     else {
         await reply($send, 200,
-            { count => $hub->count, hint => 'GET /next to wait for the next tick' });
+            { count => $hub->count, beats => $hub->beats,
+              hint => 'GET /next to wait for the next tick' });
     }
 }
 

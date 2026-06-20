@@ -23,7 +23,8 @@ assume any particular loop.
 
 ## Routes
 
-- `GET /` – returns the current tick `count` immediately.
+- `GET /` – returns the current `count` (ticks) and `beats` (the second source)
+  immediately.
 - `GET /next` – *listens* for the next tick (long-poll): it calls
   `$hub->next_tick` to get a `Future` the background source resolves on the next
   tick, and awaits it. Non-blocking, so other requests are served while this one
@@ -34,6 +35,12 @@ assume any particular loop.
   relays events from a source *outside* the request code. This is the pattern for
   streaming apps (live feeds, progress, notifications) that react to events
   happening elsewhere.
+
+**Two background sources, one selector.** A fast `ticker` (every 2s) drives
+`count`, `/next`, and `/stream`; a slower `heartbeat` (every 5s) drives `beats`.
+Both run on a single `Future::Selector`, which multiplexes them and makes a
+failure in either surface rather than vanish. Adding a third source is one more
+`$selector->add`.
 
 ## Sharing state with the background source
 
@@ -65,13 +72,13 @@ perl -I /path/to/PAGI-Server/lib /path/to/PAGI-Server/bin/pagi-server \
 
 ```bash
 curl -s localhost:5014/ ; echo
-# => {"count":1,"hint":"GET /next to wait for the next tick"}
+# => {"count":1,"beats":0,"hint":"GET /next to wait for the next tick"}
 
 time curl -s localhost:5014/next ; echo
 # => {"tick":2}   (blocks up to ~2s, then wakes on the next tick)
 
 curl -s localhost:5014/ ; echo
-# => {"count":2,...}   (count advanced while you waited)
+# => {"count":2,"beats":1,...}   (both sources advanced while you waited)
 
 # Watch the live stream -- one line per tick, until you Ctrl-C:
 curl -N localhost:5014/stream
