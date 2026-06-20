@@ -1,0 +1,425 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::EventLoops - how PAGI stays loop-agnostic, how not to block, and how a server binds to an event loop
+
+=head1 DESCRIPTION
+
+The protocol names no event loop. A PAGI application is C<async sub ($scope,
+$receive, $send)> -- Futures and async/await, nothing more. C<await> is
+loop-neutral: it suspends on a Future, and I<which loop resumes it> depends only
+on what created the leaf Future you awaited. So the loop never enters through
+your control flow -- only through the I/O primitives you call.
+
+Compose those awaits and the whole application becomes a B<tree of futures> --
+chains where work is sequential, branches where it runs concurrently -- and the
+loop's only job is to turn the root. That picture is the through-line here, and it
+is what makes background work (part three) correct rather than a footgun.
+
+A PAGI app B<must not assume IO::Async, or any loop, is already set up.>
+L<PAGI::Server> is the I<reference> implementation, not I<the> implementation;
+other servers are expected, and your app should run unchanged on any of them.
+
+This document has four parts. First, why PAGI is loop-agnostic at all. Second,
+how to do real work in a handler without blocking the loop. Third, how to write
+your own event sources (timers, background jobs, external triggers) as Futures.
+Fourth -- as reference-server specifics -- how L<PAGI::Server> binds to a loop,
+including embedding it in an application that owns the loop itself.
+
+=head1 PAGI IS LOOP-AGNOSTIC
+
+Look at the application contract and notice what is I<not> there:
+
+    async sub {
+        my ($scope, $receive, $send) = @_;
+        ...
+    }
+
+There is no loop object, no reactor, no C<run> to call. The signature names
+C<$scope>, C<$receive>, and C<$send>, and that is all. Everything else is
+expressed with Futures and C<await>.
+
+C<await> is the key. When you write C<await $some_future>, your handler suspends
+until that Future is resolved. It does not say I<how> the Future gets resolved,
+or which loop is turning while it waits. That is decided entirely by whatever
+created the leaf Future at the bottom of the chain -- the socket read inside
+C<$receive>, the timer inside a C<Future::IO-E<gt>sleep>, the database driver's
+query Future. The loop enters your program only at those leaves. Your control
+flow never refers to it.
+
+This is why the same handler runs unchanged under different servers. One server
+might drive everything with L<IO::Async>; another might use a different reactor
+entirely. Your code does not change, because it never named the reactor in the
+first place. It only ever said "wait for this Future."
+
+L<PAGI::Server> happens to be built on L<IO::Async>. That is an implementation
+choice of one reference server, not a requirement of the protocol. Write to the
+contract -- Futures and C<await> -- and you are portable by construction.
+
+=head1 NOT BLOCKING INSIDE YOUR APP
+
+Loop-agnostic does not mean loop-immune. There is exactly one rule that matters
+for performance: B<a handler must never block the loop>. A single-threaded event
+loop runs your handler on the same thread that services every other connection.
+If your handler stops to wait synchronously, every other client stops with it.
+
+What counts as blocking:
+
+=over 4
+
+=item *
+
+C<sleep> (the builtin) -- stops the whole process, not just your handler.
+
+=item *
+
+Synchronous network clients -- C<LWP::UserAgent>, a blocking C<DBI> query, a
+plain socket C<read>. They return only when the I/O completes, and nothing else
+runs in the meantime.
+
+=item *
+
+Synchronous file I/O on slow or remote filesystems, and large reads done in one
+gulp.
+
+=item *
+
+CPU-bound loops -- a tight computation that runs for hundreds of milliseconds
+holds the loop just as surely as a blocking read. Yield, offload, or chunk it.
+
+=back
+
+The cure is to use an asynchronous equivalent that returns a Future and to
+C<await> it. There are three tiers of how to get one, in order of portability.
+
+=head2 Tier 1: default to Future::IO
+
+L<Future::IO> is the portable choice. It provides loop-neutral primitives --
+C<sleep>, socket reads and writes, and so on -- that return Futures without your
+code naming any loop. A handler written against Future::IO runs under any server
+whose deployment has wired a Future::IO backend (see L</Who wires the
+Future::IO backend> below).
+
+    use Future::IO;
+
+    my $app = async sub {
+        my ($scope, $receive, $send) = @_;
+        die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
+
+        # Non-blocking pause: the loop keeps serving other clients meanwhile.
+        await Future::IO->sleep(1);
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [ ['content-type', 'text/plain'] ],
+        });
+        await $send->({
+            type => 'http.response.body',
+            body => "waited one second without blocking the loop\n",
+        });
+    };
+
+Prefer this tier for code you intend to be portable across servers.
+
+=head2 Tier 2: IO::Async-native, once you accept an IO::Async loop is running
+
+If you are content to require that an L<IO::Async> loop is the running loop, you
+can use IO::Async facilities directly -- timers (C<watch_time>), the
+C<Net::Async::*> client modules, and so on. Under L<PAGI::Server> this
+requirement is free: the reference server I<is> IO::Async, so an IO::Async loop
+is always running and IO::Async-native code just works.
+
+This is convenient and idiomatic on PAGI::Server. The trade-off is that you have
+named a loop, so the portability of Tier 1 is gone.
+
+=head2 Tier 3: the honest caveat
+
+IO::Async-native code is not strictly tied to PAGI::Server, but it is tied to
+I<an IO::Async loop being the running loop>. IO::Async ships adapter loops
+(C<IO::Async::Loop::EV>, C<IO::Async::Loop::Glib>, and others) that let an
+IO::Async loop drive a foreign reactor. So Tier-2 code can run on a non-IO::Async
+host B<only> when an IO::Async loop -- possibly an adapter -- is the loop that is
+actually turning. If a host runs a different reactor with no IO::Async loop in
+play, Tier-2 code has nothing to schedule it. Tier-1 (Future::IO) code does not
+have this problem, which is exactly why it is the default recommendation.
+
+=head2 Who wires the Future::IO backend
+
+L<Future::IO> is loop-neutral until something tells it which backend to use, and
+choosing that backend is the job of the B<server or the deployer>, not the
+application. Two cases:
+
+=over 4
+
+=item *
+
+B<Running under C<bin/pagi-server>:> the Future::IO-to-IO::Async backend is
+configured B<automatically> (when Future::IO is installed). You write
+Future::IO-based handlers and they tick; you do nothing.
+
+=item *
+
+B<Embedding L<PAGI::Server> yourself:> B<you> must wire it. Add
+
+    use Future::IO::Impl::IOAsync;
+
+before loading any Future::IO-based libraries, so that Future::IO resolves its
+primitives on the IO::Async loop your embedded server is running.
+
+=back
+
+This is documented in full on the server side; rather than repeat it here, see
+L<PAGI::Server/LOOP INTEROPERABILITY>.
+
+=head1 WRITING YOUR OWN EVENT SOURCE
+
+The protocol gives you C<$receive> for client-driven events. But a handler often
+needs to wait on something the client did not send: a timer firing, a background
+job finishing, a message arriving on an external queue. The loop-agnostic way to
+do this is to B<model the event as a Future> and let the handler C<await> it,
+exactly as it awaits C<$receive>. You introduce no new scope types and need no
+server cooperation -- the source is just ordinary Future plumbing inside your
+program. (See L<PAGI::Spec::Extensions/"Defining your own events"> for where
+this sits in the extension model.)
+
+=head2 An app is a tree of futures
+
+Think of an event-driven application as a single B<tree of futures>. A linear
+C<await> sequence is a chain; concurrent work B<branches> -- a node awaits several
+children at once. The event loop's only job is to turn the root; everything else
+is a child held by its parent.
+
+This frame is what makes background work correct. A long-lived source -- a ticker,
+a queue listener, a health probe -- is a B<branch> of the tree, and it must have a
+parent that holds it. A future with no parent is an orphan, and an orphan is
+exactly the "lost its returning future" footgun (see below). In a raw PAGI app the
+natural parent for app-lifetime work is the B<lifespan scope>: the lifespan
+handler is invoked once and stays suspended for the whole life of the app, so the
+server holds it -- and anything it holds -- until shutdown.
+
+=head2 A periodic source, rooted in lifespan
+
+A worked example: a ticker that fires every couple of seconds, plus a long-poll
+endpoint that lets a client wait for the next tick. The runnable version is
+F<examples/14-periodic-events>; the essentials follow.
+
+Start the source in the lifespan handler and hold it in a L<Future::Selector> -- a
+container that keeps a set of pending futures alive and propagates their failures.
+Because the selector lives in the lifespan handler's frame, and the server holds
+that handler, the source is retained for the app's lifetime with B<no file-scoped
+variables>. Shared state lives in C<< $scope->{state} >>, which every request
+scope can read:
+
+    async sub handle_lifespan {
+        my ($scope, $receive, $send) = @_;
+        my $state = $scope->{state} //= { count => 0, waiters => [] };
+
+        while (1) { last if (await $receive->())->{type} eq 'lifespan.startup' }
+        await $send->({ type => 'lifespan.startup.complete' });
+
+        my $selector = Future::Selector->new;
+        $selector->add(data => 'ticker', gen => async sub {
+            await Future::IO->sleep(2);          # a Future::IO timer names no loop
+            $state->{count}++;
+            my $waiters = $state->{waiters};
+            $state->{waiters} = [];
+            $_->done($state->{count}) for @$waiters;
+            return;
+        });
+
+        # Run the source until shutdown. If a source fails, run() fails and the
+        # error propagates out of this handler for the server to log -- it does
+        # not vanish.
+        my $shutdown = (async sub {
+            while (1) { return if (await $receive->())->{type} eq 'lifespan.shutdown' }
+        })->();
+        await Future->wait_any($shutdown, $selector->run);
+
+        await $send->({ type => 'lifespan.shutdown.complete' });
+    }
+
+The HTTP handler "listens" for the next tick by creating a Future, registering it,
+and awaiting it. While it waits, the loop serves every other request:
+
+    async sub handle_http {
+        my ($scope, $receive, $send) = @_;
+        my $state = $scope->{state};
+        # ... drain the request body ...
+
+        if (($scope->{path} // '/') eq '/next') {
+            my $f = Future->new;
+            push @{ $state->{waiters} }, $f;
+            await reply($send, 200, { tick => await $f });    # wakes on the next tick
+        }
+        else {
+            await reply($send, 200, { count => $state->{count} });
+        }
+    }
+
+That is the whole pattern: a source on a branch of the tree resolving Futures, and
+a handler that awaits them. It composes with C<$receive> through ordinary Future
+combinators -- C<Future-E<gt>wait_any($receive-E<gt>(), $my_event)> waits on a
+client message or your own event, whichever arrives first.
+
+=head2 A lifetime footgun: orphaned futures
+
+If you skip the tree and start a background task at file scope, you get a future
+with no parent -- and Perl reaps it. Under C<pagi-server> the app is loaded with
+C<do $file>, which returns the C<$app> closure; that closure does not close over a
+file-scoped C<my $ticker>, so the only reference to the running task goes out of
+scope and the task is silently destroyed. The sole symptom is a cryptic
+
+    ... lost its returning future ...
+
+warning (emitted by L<Future::AsyncAwait>), and your timer simply never fires.
+
+The B<wrong> fix is to pin the orphan in a package variable:
+
+    # ANTI-PATTERN: a side-pointer that compensates for a missing parent
+    package PeriodicEvents;
+    our $TICKER = (async sub { ... })->();
+
+That stops the garbage collection, but it is a side-pointer outside the tree: the
+source's failures go nowhere (you must bolt on your own C<< ->on_fail >>), and
+nothing coordinates its shutdown. The B<right> fix is to give the future a parent
+-- root it in the lifespan scope as above, where the selector retains it,
+propagates its errors, and cancels it cleanly on shutdown.
+
+See also L<PAGI::Building> for using this pattern to build event-driven layers
+on PAGI.
+
+=head1 BINDING A SERVER TO AN EVENT LOOP
+
+Everything above is protocol-level and server-neutral. This section is different:
+it is about L<PAGI::Server> specifically -- the reference server -- and how it
+attaches to an L<IO::Async> loop. Other servers will bind differently.
+
+=head2 Owning the loop versus embedding
+
+The simple case is to let the server own the loop:
+
+    PAGI::Server->new(app => $app, port => 5000)->run;
+
+C<run> creates the loop, listens, and runs until stopped. This is what
+C<bin/pagi-server> does, and it is all most deployments need.
+
+The other case is B<embedding>: you already have an IO::Async application with
+its own loop, and you want a PAGI::Server to share it. PAGI::Server is an
+C<IO::Async::Notifier>, so you add it to your loop, start listening, and run your
+own loop:
+
+    use IO::Async::Loop;
+    use Future::IO::Impl::IOAsync;   # we embed, so WE wire the Future::IO backend
+    use PAGI::Server;
+
+    my $loop = IO::Async::Loop->new;
+
+    my $server = PAGI::Server->new(app => $app, port => 5015);
+    $loop->add($server);
+    $server->listen->get;     # listen without running the loop
+    $loop->run;               # the host app owns the loop
+
+Three points about this pattern:
+
+=over 4
+
+=item *
+
+You call C<$loop-E<gt>add($server)> to attach the server to your loop, then
+C<$server-E<gt>listen-E<gt>get> to bind the socket I<without> running the loop,
+then C<$loop-E<gt>run> when your host application is ready to turn it.
+
+=item *
+
+There is no C<start> method and no C<< loop => >> constructor argument. You
+attach with C<add> and listen with C<listen>; that is the whole API.
+
+=item *
+
+Because you are embedding rather than going through C<bin/pagi-server>, B<you>
+wire the Future::IO backend with C<use Future::IO::Impl::IOAsync> -- see
+L</Who wires the Future::IO backend> above. Without it, Future::IO-based handlers
+will not tick.
+
+=back
+
+The runnable version, including a host-app timer that proves the server and the
+host share one loop, is F<examples/15-embedded-ioasync>.
+
+=head2 Running under a foreign (EV-backed) loop
+
+You can run PAGI::Server under a non-default reactor by giving IO::Async an
+adapter loop. The verified case is L<EV>: PAGI::Server runs under an EV-backed
+IO::Async loop, and Future::IO ticks correctly there -- a
+C<Future::IO-E<gt>sleep(1)> inside a handler resolves and the request returns in
+about a second.
+
+The wiring has three parts:
+
+    BEGIN { $ENV{IO_ASYNC_LOOP} = 'EV' }   # before any IO::Async load
+    use IO::Async::Loop;
+    use Future::IO;
+    use Future::IO::Impl::IOAsync;          # embedder wires the Future::IO backend
+    use PAGI::Server;
+
+    my $loop = IO::Async::Loop->new;        # EV-backed, per IO_ASYNC_LOOP above
+
+    my $server = PAGI::Server->new(app => $app, port => 5016);
+    $loop->add($server);
+    $server->listen->get;
+    $loop->run;
+
+The C<IO_ASYNC_LOOP> environment variable is the load-bearing part. It must be
+set in a C<BEGIN> block, before any IO::Async module is loaded, so that I<every>
+C<IO::Async::Loop-E<gt>new> in the process -- both the one you create and the one
+Future::IO's IO::Async backend uses internally -- resolves to the same EV-backed
+loop. If the server and the Future::IO implementation ended up on different
+loops, the handler's Futures would be scheduled on a loop that nobody is turning,
+and requests would hang. With the env var set up front they share a single EV
+loop, and everything ticks.
+
+Note: the C<BEGIN>/env-var approach is what you use when B<you> own the loop
+(embedding). When you let L<PAGI::Server> own the loop via C<run()> instead,
+there is a native shortcut -- the C<loop_type> constructor option:
+
+    PAGI::Server->new(app => $app, port => 5016, loop_type => 'EV')->run;
+
+This tells the server to create an EV-backed loop directly (it loads
+C<IO::Async::Loop::EV> internally) without requiring a C<BEGIN> block in your
+code. C<Future::IO> wiring is still handled automatically, as with any
+C<pagi-server>-owned loop.
+
+The runnable, verified version is F<examples/16-foreign-loop>.
+
+=head1 SEE ALSO
+
+=over 4
+
+=item L<PAGI::Spec> - the specification
+
+=item L<PAGI::Spec::Extensions> - the extension mechanism and custom events
+
+=item L<PAGI::Building> - building a framework or toolkit on PAGI
+
+=item L<PAGI::Server/LOOP INTEROPERABILITY> - who wires the Future::IO backend, in full
+
+=item L<Future::IO> - loop-neutral, portable async I/O primitives
+
+=item L<IO::Async> - the reactor the reference server is built on
+
+=back
+
+And the runnable examples: F<examples/14-periodic-events>,
+F<examples/15-embedded-ioasync>, and F<examples/16-foreign-loop>.
+
+=head1 AUTHOR
+
+John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
+
+=head1 COPYRIGHT AND LICENSE
+
+This software is licensed under the same terms as Perl itself.
+
+=cut

@@ -34,6 +34,15 @@ and L<PAGI::Spec>.
 9. `11-job-runner` - background job processing (uses `IO::Async` directly for timers/subprocesses)
 10. `12-utf8` - UTF-8 handling demonstration
 11. `13-flow-control` - conflation under backpressure via the `pagi.transport` handle
+12. `14-periodic-events` - an in-app periodic event source (Future::IO timer) with a long-poll listener
+
+## Embedding & event loops
+
+- `15-embedded-ioasync` - embed `PAGI::Server` in a larger IO::Async program (caller owns the loop)
+- `16-foreign-loop` - run `PAGI::Server` under an EV-backed IO::Async loop
+
+For the full story -- loop-agnostic apps, non-blocking I/O, and binding a
+server to a loop -- see L<PAGI::EventLoops>.
 
 ## More examples
 

@@ -1,0 +1,8 @@
+# Run this example with the reference server:
+#   pagi-server app.pl --port 5014
+requires 'perl', '5.018';
+requires 'Future::AsyncAwait';
+requires 'Future::IO';
+requires 'Future::Selector';   # holds the background source on a branch of the future tree
+requires 'PAGI::Server';       # the reference server (provides pagi-server)
+# JSON::PP is core.

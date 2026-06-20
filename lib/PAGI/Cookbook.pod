@@ -646,6 +646,10 @@ L<PAGI> - the specification overview and ecosystem map
 
 L<PAGI::Spec> - the formal specification
 
+=item *
+
+L<PAGI::EventLoops> - event loops, non-blocking I/O, and binding a server to a loop
+
 =back
 
 =head1 AUTHOR

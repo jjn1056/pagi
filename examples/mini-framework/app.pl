@@ -53,7 +53,7 @@ package Nano {
         my ($self) = @_;
         return async sub {
             my ($scope, $receive, $send) = @_;
-            return unless $scope->{type} eq 'http';
+            die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
 
             for my $route (@{ $self->{routes} }) {
                 next unless $route->{method} eq $scope->{method};

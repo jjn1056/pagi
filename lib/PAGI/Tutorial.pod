@@ -1765,6 +1765,8 @@ You've covered the PAGI protocol! For more information:
 
 =item * L<Future::IO> - Loop-agnostic async primitives (sleep, I/O)
 
+=item * L<PAGI::EventLoops> - event loops, non-blocking I/O, and binding a server to a loop
+
 =back
 
 =head1 AUTHOR
