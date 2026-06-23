@@ -425,11 +425,99 @@ PAGI middleware wraps an application:
             }
             return $result;
 
-            # Middleware should default to shallow cloning and explicitly deep clone if required.
+            # Shallow clone (see below): top-level edits stay local to inner
+            # layers; values reached through a shared reference propagate.
         };
     }
 
-Middleware B<must not> mutate the original C<$scope> in-place; always clone before modification.
+Middleware B<must not> mutate the original C<$scope> in-place; always clone
+before modification:
+
+    my $inner_scope = { %$scope };          # shallow clone
+    $inner_scope->{'myapp.flag'} = 1;       # visible to inner layers only
+    await $app->($inner_scope, $receive, $send);
+
+=head4 Why scope is cloned: onion isolation
+
+Middleware form an onion: each layer wraps the next, a request descends through
+them to the application, and control rises back out. Cloning the scope on the way
+down keeps each layer's scope edits B<local to itself and the layers below it>. A
+middleware that rewrites C<path>, negotiates a content type, or stashes a decoded
+identity changes the scope only for the inner application -- its sibling and
+parent layers, and the server's own view of the scope, are untouched. Without the
+clone those edits would B<leak upward> and bleed between unrelated layers.
+
+This is a deliberate departure from PSGI, where the C<$env> hashref is a single
+shared structure mutated in place and every change is visible everywhere. PAGI
+chooses isolation: scope edits flow B<downward only>.
+
+=head4 Shallow, not deep -- and why it matters
+
+The clone is B<shallow>: C<{ %$scope }> copies the top-level key/value pairs into
+a new hashref and nothing more. This produces a precise, intentional asymmetry:
+
+=over
+
+=item -
+
+B<Top-level keys are private.> Adding, removing, or replacing a key on the clone
+(C<< $inner->{x} = ... >>) affects only that clone and the layers below it. This
+is the isolation described above.
+
+=item -
+
+B<Referenced values are shared.> When a key's value is a reference -- a hashref,
+arrayref, or object -- the clone copies the B<reference>, not what it points at.
+Every layer holds the same underlying thing, so mutating I<through> the reference
+(C<< $inner->{conn}->mark(...) >>, C<< $inner->{state}{count}++ >>) is visible to
+B<all> layers, above and below.
+
+=back
+
+PAGI depends on this asymmetry. Server-supplied shared objects -- the
+C<pagi.connection> connection-state object, the lifespan C<state> namespace (see
+L<PAGI::Spec::Lifespan/Lifespan State>) -- are references seeded into the scope
+B<before> any middleware runs, so every layer shares the one instance. A B<deep>
+clone would copy those objects per layer, giving each middleware its own
+disconnected C<pagi.connection> and its own copy of the database pool -- breaking
+disconnect propagation, lifespan sharing, and the escape hatch below. Shallow
+cloning is therefore not an optimization; the shared references are the point.
+
+=head4 The footgun, and the jailbreak
+
+The trap, especially coming from PSGI/Plack: B<a plain scalar set as a top-level
+scope key does not propagate across layers>. Set C<< $inner->{'myapp.sent'} = 1 >>
+in an inner layer and an outer layer will never see it -- the shallow clone
+snapshotted the scalar by value. This is true in every language with shallow copy
+(Python's C<dict(scope)> behaves identically); it is not a Perl quirk.
+
+To deliberately share mutable per-request state across layers -- the B<jailbreak>
+-- use a B<reference>, and make sure it exists B<before> the layers that need to
+share it:
+
+=over
+
+=item -
+
+To share B<downward> (an outer middleware hands state to inner layers), seed a
+reference on the scope before descending -- C<< $inner->{'myapp.ctx'} = {} >> --
+then inner layers mutate through it.
+
+=item -
+
+To share B<upward> (an inner layer reports back to an outer one), the shared
+reference must already exist at or above the outer layer before the clone. A
+B<new> top-level key created deep in the stack cannot bubble up, by design.
+
+=back
+
+Helpers such as L<PAGI::Stash> package this pattern: the stash wraps a single
+C<pagi.stash> hashref, so any layer holding the scope reads and writes shared
+per-request state through the one reference. Seed it high -- in the server or an
+outer middleware -- and it propagates in both directions.
+
+Rule of thumb: B<top-level scope keys describe your layer's view of the request;
+shared mutable state lives behind a reference.>
 
 =head3 Cancellation and Disconnects
 
