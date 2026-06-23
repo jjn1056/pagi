@@ -163,6 +163,16 @@ events, or short-circuit entirely. Adding a response header:
         };
     }
 
+One difference will bite you if you do not know it. In PSGI, C<$env> is a single
+hashref shared down the whole stack and mutated in place, so a key one layer sets
+is visible everywhere. In PAGI, middleware B<clone> the scope before modifying it,
+and the clone is shallow -- so a plain scalar you set in one layer does B<not>
+propagate to another the way a C<$env> key would. This is deliberate (it isolates
+each layer's scope edits), and the way to share state on purpose is to mutate
+B<through a reference> rather than set a top-level scalar -- L<PAGI::Stash> wraps
+exactly that. See L<PAGI::Building/"Scope is cloned per layer, not shared"> for
+the full model.
+
 The middleware model for framework authors is covered in depth in
 L<PAGI::Building>. Server-advertised C<psgix.*> extensions become
 C<< $scope->{extensions} >> (see L<PAGI::Spec::Extensions>).

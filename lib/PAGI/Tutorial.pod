@@ -1584,6 +1584,16 @@ When you use C<-E<gt>retain>, you're creating a detached Future outside the tree
 
 The server only sees the tree. Detached futures are orphaned.
 
+=head3 A Scope Key Set in Middleware "Vanishes"
+
+If you set a plain value on C<$scope> in one middleware and try to read it in
+another, you may find it missing. Middleware clone the scope before modifying it,
+and the clone is shallow: a top-level scalar set in one layer does not propagate
+to the others. To share per-request state across layers on purpose, mutate
+B<through a reference> (or use the C<stash>) rather than setting a top-level
+scalar. The full model -- and why it works this way -- is in
+L<PAGI::Building/"Scope is cloned per layer, not shared">.
+
 =head3 Summary
 
 =over 4
