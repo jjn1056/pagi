@@ -425,11 +425,23 @@ PAGI middleware wraps an application:
             }
             return $result;
 
-            # Middleware should default to shallow cloning and explicitly deep clone if required.
+            # Shallow-clone the scope before modifying it (see below).
         };
     }
 
-Middleware B<must not> mutate the original C<$scope> in-place; always clone before modification.
+Middleware B<must not> mutate the original C<$scope> in place; clone before
+modifying:
+
+    my $inner = { %$scope };
+    $inner->{'myapp.x'} = 1;
+    await $app->($inner, $receive, $send);
+
+The clone is shallow, and intentionally so: top-level keys set on the clone are
+private to this layer and the layers below it, while values reached I<through> a
+reference -- the C<pagi.connection> object, the lifespan C<state> namespace --
+are shared across all layers. This keeps each middleware's scope edits
+B<downward only>. See L<PAGI::Building/MIDDLEWARE> for the sharing model, why the
+clone is shallow rather than deep, and patterns for sharing state across layers.
 
 =head3 Cancellation and Disconnects
 
