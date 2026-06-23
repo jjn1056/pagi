@@ -365,7 +365,7 @@ C<state> (HashRef, optional) -- A shallow copy of the lifespan C<state> namespac
 
 =item -
 
-C<pagi.connection> (Object) -- Connection state object for disconnect detection. See L</Connection State> below.
+C<pagi.connection> (Object) -- Per-request connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>). See L</Connection State> below.
 
 =item -
 
@@ -583,8 +583,9 @@ This is a backstop, B<not> a completion policy. Which terminal response to produ
 -- a C<404>, a C<204>, an error page, or anything else -- is the application's or
 framework's responsibility, and a well-behaved application always produces one
 before its Future resolves. PAGI exposes only the observer-independent fact that
-no response was started (see the C<pagi.connection> object and the application's
-own bookkeeping); it makes B<no> judgment about whether a response is "complete".
+no response was started -- read C<< $conn->response_started >> on the
+C<pagi.connection> object; it makes B<no> judgment about whether a response is
+"complete".
 An application that does not handle the C<http> scope may decline by raising an
 exception, which the server treats identically -- the same C<500> backstop.
 
@@ -775,6 +776,18 @@ If registered after disconnect already occurred, the callback is invoked immedia
 
 =back
 
+B<C<response_started()>> - Returns true once B<this request's> response has started
+-- that is, once C<http.response.start> has been emitted for this scope -- and false
+before. The server sets it when it processes the response-start event, so it is true
+no matter who produced the response: the application, a framework, or a middleware
+that short-circuited the request. Read-only to the application.
+
+    my $started = $conn->response_started;  # Boolean, synchronous
+
+A streaming response counts as started for its whole lifetime: C<response_started>
+becomes true at C<http.response.start> and stays true while body chunks flow. Use
+C<response_complete> to learn when the body has actually finished.
+
 Servers SHOULD also provide:
 
 B<C<on_complete($callback)>> - Registers a callback invoked B<only when the request completes successfully> (the response was fully delivered without the client disconnecting). The counterpart to C<on_disconnect>.
@@ -783,10 +796,65 @@ B<C<on_complete($callback)>> - Registers a callback invoked B<only when the requ
         commit_transaction();   # finished cleanly
     });
 
+B<C<response_complete()>> - Returns true once B<this request's> response body has
+been fully sent -- the terminal C<http.response.body> with C<<< more => 0 >>>, a
+C<file>/C<fh> response, or the final trailers -- false while a response is still
+streaming or has not started, and B<C<undef> if the server does not track
+completion>. The synchronous counterpart to C<on_complete>, and read-only to the
+application. As with C<disconnect_future>, test C<defined> to learn whether the
+feature is available before relying on it.
+
+    my $done = $conn->response_complete;   # undef = unsupported, else 0 or 1
+
+This accessor is B<SHOULD>, not MUST, on purpose. "The body has been fully sent"
+is not always a crisp instant: buffering, HTTP/2 flow-control windows, and
+intermediaries can blur exactly when the last byte reaches the client, so some
+servers cannot report completion precisely. The load-bearing fact -- whether a
+response B<started> -- is the MUST (C<response_started>); completion is a
+convenience layered on top, which is also why it shares the SHOULD level of its
+callback form C<on_complete>. A future revision may promote both to MUST if
+implementation experience shows the timing can be pinned down reliably across
+transports.
+
 B<C<disconnect_future()>> - Returns a Future that resolves, with the reason, on abnormal disconnect -- useful for racing against long-running work, e.g. C<< Future->wait_any($work, $conn->disconnect_future) >>. Returns C<undef> if not supported.
 
     my $future = $conn->disconnect_future;  # Future or undef
     my $reason = await $future;
+
+=head4 What "connection" means here
+
+The object is named for the connection, but it is scoped to a B<single request>:
+each request gets its own C<pagi.connection>, and the C<response_started> /
+C<response_complete> flags describe B<that request's> response, never the transport
+as a whole. This matters the moment a transport carries more than one request:
+
+=over 4
+
+=item *
+
+B<HTTP/1.1> reuses a connection for requests B<sequentially> (keep-alive); each
+request is a fresh scope with its own connection object.
+
+=item *
+
+B<HTTP/2> B<multiplexes> many requests over one TCP connection as independent
+streams. PAGI maps each stream to its own C<http> scope (see L</HTTP/2 Stream
+Mapping>), so ten concurrent streams have ten connection objects and ten
+independent C<response_started> flags -- one request starting its response is never
+visible as another's.
+
+=item *
+
+B<HTTP/3> (when supported) multiplexes streams over QUIC the same way; the
+per-request scoping is identical, so nothing here changes.
+
+=back
+
+The C<response_started> / C<response_complete> flags are defined for the C<http>
+scope only. B<SSE> is treated as its own scope type (C<< type => 'sse' >>) even
+though it is really a long-lived response over HTTP: it begins with C<sse.start>
+rather than C<http.response.start>, so these HTTP flags do not apply to it. An
+SSE-specific equivalent may be defined later if a need arises.
 
 =head4 Standard Disconnect Reasons
 
@@ -1906,8 +1974,9 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 
 C<0.3> (Draft): C<pagi.transport> flow control; C<websocket.http.response>
 denial-response extension; C<on_complete> plus reworked abnormal-only disconnect
-reasons; documented server-supplied behaviors and WebSocket over HTTP/2; removed
-C<pagi.features> and the per-send C<timeout> field.
+reasons; C<response_started> (MUST) and C<response_complete> (SHOULD) connection-state
+accessors for per-request response progress; documented server-supplied behaviors and
+WebSocket over HTTP/2; removed C<pagi.features> and the per-send C<timeout> field.
 
 =item -
 

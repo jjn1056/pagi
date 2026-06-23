@@ -339,7 +339,8 @@ L<PAGI::Spec::Www/"Application Produced No Response">. This is a backstop, B<not
 completion policy: which terminal response to produce (a C<404>, a C<204>, an
 error page, ...) is the application's or framework's concern, and a well-behaved
 application always produces one before its Future resolves. PAGI exposes only the
-observer-independent fact that no response was started; it makes no judgment about
+observer-independent fact that no response was started (the C<response_started>
+predicate on the C<pagi.connection> object); it makes no judgment about
 whether a response is "complete". An application that does not handle a scope at
 all should decline by raising (see L</Applications>), which the server surfaces
 the same way. (For the lifespan scope, see L<PAGI::Spec::Lifespan>.)
