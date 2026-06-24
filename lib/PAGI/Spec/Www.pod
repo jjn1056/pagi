@@ -778,9 +778,17 @@ If registered after disconnect already occurred, the callback is invoked immedia
 
 B<C<response_started()>> - Returns true once B<this request's> response has started
 -- that is, once C<http.response.start> has been emitted for this scope -- and false
-before. The server sets it when it processes the response-start event, so it is true
-no matter who produced the response: the application, a framework, or a middleware
-that short-circuited the request. Read-only to the application.
+before. The server sets it when it processes the response-start event, so it is true no
+matter who produced the response: the application, a framework, a middleware that
+short-circuited the request, or a B<server-synthesized error/backstop response>
+(e.g. the C<500> the server emits when the application produces nothing -- see
+L</Application Produced No Response>). Read-only to the application.
+
+C<response_started> does not identify which producer started the response; an
+application response and a server-synthesized backstop set it alike. The
+clean-versus-abnormal outcome is reported separately by the request's terminal
+signal -- C<on_complete> on a clean finish, C<on_disconnect> with
+C<disconnect_reason> C<'server_error'> on a server backstop.
 
     my $started = $conn->response_started;  # Boolean, synchronous
 
