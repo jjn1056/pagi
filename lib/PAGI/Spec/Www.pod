@@ -784,11 +784,11 @@ short-circuited the request, or a B<server-synthesized error/backstop response>
 (e.g. the C<500> the server emits when the application produces nothing -- see
 L</Application Produced No Response>). Read-only to the application.
 
-To distinguish a response your application produced from one the server
-synthesized, use the connection's clean-vs-abnormal signal -- C<on_complete> fires
-for a clean finish, C<on_disconnect($reason)> for an abnormal end such as
-C<'server_error'> -- not C<response_started>, which only reports that I<some>
-response started.
+C<response_started> does not identify which producer started the response; an
+application response and a server-synthesized backstop set it alike. The
+clean-versus-abnormal outcome is reported separately by the request's terminal
+signal -- C<on_complete> on a clean finish, C<on_disconnect> with
+C<disconnect_reason> C<'server_error'> on a server backstop.
 
     my $started = $conn->response_started;  # Boolean, synchronous
 
