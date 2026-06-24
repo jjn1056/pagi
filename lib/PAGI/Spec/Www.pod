@@ -423,6 +423,19 @@ C<trailers> (Int, default C<0>) -- C<1> if trailers will be sent after body via 
 
 =back
 
+B<Header byte safety.> Because header names and values cross into HTTP message
+framing, a server B<MUST NOT> emit a header whose name or value contains C<CR>
+(C<\x0D>), C<LF> (C<\x0A>), or C<NUL> (C<\x00>), nor a name containing any other
+control character. The server B<MUST> reject such a header by failing the
+C<send> (the reference server raises) rather than forwarding it or silently
+rewriting the offending bytes: letting C<CR>/C<LF> through permits HTTP response
+splitting (CRLF injection), while silently stripping them mutates the
+application's data without signalling the bug. This is the same guarantee
+C<sse.send> gives for its C<event> and C<id> fields (see L</Send SSE - C<send>
+event>): the server's emission path is the single point that guards the wire, so
+applications and frameworks MAY hold header values as opaque bytes and need not
+pre-validate them. (RFC 9110 S5.5; RFC 9112 S11.1.)
+
 =head3 Response Body - C<send> event
 
 Keys:
@@ -1625,7 +1638,9 @@ C<retry> (Int, optional) -- Milliseconds for the C<retry:> directive
 B<Field validation.> The C<event> and C<id> fields MUST NOT contain newline
 (C<\n> or C<\r>) characters: a newline there would forge an SSE frame boundary and
 let one dispatch inject another. A server MUST reject such a value -- the reference
-server raises, failing the C<send>. C<retry> MUST be a non-negative integer.
+server raises, failing the C<send>. This is the SSE-framing case of the same byte
+safety the server enforces on response headers (see L</Response Start - C<send>
+event>). C<retry> MUST be a non-negative integer.
 C<data> is the one field that legitimately contains newlines: the server splits it
 on newlines and emits one C<data:> line per segment, preserving multi-line
 payloads.
