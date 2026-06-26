@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002000
+0.002000 - 2026-06-26
   - The PAGI distribution is now the specification: PAGI.pm plus the
     PAGI::Spec::* documentation. The reference server and its runner
     (PAGI::Server::Runner) moved to the PAGI-Server distribution, and the
