@@ -1,6 +1,7 @@
 # This file documents the revision history for Perl extension PAGI
 
 0.002000 - 2026-06-26
+  [Distribution]
   - The PAGI distribution is now the specification: PAGI.pm plus the
     PAGI::Spec::* documentation. The reference server and its runner
     (PAGI::Server::Runner) moved to the PAGI-Server distribution, and the
@@ -21,6 +22,29 @@
     getting the server and toolkit. Depend on PAGI::Server / PAGI::Tools
     directly; this convenience dependency will be removed in a future
     release.
+
+  [Specification updates]
+  - pagi.connection gains response_started (MUST) and response_complete
+    (SHOULD). response_started is true once http.response.start is emitted for
+    the scope -- server-set, read-only, and producer-agnostic (an application
+    response and a server-synthesized backstop both set it; the terminal
+    callbacks carry the clean-vs-abnormal outcome). Because it lives on the
+    shared pagi.connection object it is observable across the middleware stack,
+    unlike a per-layer-copied scope scalar. Adds the per-request scoping note
+    for connection (HTTP/1.1/2/3; SSE as its own scope type).
+  - Documented scope shallow-clone semantics. Middleware clone the scope for
+    downward-only isolation: top-level keys are private to each layer, while
+    referenced values (the pagi.connection object, lifespan state) are shared,
+    so a plain top-level scalar does not propagate -- share per-request state
+    through a reference. PAGI::Spec states the normative minimum; the model is
+    detailed in PAGI::Building, with shorter notes in PAGI::PSGI and
+    PAGI::Tutorial.
+  - Header byte safety is now the server's duty. On emission a server MUST
+    reject (fail the send) any header name or value containing CR, LF, or NUL
+    (and control characters in names) rather than forwarding or silently
+    rewriting it (RFC 9112 S11.1, RFC 9110 S5.5). This generalizes the existing
+    sse.send field-newline rule to all header emission and lets app-side
+    containers such as PAGI::Headers hold values as opaque bytes.
 
 0.001023 - 2026-05-21
   - Fixed incorrect metadata and package version information
