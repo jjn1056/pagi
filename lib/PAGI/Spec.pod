@@ -331,6 +331,19 @@ Applications B<must> await all C<$send> calls before their Future completes:
 
 Work scheduled via C<<< ->retain >>> or other fire-and-forget patterns will race with connection cleanup and produce undefined behavior. The server has no visibility into retained Futures - they exist outside the application's Future tree.
 
+B<The value the Future resolves to is inert.> Completion is signalled by the
+Future resolving, errors by it failing, and every client-visible result by
+events sent through C<$send> (with connection facts such as C<response_started>
+exposed on the C<pagi.connection> object). The server assigns the resolved
+value no meaning and B<must not> act on it; a conformant application resolves to
+nothing meaningful.
+
+Frameworks layered above the gateway B<may> use the resolved value for their own
+composition -- for example, returning a response object up an internal call
+chain -- but B<must> convert any such value into protocol events at the gateway
+boundary. A framework value B<must not> escape to the server as the
+application's result.
+
 If an C<http> application's Future resolves without any C<http.response.start>
 having been sent -- and the client is still connected -- the client is left
 waiting for a response that will never arrive. As a last-resort B<backstop> the
@@ -425,10 +438,15 @@ PAGI middleware wraps an application:
                 die $error;
             }
             return $result;
-
-            # Shallow-clone the scope before modifying it (see below).
         };
     }
+
+A middleware propagates the inner application's B<Future> -- its completion and
+any exception -- not a value. The C<return> hands the inner application's
+resolution outward so completion and errors flow unchanged; the resolved value
+itself is inert (see L</Application Completion Contract>). A middleware that
+needs to observe or rewrite the response does so by wrapping C<$send> or
+C<$receive>, never by reading the return value.
 
 Middleware B<must not> mutate the original C<$scope> in place; clone before
 modifying:

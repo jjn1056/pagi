@@ -1,5 +1,16 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002001
+  [Specification updates]
+  - Application/middleware return value is now specified as inert: the server
+    assigns the resolved value no meaning and acts only on the Future
+    (completion/errors) and on events plus connection facts. Frameworks may use
+    return values for their own composition but must convert them to events at
+    the gateway boundary; a value must not escape to the server as the result.
+  - Middleware section: clarified that middleware propagate the inner Future
+    (not a value) and observe/rewrite responses by wrapping $send/$receive;
+    removed a stranded comment from the example.
+
 0.002000 - 2026-06-26
   [Distribution]
   - The PAGI distribution is now the specification: PAGI.pm plus the
