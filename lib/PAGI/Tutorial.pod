@@ -1271,7 +1271,144 @@ Example using L<PAGI::Endpoint::Router>:
 
   $router->to_app;
 
-=head2 2.8 UTF-8 Handling
+=head2 2.8 Middleware: Wrapping an Application
+
+Middleware is not a PAGI-Tools feature -- it is pure protocol. A middleware is
+just a function that takes an application and returns a new application with the
+same C<($scope, $receive, $send)> signature. Because the wrapper I<is> an
+application, you can stack middleware as deeply as you like, and the server
+cannot tell the difference between a bare app and one wrapped in ten layers.
+
+=head3 The Basic Shape
+
+  use Future::AsyncAwait;
+
+  sub with_logging {
+      my ($app) = @_;
+      return async sub {
+          my ($scope, $receive, $send) = @_;
+          warn "--> $scope->{method} $scope->{path}\n";
+          await $app->($scope, $receive, $send);
+      };
+  }
+
+  # Wrap a bare app:
+  my $wrapped = with_logging($app);
+
+The outer C<sub> runs once, when you build the application; the inner
+C<async sub> runs once per connection. Anything before C<< await $app->(...) >>
+happens on the way in, anything after happens on the way out.
+
+=head3 Modifying the Scope (Downward Only)
+
+A middleware may add to C<$scope> for the layers below it, but it B<must not>
+mutate the original in place. Clone first:
+
+  sub with_request_id {
+      my ($app) = @_;
+      my $counter = 0;
+      return async sub {
+          my ($scope, $receive, $send) = @_;
+          my $inner = { %$scope };               # shallow clone
+          $inner->{'myapp.request_id'} = ++$counter;
+          await $app->($inner, $receive, $send);
+      };
+  }
+
+The clone is B<shallow>, and deliberately so. Top-level keys you set on the
+clone are private to this layer and the layers below it; they never leak upward
+to the parent layers or the server. But values reached I<through> a reference --
+the C<pagi.connection> object, the lifespan C<state> namespace -- are shared by
+every layer, because the clone copies the reference, not what it points at. The
+rule of thumb: B<scope edits flow downward only; shared state lives behind a
+reference.> See L<PAGI::Building/MIDDLEWARE> for the full sharing model and why
+the clone is shallow rather than deep.
+
+=head3 Wrapping C<$send> to Rewrite the Response
+
+To observe or change what the inner app sends, wrap C<$send> and pass the
+wrapper down:
+
+  sub with_powered_by {
+      my ($app) = @_;
+      return async sub {
+          my ($scope, $receive, $send) = @_;
+          my $wrapped_send = async sub {
+              my ($event) = @_;
+              if ($event->{type} eq 'http.response.start') {
+                  push @{ $event->{headers} }, [ 'x-powered-by', 'PAGI' ];
+              }
+              await $send->($event);
+          };
+          await $app->($scope, $receive, $wrapped_send);
+      };
+  }
+
+This is how response-touching middleware (CORS headers, compression,
+content-length) works: it intercepts the event stream as it flows out. Wrapping
+C<$receive> works the same way for events flowing in -- buffer a request body,
+decode a format, or fold in synthetic events.
+
+=head3 Short-Circuiting
+
+A middleware does not have to call the inner app at all. To reject a request,
+respond yourself and return without calling C<$app>:
+
+  sub require_api_key {
+      my ($app) = @_;
+      return async sub {
+          my ($scope, $receive, $send) = @_;
+          my %h = map { lc $_->[0] => $_->[1] } @{ $scope->{headers} // [] };
+          unless (($h{'x-api-key'} // '') eq 'secret') {
+              await $send->({
+                  type    => 'http.response.start',
+                  status  => 401,
+                  headers => [ [ 'content-type', 'text/plain' ] ],
+              });
+              await $send->({ type => 'http.response.body', body => 'Unauthorized' });
+              return;                              # never reach $app
+          }
+          await $app->($scope, $receive, $send);
+      };
+  }
+
+=head3 Errors and the Return Value
+
+A middleware B<must> let exceptions from the inner app propagate -- never
+swallow them silently. If you catch in order to log, rethrow:
+
+  my $result = eval { await $app->($scope, $receive, $send) };
+  if (my $err = $@) {
+      warn "app error: $err";
+      die $err;                                   # propagate, do not swallow
+  }
+  return $result;
+
+Note what that C<return> is for. The value an application resolves to is
+B<inert>: the server assigns it no meaning (see
+L<PAGI::Spec/"Application Completion Contract">). A middleware returns only to
+propagate the inner app's B<Future> -- its completion and any exception. To
+observe or rewrite the response, wrap C<$send>; never reach for the return
+value. (Frameworks built on PAGI may use return values for their own internal
+composition, but they convert them to events before handing control back to the
+server.)
+
+=head3 Stacking
+
+Because each layer is itself an application, composing them is just nesting:
+
+  my $app = require_api_key( with_request_id( with_logging( $bare_app ) ) );
+
+The outermost wrapper runs first on the way in and last on the way out. Order
+matters: put logging outside auth if you want to log rejected requests, inside
+if you do not.
+
+Everything above is plain protocol -- no toolkit required. PAGI-Tools ships
+ready-made middleware (logging, sessions, CORS, compression, and more) and
+ergonomic helpers for writing your own; each is built exactly like the wrappers
+here. See L<PAGI::Tools::Tutorial>.
+
+=head2 2.9 UTF-8 Handling
 
 PAGI follows specific rules for UTF-8 encoding/decoding:
 
@@ -1459,7 +1596,7 @@ Key points:
 
 =back
 
-=head2 2.9 Async Patterns and Pitfalls
+=head2 2.10 Async Patterns and Pitfalls
 
 Understanding PAGI's async model is crucial to avoiding subtle bugs. This section covers common patterns and the most important pitfall to avoid.
 

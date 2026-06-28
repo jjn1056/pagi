@@ -11,6 +11,13 @@
     (not a value) and observe/rewrite responses by wrapping $send/$receive;
     removed a stranded comment from the example.
 
+  [Documentation]
+  - Tutorial: new Part 2 section "2.8 Middleware: Wrapping an Application"
+    teaching the pure $app -> $app pattern (scope cloning, wrapping
+    $send/$receive, short-circuiting, error propagation, the inert return
+    value, and stacking). UTF-8 and async-pitfalls sections renumbered to
+    2.9 and 2.10.
+
 0.002000 - 2026-06-26
   [Distribution]
   - The PAGI distribution is now the specification: PAGI.pm plus the
