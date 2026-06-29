@@ -1761,6 +1761,35 @@ Unlike C<websocket.close>, C<sse.close> carries B<no> code or client-visible
 reason: WebSocket has an RFC 6455 close frame to carry them, while SSE has no such
 frame on the wire.
 
+B<Return vs C<sse.close>.> Both terminate the stream and are B<identical on the
+wire>: the server writes the end-of-stream marker (the chunked terminator over
+HTTP/1.1, C<END_STREAM> over HTTP/2) and closes the stream. A client cannot tell
+which path was taken -- C<sse.close> adds nothing to the wire, since its C<reason>
+never leaves the server. They differ only in who signals the end, when, and with
+what server-side metadata:
+
+=over
+
+=item -
+
+B<Return> sends no end-event: the server infers completion from the application's
+returned Future resolving and tears the stream down then. The end is tied to the
+application returning.
+
+=item -
+
+B<C<sse.close>> is an explicit C<send> event: the server tears the stream down
+B<immediately> on receipt, B<before> the application returns. This lets a helper
+deep in the call stack end the stream in place (without unwinding to a return),
+frees the client's connection ahead of any slow post-close cleanup the application
+still has to perform, and records the C<reason> for the server's access log. After
+C<sse.close>, further sends raise (see above) and a subsequent return is a no-op.
+
+=back
+
+When the application's final act is its last C<sse.send> immediately followed by a
+return, the two paths are equivalent apart from the server-side C<reason>.
+
 =head3 SSE Disconnect - C<receive> event
 
 Sent to the application if the client disconnects or if the server shuts down the SSE stream after C<sse.start>.
