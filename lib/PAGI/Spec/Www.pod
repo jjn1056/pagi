@@ -1607,6 +1607,66 @@ sends C<Connection: keep-alive> and frames the stream with chunked
 C<Transfer-Encoding>; HTTP/2 multiplexes and DATA-frames the stream, so those
 connection-specific headers do not apply. Applications need not set any of these.
 
+=head3 Decline SSE - C<send> event
+
+An C<sse> request is an ordinary HTTP C<GET> with C<Accept: text/event-stream>;
+the server classifies it as an C<sse> scope before the application runs. Instead
+of starting an event stream, an application B<may> decline and return a normal
+HTTP response -- a C<404> for an unknown endpoint, a C<401>/C<403> for an
+unauthenticated request, a C<204> to tell an C<EventSource> client to stop
+reconnecting, a redirect, and so on. It sends two events B<in place of>
+C<sse.start>, valid only before the stream has started:
+
+=over
+
+=item -
+
+B<C<sse.http.response.start>> -- C<{ status (Int), headers (ArrayRef[ArrayRef[Bytes]]) }>,
+structured exactly like C<http.response.start>.
+
+=item -
+
+B<C<sse.http.response.body>> -- C<{ body (Bytes, default ""), more (Int, default 0) }>,
+structured exactly like C<http.response.body>; set C<<< more => 1 >>> to send the
+body in multiple events.
+
+=back
+
+These events are namespaced under C<sse.> -- mirroring the
+C<websocket.http.response> denial events -- so that an C<sse> scope only ever
+carries C<sse.*> events, keeping the server's per-scope dispatch and any
+event-type-aware middleware scope-separated.
+
+The server sends the resulting HTTP response and closes the connection; no event
+stream is started and no C<sse.disconnect> is delivered. This is a
+B<first-send-wins> choice: after C<sse.start>, C<sse.http.response.*> events are
+invalid and MUST raise; after C<sse.http.response.start>, the stream events
+(C<sse.send> / C<sse.comment> / C<sse.keepalive> / C<sse.close>) are invalid and
+MUST raise.
+
+Unlike the WebSocket denial response -- an optional extension with a
+C<websocket.close> fallback -- declining an SSE request is a B<core> capability:
+there is no event-stream fallback, so every conforming server MUST support it.
+
+    # Decline an unauthenticated SSE request with a 401 instead of streaming:
+    if (!authorized($scope)) {
+        await $send->({
+            type    => 'sse.http.response.start',
+            status  => 401,
+            headers => [
+                [ 'content-type',     'text/plain' ],
+                [ 'www-authenticate', 'Bearer' ],
+            ],
+        });
+        await $send->({ type => 'sse.http.response.body', body => 'Unauthorized' });
+        return;
+    }
+    await $send->({ type => 'sse.start', status => 200 });
+
+A C<204 No Content> (or any non-C<200>) response is the supported way to stop an
+C<EventSource> client's reconnection loop: the client treats it as a terminal
+failure and does not reconnect.
+
 =head3 Send SSE - C<send> event
 
 C<sse.send> emits a single SSE dispatch. Fields marked "String" are Unicode strings per the core data-type rules and MUST be UTF-8 encoded by the server before transmission.
