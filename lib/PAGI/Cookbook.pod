@@ -387,6 +387,60 @@ you stop when the client closes:
 Using C<< Future::IO->sleep >> rather than C<sleep> keeps the handler
 non-blocking and loop-agnostic.
 
+=head2 Ending a stream: return vs C<sse.close>
+
+A stream ends in one of two ways, and they are B<identical on the wire> -- the
+server writes the end-of-stream marker and closes; the client cannot tell them
+apart. B<Return> after the final C<sse.send> and the server ends the stream when
+your handler's Future resolves:
+
+    for my $msg (@events) {
+        await $send->({ type => 'sse.send', %$msg });
+    }
+    return;   # server flushes buffered events and closes
+
+Or end it B<explicitly> with C<sse.close>. This ends the stream B<immediately --
+before the handler returns> -- so a helper deep in the call stack can stop the
+stream in place, and you can attach a server-side C<reason> for your logs and
+metrics. The C<reason> is never sent to the client (SSE has no close frame):
+
+    async sub stream_until_done {
+        my ($send, $source) = @_;
+        while (my $item = await $source->next) {
+            return await $send->({ type => 'sse.close', reason => 'source_error' })
+                if $item->{fatal};
+            await $send->({ type => 'sse.send', data => $item->{data} });
+        }
+        await $send->({ type => 'sse.close', reason => 'source_drained' });
+    }
+
+After C<sse.close>, any further C<sse.send>/C<sse.comment>/C<sse.keepalive>
+raises, and a second C<sse.close> is a no-op. To tell the I<client> anything --
+including "stop reconnecting" -- send an ordinary C<sse.send> event before
+closing (and answer the client's next connection with HTTP C<204>); C<reason> is
+for the server side only.
+
+Because the close is an event on C<$send>, middleware can observe it. Wrap
+C<$send> to fan close reasons out to metrics or tracing without touching the
+application:
+
+    sub observe_sse_closes {
+        my ($app) = @_;
+        return async sub {
+            my ($scope, $receive, $send) = @_;
+            my $wrapped = async sub {
+                my ($event) = @_;
+                metric_inc('sse_close', { reason => $event->{reason} // 'unspecified' })
+                    if ($event->{type} // '') eq 'sse.close';
+                return await $send->($event);   # forward unchanged
+            };
+            await $app->($scope, $receive, $wrapped);
+        };
+    }
+
+An auto-close-on-return stream has no event to intercept, so it cannot be
+observed this way. See L<PAGI::Spec::Www/"Close SSE - C<send> event">.
+
 =head1 FLOW CONTROL
 
 =head2 Keeping a slow client current instead of stale

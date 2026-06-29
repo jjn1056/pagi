@@ -19,6 +19,9 @@
     Returning after the final sse.send remains a valid way to end a stream.
 
   [Documentation]
+  - Cookbook: new SERVER-SENT EVENTS recipe "Ending a stream: return vs
+    sse.close" -- the two termination paths (identical on the wire), the
+    server-side-only reason, and observing close events by wrapping $send.
   - Tutorial: new Part 2 section "2.8 Middleware: Wrapping an Application"
     teaching the pure $app -> $app pattern (scope cloning, wrapping
     $send/$receive, short-circuiting, error propagation, the inert return
