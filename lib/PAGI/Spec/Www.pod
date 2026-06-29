@@ -1645,7 +1645,10 @@ C<data> is the one field that legitimately contains newlines: the server splits 
 on newlines and emits one C<data:> line per segment, preserving multi-line
 payloads.
 
-To end the SSE stream the application simply returns after the final C<sse.send>. The server will flush buffered events and close the HTTP connection.
+To end the SSE stream the application either returns after its final C<sse.send>,
+or sends C<sse.close> explicitly (see L</Close SSE - C<send> event>). On return the
+server flushes buffered events and closes the HTTP connection; C<sse.close> does
+the same immediately, decoupled from the application returning.
 
 =head3 SSE Comment - C<send> event
 
@@ -1719,6 +1722,44 @@ B<Example:>
         interval => 30,
         comment  => 'ping',
     });
+
+=head3 Close SSE - C<send> event
+
+C<sse.close> ends the SSE stream explicitly. It is the SSE analog of
+C<http.response.body> with C<<< more => 0 >>>: the server flushes any buffered
+events, writes the end-of-stream marker, and closes the stream. An application
+B<may> end a stream either by returning after its final C<sse.send> or by sending
+C<sse.close>; the latter is the explicit form and ends the stream B<immediately>,
+decoupled from the application returning -- which lets a helper deep in the call
+stack end the stream without unwinding to the top.
+
+=over
+
+=item -
+
+C<type> -- C<"sse.close">
+
+=item -
+
+C<reason> (String, optional) -- A server-side reason for logging, metrics, or
+tracing (for example C<"job_complete">). The SSE wire protocol has no close frame,
+so C<reason> is B<never transmitted to the client>; it is server-side metadata
+only, surfaced through the same channels as the C<sse.disconnect> reason. To convey
+anything to the client -- including "stop reconnecting" -- send an ordinary
+C<sse.send> event before closing and use an HTTP C<204> (or C<retry:>) on the
+client's next connection.
+
+=back
+
+After C<sse.close>, any further C<sse.send>, C<sse.comment>, or C<sse.keepalive>
+on the same connection B<MUST> raise -- the stream is closed. C<sse.close> is
+B<idempotent>: a second C<sse.close> is ignored. C<sse.close> does not by itself
+stop the client reconnecting; that is governed by the response to the client's
+next connection, not by the close of the current stream.
+
+Unlike C<websocket.close>, C<sse.close> carries B<no> code or client-visible
+reason: WebSocket has an RFC 6455 close frame to carry them, while SSE has no such
+frame on the wire.
 
 =head3 SSE Disconnect - C<receive> event
 

@@ -10,6 +10,13 @@
   - Middleware section: clarified that middleware propagate the inner Future
     (not a value) and observe/rewrite responses by wrapping $send/$receive;
     removed a stranded comment from the example.
+  - Added the sse.close send-event: an explicit, application-initiated end to an
+    SSE stream (the SSE analog of http.response.body{more=>0}), ending it
+    immediately and decoupled from the application returning. Optional reason
+    field is server-side metadata only -- never transmitted to the client (SSE
+    has no close frame, unlike websocket.close). After sse.close, further
+    sse.send/sse.comment/sse.keepalive MUST raise; sse.close is idempotent.
+    Returning after the final sse.send remains a valid way to end a stream.
 
   [Documentation]
   - Tutorial: new Part 2 section "2.8 Middleware: Wrapping an Application"
