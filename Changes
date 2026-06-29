@@ -17,6 +17,14 @@
     has no close frame, unlike websocket.close). After sse.close, further
     sse.send/sse.comment/sse.keepalive MUST raise; sse.close is idempotent.
     Returning after the final sse.send remains a valid way to end a stream.
+  - Added sse.http.response.start / sse.http.response.body send-events: before
+    sse.start, an application MAY decline the stream and return a normal HTTP
+    response (404, 401, a 204 to stop EventSource reconnection, a redirect, ...).
+    Namespaced under sse. (mirroring the websocket.http.response denial events) so
+    an sse scope only carries sse.* events. First-send-wins: after sse.start these
+    are invalid; after sse.http.response.start the stream events are invalid (both
+    MUST raise). Unlike the WebSocket denial extension this is a core capability
+    (no event-stream fallback exists), so every conforming server MUST support it.
 
   [Documentation]
   - Cookbook: new SERVER-SENT EVENTS recipe "Ending a stream: return vs
