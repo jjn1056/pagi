@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002001
+0.002001 - 2026-06-30
   [Specification updates]
   - Application/middleware return value is now specified as inert: the server
     assigns the resolved value no meaning and acts only on the Future

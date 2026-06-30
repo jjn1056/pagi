@@ -12,8 +12,8 @@ requires 'perl', '5.018';
 # them. To avoid breaking those dependents, installing PAGI continues to pull
 # in PAGI-Server and PAGI-Tools, exactly as before. If you use the server or
 # the toolkit, please depend on PAGI::Server and/or PAGI::Tools directly.
-requires 'PAGI::Server', '0.002000';
-requires 'PAGI::Tools', '0.002000';
+requires 'PAGI::Server', '0.002005';
+requires 'PAGI::Tools', '0.002001';
 
 on 'test' => sub {
     requires 'Test2::V0',          '0.000159';
