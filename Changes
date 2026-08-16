@@ -1,5 +1,15 @@
 # This file documents the revision history for Perl extension PAGI
 
+Unreleased
+  [Specification clarifications]
+  - Centralized the $send Future contract: successful resolution means the
+    server has finished consuming the event and any tied application resource,
+    and accepted its output for outbound processing; it does not mean client
+    receipt or complete-response delivery. Before close, validation and
+    resource failures fail the Future; post-close sends are successful no-ops,
+    and pending send Futures carry transport-independent backpressure even
+    without optional pagi.transport introspection.
+
 0.002001 - 2026-06-30
   [Specification updates]
   - Application/middleware return value is now specified as inert: the server
@@ -467,5 +477,3 @@
 
 0.001001 - 2025-12-17
   - Placeholder release
-
-
