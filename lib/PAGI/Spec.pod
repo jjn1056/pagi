@@ -95,7 +95,7 @@ C<type>: Protocol type, e.g., C<http>, C<websocket>
 
 =item -
 
-C<pagi>: A hashref with at least:
+C<pagi>: A hashref containing:
 
 =over
 
@@ -105,7 +105,9 @@ C<version> -- the core PAGI specification version, e.g. C<'0.4'>
 
 =item -
 
-C<spec_version> -- the protocol sub-spec version (optional; if omitted, assume it matches C<version>), e.g. C<'0.3'>
+C<spec_version> -- the protocol sub-spec version, e.g. C<'0.3'>. It may be
+omitted only as permitted by that protocol specification; if omitted, use the
+protocol's documented default.
 
 =back
 
@@ -127,11 +129,19 @@ Clarification on PAGI version keys:
 
 =item -
 
-C<version>: Signals the core PAGI specification version that governs scopes/events. This value B<must> be a string.
+C<version>: Signals the core PAGI specification version that governs the
+runtime application interface and core semantics. This value B<must> be a
+string.
 
 =item -
 
-C<spec_version>: Indicates the version for the specific protocol (such as HTTP or WebSocket). Core and protocol versions are independent and need not be equal. Servers may omit C<spec_version> only when it is the same as C<version>; applications should assume equality when it is omitted.
+C<spec_version>: Indicates the version for the specific protocol (such as HTTP
+or WebSocket). Core and protocol versions are independent and need not be
+equal. Each protocol specification MUST define the version represented by an
+omitted C<spec_version>. Applications MUST use that protocol-defined default
+and MUST NOT infer it from C<version>. A server that omits C<spec_version> is
+declaring only the protocol-defined default and MUST NOT use behaviour
+introduced by a later protocol version on that connection.
 
 =item -
 
@@ -582,7 +592,9 @@ Byte content (e.g., body payloads) must be passed as Perl scalars B<without> the
 0.4 (Draft): Distinguished the runtime PAGI application from an
 application-provider object and canonized one-time-per-load C<to_app>
 normalization by general-purpose application runners. Lifecycle remains part
-of the lifespan protocol rather than an inferred provider-object hook.
+of the lifespan protocol rather than an inferred provider-object hook. Core
+and protocol versions evolve independently; each protocol now owns the
+compatibility default for an omitted C<spec_version>.
 
 =item -
 

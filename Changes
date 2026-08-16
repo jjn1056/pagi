@@ -10,6 +10,10 @@ Unreleased
   - Lifecycle handling remains part of the lifespan protocol and is not
     inferred by PAGI from methods on application-provider objects; deployment
     tools remain free to define their own non-protocol hooks.
+  - Core and protocol versions now explicitly evolve independently. An omitted
+    pagi.spec_version uses the default owned by the applicable protocol rather
+    than the core version; WWW and Lifespan both use 0.1 as their conservative
+    compatibility default.
   - Revised PAGI::Spec::Server to version 0.2. PAGI no longer prescribes a
     new(app => ...) constructor or run method for conforming servers; server
     construction and plugin compatibility belong to runner-specific APIs.
