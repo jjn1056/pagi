@@ -1,5 +1,19 @@
 # This file documents the revision history for Perl extension PAGI
 
+Unreleased
+  [Specification 0.4 Draft]
+  - Distinguished the canonical runtime PAGI code reference from an
+    application-provider object. General-purpose runners should accept either;
+    each loaded provider instance is normalized exactly once through to_app
+    before dispatch, and only the resulting code reference crosses the runtime
+    boundary.
+  - Lifecycle handling remains part of the lifespan protocol and is not
+    inferred by PAGI from methods on application-provider objects; deployment
+    tools remain free to define their own non-protocol hooks.
+  - Revised PAGI::Spec::Server to version 0.2. PAGI no longer prescribes a
+    new(app => ...) constructor or run method for conforming servers; server
+    construction and plugin compatibility belong to runner-specific APIs.
+
 0.002001 - 2026-06-30
   [Specification updates]
   - Application/middleware return value is now specified as inert: the server
@@ -467,5 +481,3 @@
 
 0.001001 - 2025-12-17
   - Placeholder release
-
-

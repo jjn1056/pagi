@@ -2,118 +2,106 @@
 
 =head1 NAME
 
-PAGI::Spec::Server - The PAGI server runner contract for swappable servers
+PAGI::Spec::Server - PAGI server and application-runner integration guidance
 
-=head1 PAGI Server Runner Contract
+=head1 PAGI Server and Application-Runner Integration
 
-B<Version>: 0.1 (Draft)
+B<Version>: 0.2 (Draft)
 
-This document specifies the interface a PAGI server class implements so
-that application runners (L<PAGI::Server::Runner>'s C<-s CLASS> option, deployment
-tooling, etc.) can construct and start it without server-specific
-knowledge. It is the server-side counterpart of the application
-interface described in L<the main specification|PAGI::Spec>.
+The main specification, L<PAGI::Spec>, defines the runtime boundary between a
+PAGI server and application. This document clarifies how deployment tooling
+reaches that boundary without prescribing a Perl object model for servers.
 
-A PAGI server is any code that accepts PAGI applications and speaks the
-protocol in L<the main specification|PAGI::Spec>. Implementing this
-contract is OPTIONAL but RECOMMENDED for any server that wishes to be
-usable as a drop-in replacement with C<PAGI::Server::Runner> or compatible
-runners.
+=head2 Runtime Boundary
 
-=head2 Constructor
+A PAGI server invokes a normalized PAGI application code reference and speaks
+the scopes and events defined by the PAGI protocol specifications. Conformance
+is determined by that runtime behaviour, not by how the server is constructed
+or started.
 
-A conforming server class MUST provide a C<new> class method accepting a
-hash of options:
+A server may be exposed as a class, a function, an embedded service, an
+external process, or another implementation-specific interface. PAGI does not
+require a C<new> constructor, a C<app> constructor option, a C<run> method, or
+any particular event-loop ownership model.
 
-    my $server = My::PAGI::Server->new(%options);
+=head2 Application Loading and Normalization
 
-A runner passes the following common options. A conforming server MUST
-accept these (it MAY ignore ones that do not apply, but MUST NOT die on
-them):
+The canonical runtime application is always a code reference accepting
+C<($scope, $receive, $send)> and returning a Future. As described in
+L<PAGI::Spec/Application Providers and Loading>, a general-purpose application
+runner SHOULD also accept an application-provider object implementing
+C<to_app>.
 
-=over
+When given a provider object, the runner MUST call C<to_app> exactly once per
+loaded provider instance, verify that it returned a code reference, and pass
+only that normalized code reference across the server/application boundary.
+Provider construction failures and invalid C<to_app> return values are loading
+errors; they MUST be reported before the runner starts serving traffic. A
+native code reference takes precedence over provider-method detection, even if
+that code reference is blessed.
 
-=item -
+=head2 Server Construction
 
-C<app> (code reference, required) - the PAGI application.
+The mechanism by which a runner configures and starts a server is an API of
+that runner and server implementation, not part of PAGI conformance. A runner
+may offer server-class selection, constructor options, command-line switches,
+or plugin contracts, but other conforming runners and servers need not use the
+same conventions.
 
-=item -
+For example, L<PAGI::Server::Runner> currently constructs the reference
+L<PAGI::Server> and offers a C<-s CLASS> extension point. Those interfaces are
+documented by the C<PAGI-Server> distribution; they are not required of every
+PAGI server.
 
-C<host> (string) - interface to bind. Runners supply a default
-(C<PAGI::Server::Runner> uses C<127.0.0.1>) when no other binding option is given.
+=head2 Runner Guidance
 
-=item -
-
-C<port> (integer) - TCP port to bind. Runner default: C<5000>.
-
-=item -
-
-C<quiet> (boolean) - suppress startup banners and informational output.
-
-=item -
-
-C<access_log> (filehandle or undef) - where to write access logs; an
-explicit undef disables access logging. When the option is absent the
-server chooses its own default.
-
-=item -
-
-C<loop_type> (string) - event loop implementation hint. Servers not
-offering a choice of loop MAY ignore it.
-
-=back
-
-Any further options are server-specific. They are collected by the
-server's own CLI wrapper (for C<PAGI::Server>, C<bin/pagi-server>) and
-passed through the runner's C<server_options> mechanism verbatim. A
-conforming server SHOULD reject options it does not recognize as
-either common options (listed above) or its own documented
-server-specific options, with a clear error naming the option.
-
-=head2 run
-
-A conforming server class MUST provide a C<run> instance method:
-
-    $server->run;
-
-C<run> blocks the calling process, owns the event loop, and returns (or
-exits) only when the server has shut down. Signal handling, worker
-management, and graceful-shutdown behaviour are server-specific.
-
-Runners MUST NOT place critical cleanup logic in code that follows
-C<run>, since a conforming server MAY terminate the process directly
-instead of returning; runners should register cleanup with Perl's C<END>
-mechanism or equivalent.
-
-=head2 Runner conventions
-
-Application runners that construct servers by class name SHOULD:
+A general-purpose runner should keep loading and runtime responsibilities
+separate:
 
 =over
 
 =item -
 
-accept the class via a C<-s>/C<--server CLASS> style option, defaulting
-to C<PAGI::Server>;
+discover and construct the configured application or provider;
 
 =item -
 
-load the class, call C<new> with the options above plus any
-server-specific passthrough options, then call C<run>;
+normalize a provider through C<to_app> before using it for connection
+dispatch;
 
 =item -
 
-treat C<run> as blocking and perform daemonization, PID files, and
-privilege dropping before calling it.
+configure and start the selected server through its implementation-specific
+API; and
+
+=item -
+
+use only the normalized application code reference for per-connection
+dispatch.
 
 =back
 
-See L<PAGI::Server::Runner> for the reference runner implementation and
-L<PAGI::Server> for the reference server.
+Loading errors should identify whether discovery, provider construction,
+C<to_app>, or return-value validation failed.
+
+=head2 Portability
+
+A native PAGI application code reference is portable across conforming PAGI
+servers and runners. An application-provider object is portable across runners
+that adopt the C<to_app> loading convention. Whether one server implementation
+can be selected as a drop-in replacement for another depends on the runner's
+plugin API and is not guaranteed by the PAGI runtime specification.
 
 =head2 Version History
 
 =over
+
+=item -
+
+0.2 (Draft): Removed the prescribed C<new(app =E<gt> ...)> and C<run>
+server-class contract. Clarified the separation between the runtime PAGI
+application, one-time application-provider normalization, and
+implementation-specific server construction.
 
 =item -
 

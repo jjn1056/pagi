@@ -9,7 +9,7 @@ PAGI::Spec - The base PAGI specification: application interface and core concept
 I<Note: code examples are illustrative; their style is a documentation
 convenience, not a requirement of the specification.>
 
-B<Version>: 0.3 (Draft)
+B<Version>: 0.4 (Draft)
 
 =head2 Introduction
 
@@ -101,7 +101,7 @@ C<pagi>: A hashref with at least:
 
 =item -
 
-C<version> -- the core PAGI specification version, e.g. C<'0.3'>
+C<version> -- the core PAGI specification version, e.g. C<'0.4'>
 
 =item -
 
@@ -131,7 +131,7 @@ C<version>: Signals the core PAGI specification version that governs scopes/even
 
 =item -
 
-C<spec_version>: Indicates the version for the specific protocol (such as HTTP or WebSocket). Servers may omit it, in which case applications should assume it matches C<version>.
+C<spec_version>: Indicates the version for the specific protocol (such as HTTP or WebSocket). Core and protocol versions are independent and need not be equal. Servers may omit C<spec_version> only when it is the same as C<version>; applications should assume equality when it is omitted.
 
 =item -
 
@@ -254,15 +254,54 @@ B<Note:> Booleans are intentionally omitted from the core spec to avoid ambiguit
 
 =head3 Applications
 
-PAGI applications are single coderefs returning Futures.
+At the server/application protocol boundary, a PAGI application is a single
+code reference that accepts C<($scope, $receive, $send)> and returns a Future.
+This is the only runtime application interface defined by PAGI.
 
-Applications may optionally support lifecycle hooks such as shutdown. If supported, the PAGI server should call:
+Application startup and shutdown are expressed through the lifespan protocol
+in L<PAGI::Spec::Lifespan>. Methods on an application-provider object are not
+PAGI lifecycle hooks. Deployment tooling may define its own provider hooks,
+but they do not replace or alter the PAGI lifespan protocol.
 
-    $app->on_shutdown(sub {
-        # Optional shutdown logic (e.g., flush logs, close DB)
-    });
+=head4 Application Providers and Loading
 
-This pattern is reserved and may be formalized in a future PAGI extension.
+PAGI defines the runtime application interface, not how deployment tooling
+discovers, configures, or constructs an application. To support applications
+that need configuration or retain construction metadata, a general-purpose
+application runner SHOULD accept both of these input forms:
+
+=over
+
+=item -
+
+a native PAGI application code reference; or
+
+=item -
+
+an application-provider object that implements C<to_app>.
+
+=back
+
+An application-provider object is not itself a PAGI application. A runner
+that accepts one MUST call C<to_app> exactly once per loaded provider instance,
+before using it for connection dispatch, and MUST verify that the result is a
+code reference. An exception from C<to_app>, or any other return value, is an
+application-loading failure and MUST be reported before the runner begins
+serving traffic. Reloading an application or constructing independent worker
+instances constitutes a new load; request and connection dispatch do not.
+
+A value that is itself a code reference is already a native PAGI application,
+even if it is blessed. It MUST be used as the application without calling a
+C<to_app> method it may also provide.
+
+A runner MUST NOT call C<to_app> once per request or connection. After
+normalization, the server, middleware, and all per-connection dispatch use only
+the resulting PAGI application code reference.
+
+File names, module names, command-line expressions, configuration formats,
+server construction, and runner plugin APIs are deployment-tool concerns and
+are outside this specification. See L<PAGI::Spec::Server> for integration
+guidance.
 
 Applications B<must> throw an exception if the incoming C<<< scope->{type} >>> is not supported. This prevents the server from assuming a protocol is handled when it is not, and avoids ambiguity in multi-protocol deployments.
 
@@ -540,6 +579,13 @@ Byte content (e.g., body payloads) must be passed as Perl scalars B<without> the
 
 =item -
 
+0.4 (Draft): Distinguished the runtime PAGI application from an
+application-provider object and canonized one-time-per-load C<to_app>
+normalization by general-purpose application runners. Lifecycle remains part
+of the lifespan protocol rather than an inferred provider-object hook.
+
+=item -
+
 0.3 (Draft): Removed C<pagi.features> (superseded by the C<extensions>
 mechanism). See L<PAGI::Spec::Www> for the HTTP/WebSocket/SSE 0.3 changes.
 
@@ -578,7 +624,7 @@ L<PAGI::Spec::Tls> - TLS connection information extension
 
 =item -
 
-L<PAGI::Spec::Server> - server runner contract for swappable servers
+L<PAGI::Spec::Server> - server and application-runner integration guidance
 
 =back
 

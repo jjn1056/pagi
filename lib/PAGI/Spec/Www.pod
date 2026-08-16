@@ -313,11 +313,11 @@ C<type> (String) -- C<"http">
 
 =item -
 
-C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.3'>)
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.4'>)
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (optional; if omitted, assume it matches C<version>)
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.3'>; optional only when it matches C<version>)
 
 =item -
 
@@ -1110,11 +1110,11 @@ C<type> (String) -- C<"websocket">
 
 =item -
 
-C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.3'>)
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.4'>)
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (optional; if omitted, assume it matches C<version>)
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.3'>; optional only when it matches C<version>)
 
 =item -
 

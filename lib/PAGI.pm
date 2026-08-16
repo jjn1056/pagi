@@ -147,9 +147,9 @@ L</INSTALLATION AND BACKWARD COMPATIBILITY>).
 The reference server (L<PAGI::Server>): an L<IO::Async>-based implementation
 supporting HTTP/1.1, HTTP/2, WebSocket, SSE, TLS, and multi-worker pre-forking,
 validated against L<PAGI::Server::Compliance>. Provides the C<pagi-server> CLI
-and L<PAGI::Server::Runner> (the C<-s CLASS> swappable-server runner behind
-C<pagi-server>). Any server implementing the contract in L<PAGI::Spec::Server>
-is a drop-in alternative.
+and L<PAGI::Server::Runner>. L<PAGI::Spec::Server> documents the boundary
+between application loading and the runtime PAGI application; server selection
+and plugin compatibility are runner-specific APIs.
 
 =item C<PAGI-Tools>
 
@@ -351,7 +351,7 @@ requires L<Future::AsyncAwait>).
 
 =item L<PAGI::Spec::Extensions> - The server extension mechanism
 
-=item L<PAGI::Spec::Server> - The server runner contract for swappable servers
+=item L<PAGI::Spec::Server> - Server and application-runner integration guidance
 
 =item L<PAGI::Server> - Reference server (C<PAGI-Server> distribution)
 
@@ -391,4 +391,3 @@ John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
 This software is licensed under the same terms as Perl itself.
 
 =cut
-

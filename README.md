@@ -76,8 +76,9 @@ specification without pulling in a particular server or toolkit:
 - **PAGI** (this repository) — the specification, tutorial, cookbook, and
   example applications.
 - **PAGI-Server** — the reference server: HTTP/1.1, HTTP/2, WebSocket, SSE, TLS,
-  multi-worker, and the `pagi-server` CLI. Any server implementing the contract
-  in `PAGI::Spec::Server` is a drop-in alternative.
+  multi-worker, and the `pagi-server` CLI. `PAGI::Spec::Server` documents
+  application-loading and runtime integration; server plugin compatibility is
+  defined by each runner.
 - **PAGI-Tools** — the application toolkit: middleware, ready-made apps, the
   endpoint/router framework, request/response helpers, and `PAGI::App::WrapPSGI`.
 
