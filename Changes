@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-Unreleased
+0.002002 - 2026-08-21
   [Specification clarifications]
   - Centralized the $send Future contract: successful resolution means the
     server has finished consuming the event and any tied application resource,

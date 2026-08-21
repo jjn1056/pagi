@@ -3,7 +3,7 @@ package PAGI;
 use strict;
 use warnings;
 
-our $VERSION = '0.002001';
+our $VERSION = '0.002002';
 
 1;
 
@@ -391,4 +391,3 @@ John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
 This software is licensed under the same terms as Perl itself.
 
 =cut
-
