@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-Unreleased
+0.002002 - 2026-08-21
   [Specification 0.4 Draft]
   - Distinguished the canonical runtime PAGI code reference from an
     application-provider object. General-purpose runners should accept either;
@@ -17,6 +17,15 @@ Unreleased
   - Revised PAGI::Spec::Server to version 0.2. PAGI no longer prescribes a
     new(app => ...) constructor or run method for conforming servers; server
     construction and plugin compatibility belong to runner-specific APIs.
+
+  [Specification clarifications]
+  - Centralized the $send Future contract: successful resolution means the
+    server has finished consuming the event and any tied application resource,
+    and accepted its output for outbound processing; it does not mean client
+    receipt or complete-response delivery. Before close, validation and
+    resource failures fail the Future; post-close sends are successful no-ops,
+    and pending send Futures carry transport-independent backpressure even
+    without optional pagi.transport introspection.
 
 0.002001 - 2026-06-30
   [Specification updates]
