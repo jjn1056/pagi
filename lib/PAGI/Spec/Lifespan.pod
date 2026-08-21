@@ -99,7 +99,12 @@ The C<version> key of the C<pagi> hashref (accessed as C<< $scope->{pagi}{versio
 
 =item -
 
-The C<spec_version> key of the C<pagi> hashref (accessed as C<< $scope->{pagi}{spec_version} >>) (String) - The version of this lifespan sub-specification. Optional; if missing, assume it matches C<version>.
+The C<spec_version> key of the C<pagi> hashref (accessed as
+C<< $scope->{pagi}{spec_version} >>) (String) - The version of this lifespan
+sub-specification. Optional; if missing, applications MUST assume C<'0.1'>.
+Omitting it declares support for version 0.1 only, so the server MUST NOT use
+behaviour introduced by a later lifespan version. The core PAGI C<version>
+does not affect this default.
 
 =item -
 

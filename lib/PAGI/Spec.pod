@@ -9,7 +9,7 @@ PAGI::Spec - The base PAGI specification: application interface and core concept
 I<Note: code examples are illustrative; their style is a documentation
 convenience, not a requirement of the specification.>
 
-B<Version>: 0.3 (Draft)
+B<Version>: 0.4 (Draft)
 
 =head2 Introduction
 
@@ -95,17 +95,19 @@ C<type>: Protocol type, e.g., C<http>, C<websocket>
 
 =item -
 
-C<pagi>: A hashref with at least:
+C<pagi>: A hashref containing:
 
 =over
 
 =item -
 
-C<version> -- the core PAGI specification version, e.g. C<'0.3'>
+C<version> -- the core PAGI specification version, e.g. C<'0.4'>
 
 =item -
 
-C<spec_version> -- the protocol sub-spec version (optional; if omitted, assume it matches C<version>), e.g. C<'0.3'>
+C<spec_version> -- the protocol sub-spec version, e.g. C<'0.3'>. It may be
+omitted only as permitted by that protocol specification; if omitted, use the
+protocol's documented default.
 
 =back
 
@@ -127,11 +129,19 @@ Clarification on PAGI version keys:
 
 =item -
 
-C<version>: Signals the core PAGI specification version that governs scopes/events. This value B<must> be a string.
+C<version>: Signals the core PAGI specification version that governs the
+runtime application interface and core semantics. This value B<must> be a
+string.
 
 =item -
 
-C<spec_version>: Indicates the version for the specific protocol (such as HTTP or WebSocket). Servers may omit it, in which case applications should assume it matches C<version>.
+C<spec_version>: Indicates the version for the specific protocol (such as HTTP
+or WebSocket). Core and protocol versions are independent and need not be
+equal. Each protocol specification MUST define the version represented by an
+omitted C<spec_version>. Applications MUST use that protocol-defined default
+and MUST NOT infer it from C<version>. A server that omits C<spec_version> is
+declaring only the protocol-defined default and MUST NOT use behaviour
+introduced by a later protocol version on that connection.
 
 =item -
 
@@ -254,15 +264,61 @@ B<Note:> Booleans are intentionally omitted from the core spec to avoid ambiguit
 
 =head3 Applications
 
-PAGI applications are single coderefs returning Futures.
+At the server/application protocol boundary, a PAGI application is a single
+code reference that accepts C<($scope, $receive, $send)> and returns a Future.
+This is the only runtime application interface defined by PAGI.
 
-Applications may optionally support lifecycle hooks such as shutdown. If supported, the PAGI server should call:
+Application startup and shutdown are expressed through the lifespan protocol
+in L<PAGI::Spec::Lifespan>. Methods on an application-provider object are not
+PAGI lifecycle hooks. Deployment tooling may define its own provider hooks,
+but they do not replace or alter the PAGI lifespan protocol.
 
-    $app->on_shutdown(sub {
-        # Optional shutdown logic (e.g., flush logs, close DB)
-    });
+=head4 Application Providers and Loading
 
-This pattern is reserved and may be formalized in a future PAGI extension.
+PAGI defines the runtime application interface, not how deployment tooling
+discovers, configures, or constructs an application. To support applications
+that need configuration or retain construction metadata, a general-purpose
+application runner SHOULD accept both of these input forms:
+
+=over
+
+=item -
+
+a native PAGI application code reference; or
+
+=item -
+
+an already-instantiated application-provider object that implements C<to_app>.
+
+=back
+
+An application-provider object is not itself a PAGI application. A runner
+that accepts one MUST call C<to_app> exactly once per loaded provider instance,
+before using it for connection dispatch, and MUST verify that the result is a
+code reference. An exception from C<to_app>, or any other return value, is an
+application-loading failure and MUST be reported before the runner begins
+serving traffic. Reloading an application or constructing independent worker
+instances constitutes a new load; request and connection dispatch do not.
+
+In this convention, an application-provider object is an already-instantiated
+blessed reference. A package-name string is not an application provider, and a
+runner MUST NOT satisfy provider normalization by invoking C<to_app> as a class
+method. Deployment tooling MAY accept module or class names as its own
+discovery and configuration input, but it must first construct an object or
+obtain a native PAGI code reference before entering this normalization step.
+
+A value that is itself a code reference is already a native PAGI application,
+even if it is blessed. It MUST be used as the application without calling a
+C<to_app> method it may also provide.
+
+A runner MUST NOT call C<to_app> once per request or connection. After
+normalization, the server, middleware, and all per-connection dispatch use only
+the resulting PAGI application code reference.
+
+File names, module names, command-line expressions, configuration formats,
+server construction, and runner plugin APIs are deployment-tool concerns and
+are outside this specification. See L<PAGI::Spec::Server> for integration
+guidance.
 
 Applications B<must> throw an exception if the incoming C<<< scope->{type} >>> is not supported. This prevents the server from assuming a protocol is handled when it is not, and avoids ambiguity in multi-protocol deployments.
 
@@ -308,6 +364,32 @@ C<$send>: Coderef taking an event hashref and returning a C<Future>
 =back
 
 Each application is called per-connection, and remains active until the connection closes and cleanup completes.
+
+=head3 Send Completion Contract
+
+Every call to C<$send> returns a Future. Successful resolution means the server
+has validated and finished consuming the event, including any
+application-owned resource whose lifetime is tied to that send, and has
+accepted the resulting output into its outbound processing path. The
+application may release such a resource after the Future resolves.
+
+Resolution does B<not> mean that bytes have reached the network socket, an
+intermediary, or the client. It also does not mean that the complete response
+has been delivered.
+
+A server MAY keep the Future pending to apply outbound flow control. Awaiting
+C<$send> is therefore the transport-independent mechanism by which an
+application self-paces; awaiting a pending send suspends the application
+coroutine, not the Perl thread. This contract applies whether or not the server
+provides the optional C<pagi.transport> introspection object described by the
+applicable protocol specification.
+
+Before the connection closes, event-validation and event-resource failures
+required by the applicable protocol specification MUST fail the returned
+Future. After the connection has closed, C<$send> instead returns a
+successfully resolved Future and performs no work: it neither delivers the
+event nor signals closure. Applications detect closure through the protocol's
+disconnect event and any applicable connection-state object.
 
 =head3 Application Completion Contract
 
@@ -490,7 +572,8 @@ Applications receiving these events should immediately halt unnecessary work, op
 
 =head3 Error Handling
 
-Servers must raise exceptions if:
+Before the connection closes, a server MUST reject an outgoing event by
+returning a failed Future from C<$send> if:
 
 =over
 
@@ -508,11 +591,15 @@ The C<type> field is unrecognized
 
 =back
 
-Applications should do the same when receiving malformed events.
+Applications should reject malformed incoming events by failing their
+application Future.
 
 Extra fields in events B<must not> cause errors -- this supports forward-compatible upgrades.
 
-If C<$send> is called after the connection has closed, it is a no-op: it neither delivers data nor raises. Applications detect closure through the protocol's disconnect event (and, for HTTP, the C<pagi.connection> state object), not by inspecting the result of C<$send>.
+The post-close behaviour of C<$send> is defined in L</Send Completion
+Contract>: it is a successful no-op and does not report closure. Applications
+use the protocol's disconnect event and, for HTTP, the C<pagi.connection> state
+object instead.
 
 =head3 Extensions
 
@@ -537,6 +624,15 @@ Byte content (e.g., body payloads) must be passed as Perl scalars B<without> the
 =head2 Version History
 
 =over
+
+=item -
+
+0.4 (Draft): Distinguished the runtime PAGI application from an
+application-provider object and canonized one-time-per-load C<to_app>
+normalization by general-purpose application runners. Lifecycle remains part
+of the lifespan protocol rather than an inferred provider-object hook. Core
+and protocol versions evolve independently; each protocol now owns the
+compatibility default for an omitted C<spec_version>.
 
 =item -
 
@@ -578,7 +674,7 @@ L<PAGI::Spec::Tls> - TLS connection information extension
 
 =item -
 
-L<PAGI::Spec::Server> - server runner contract for swappable servers
+L<PAGI::Spec::Server> - server and application-runner integration guidance
 
 =back
 

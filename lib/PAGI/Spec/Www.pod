@@ -41,6 +41,12 @@ C<0.1>: Initial draft, based on ASGI 2.5, including Server-Sent Events support.
 
 =back
 
+C<< $scope->{pagi}{spec_version} >> reports which version of this specification
+governs an HTTP, WebSocket, or SSE connection. It is optional; if omitted,
+applications MUST assume C<'0.1'>. Omitting it declares support for version 0.1
+only, so the server MUST NOT use behaviour introduced by a later version on
+that connection. The core PAGI C<version> does not affect this default.
+
 =head2 Common Data Types
 
 =head3 Headers Format
@@ -313,11 +319,11 @@ C<type> (String) -- C<"http">
 
 =item -
 
-C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.3'>)
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.4'>)
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (optional; if omitted, assume it matches C<version>)
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.3'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -426,15 +432,15 @@ C<trailers> (Int, default C<0>) -- C<1> if trailers will be sent after body via 
 B<Header byte safety.> Because header names and values cross into HTTP message
 framing, a server B<MUST NOT> emit a header whose name or value contains C<CR>
 (C<\x0D>), C<LF> (C<\x0A>), or C<NUL> (C<\x00>), nor a name containing any other
-control character. The server B<MUST> reject such a header by failing the
-C<send> (the reference server raises) rather than forwarding it or silently
-rewriting the offending bytes: letting C<CR>/C<LF> through permits HTTP response
-splitting (CRLF injection), while silently stripping them mutates the
-application's data without signalling the bug. This is the same guarantee
-C<sse.send> gives for its C<event> and C<id> fields (see L</Send SSE - C<send>
-event>): the server's emission path is the single point that guards the wire, so
-applications and frameworks MAY hold header values as opaque bytes and need not
-pre-validate them. (RFC 9110 S5.5; RFC 9112 S11.1.)
+control character. The server B<MUST> reject such a header by failing the Future
+returned by C<$send> rather than forwarding it or silently rewriting the
+offending bytes: letting C<CR>/C<LF> through permits HTTP response splitting
+(CRLF injection), while silently stripping them mutates the application's data
+without signalling the bug. This is the same guarantee C<sse.send> gives for
+its C<event> and C<id> fields (see L</Send SSE - C<send> event>): the server's
+emission path is the single point that guards the wire, so applications and
+frameworks MAY hold header values as opaque bytes and need not pre-validate
+them. (RFC 9110 S5.5; RFC 9112 S11.1.)
 
 =head3 Response Body - C<send> event
 
@@ -1110,11 +1116,11 @@ C<type> (String) -- C<"websocket">
 
 =item -
 
-C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.3'>)
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.4'>)
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (optional; if omitted, assume it matches C<version>)
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.3'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -1904,6 +1910,12 @@ scopes. A server that cannot determine its outbound buffer state omits the key;
 applications MUST treat its absence as "flow-control introspection unavailable"
 (and the high-level helpers report a buffered amount of C<0>).
 
+The presence of C<pagi.transport> affects introspection, not the fundamental
+send contract. Applications self-pace by awaiting every C<$send> Future whether
+or not this object is present; the object additionally lets them observe queue
+depth and make an earlier policy decision to conflate, coalesce, shed load, or
+disconnect.
+
 The long-term goal is universal coverage: every scope type that produces a
 stream of outbound events provides C<pagi.transport>, across every transport a
 server supports, so an application need not know which transport or protocol
@@ -1925,10 +1937,12 @@ neither sends, receives, nor consumes queued messages.
 If a server provides C<pagi.transport>, it B<must> implement C<buffered_amount>.
 
 B<C<high_water_mark()>> -- Returns the buffered-byte threshold at or above which
-the server applies backpressure: a C<$send> that would exceed it blocks until
-the buffer drains. Applications use it to threshold relative to the ceiling
-rather than hard-coding a byte count. Returns C<undef> if the server has no
-fixed high-water mark.
+the server applies backpressure: the Future returned by a C<$send> that would
+exceed it remains pending until the buffer drains enough for the server to
+continue processing the event. Awaiting that Future suspends the application
+coroutine, not the Perl thread. Applications use the threshold relative to the
+ceiling rather than hard-coding a byte count. Returns C<undef> if the server has
+no fixed high-water mark.
 
 B<C<low_water_mark()>> -- Returns the buffered-byte threshold the buffer must
 fall back to before the server releases backpressure (the drain point). Returns

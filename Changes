@@ -1,5 +1,33 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002002 - 2026-08-21
+  [Specification 0.4 Draft]
+  - Distinguished the canonical runtime PAGI code reference from an
+    already-instantiated application-provider object. General-purpose runners
+    should accept either; package-name strings and class-method to_app dispatch
+    are not provider forms. Each loaded provider instance is normalized exactly
+    once before dispatch, and only the resulting code reference crosses the
+    runtime boundary.
+  - Lifecycle handling remains part of the lifespan protocol and is not
+    inferred by PAGI from methods on application-provider objects; deployment
+    tools remain free to define their own non-protocol hooks.
+  - Core and protocol versions now explicitly evolve independently. An omitted
+    pagi.spec_version uses the default owned by the applicable protocol rather
+    than the core version; WWW and Lifespan both use 0.1 as their conservative
+    compatibility default.
+  - Revised PAGI::Spec::Server to version 0.2. PAGI no longer prescribes a
+    new(app => ...) constructor or run method for conforming servers; server
+    construction and plugin compatibility belong to runner-specific APIs.
+
+  [Specification clarifications]
+  - Centralized the $send Future contract: successful resolution means the
+    server has finished consuming the event and any tied application resource,
+    and accepted its output for outbound processing; it does not mean client
+    receipt or complete-response delivery. Before close, validation and
+    resource failures fail the Future; post-close sends are successful no-ops,
+    and pending send Futures carry transport-independent backpressure even
+    without optional pagi.transport introspection.
+
 0.002001 - 2026-06-30
   [Specification updates]
   - Application/middleware return value is now specified as inert: the server
@@ -467,5 +495,3 @@
 
 0.001001 - 2025-12-17
   - Placeholder release
-
-
