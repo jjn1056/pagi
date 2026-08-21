@@ -29,8 +29,8 @@ any particular event-loop ownership model.
 The canonical runtime application is always a code reference accepting
 C<($scope, $receive, $send)> and returning a Future. As described in
 L<PAGI::Spec/Application Providers and Loading>, a general-purpose application
-runner SHOULD also accept an application-provider object implementing
-C<to_app>.
+runner SHOULD also accept an already-instantiated application-provider object
+implementing C<to_app>.
 
 When given a provider object, the runner MUST call C<to_app> exactly once per
 loaded provider instance, verify that it returned a code reference, and pass
@@ -39,6 +39,12 @@ Provider construction failures and invalid C<to_app> return values are loading
 errors; they MUST be reported before the runner starts serving traffic. A
 native code reference takes precedence over provider-method detection, even if
 that code reference is blessed.
+
+A package-name string is not an application-provider object, and this
+convention does not permit invoking C<to_app> as a class method. A runner MAY
+accept module or class names through its implementation-specific discovery
+interface, but that discovery step must produce an instantiated provider object
+or a native PAGI code reference before normalization begins.
 
 =head2 Server Construction
 

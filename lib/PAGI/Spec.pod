@@ -288,7 +288,7 @@ a native PAGI application code reference; or
 
 =item -
 
-an application-provider object that implements C<to_app>.
+an already-instantiated application-provider object that implements C<to_app>.
 
 =back
 
@@ -299,6 +299,13 @@ code reference. An exception from C<to_app>, or any other return value, is an
 application-loading failure and MUST be reported before the runner begins
 serving traffic. Reloading an application or constructing independent worker
 instances constitutes a new load; request and connection dispatch do not.
+
+In this convention, an application-provider object is an already-instantiated
+blessed reference. A package-name string is not an application provider, and a
+runner MUST NOT satisfy provider normalization by invoking C<to_app> as a class
+method. Deployment tooling MAY accept module or class names as its own
+discovery and configuration input, but it must first construct an object or
+obtain a native PAGI code reference before entering this normalization step.
 
 A value that is itself a code reference is already a native PAGI application,
 even if it is blessed. It MUST be used as the application without calling a
