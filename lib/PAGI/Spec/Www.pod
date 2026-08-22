@@ -24,7 +24,8 @@ and the C<websocket.http.response> WebSocket denial-response extension. Reworked
 disconnect handling into one abnormal-only reason vocabulary, adding
 C<on_complete> (successful completion) alongside C<on_disconnect> (abnormal
 drops) on C<pagi.connection>. Documented the server-supplied HTTP, SSE, and
-WebSocket behaviors and WebSocket over HTTP/2 (RFC 8441). B<Removed>
+WebSocket behaviors, HEAD response semantics (server-side body suppression),
+and WebSocket over HTTP/2 (RFC 8441). B<Removed>
 C<pagi.features> (superseded by C<extensions>) and the per-send C<timeout> field
 (superseded by transport backpressure and keepalive timeouts).
 
@@ -587,6 +588,82 @@ C<type> -- C<"http.response.trailers">
 =item -
 
 C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers encoded the same way as response headers (lower-case names, byte values)
+
+=back
+
+=head3 HEAD Requests
+
+A response to a C<HEAD> request carries no content on the wire, on B<every>
+HTTP version (RFC 9110 S9.3.2). The server's send path is the single point
+that guards the wire, so B<suppression is the server's job>: the application
+handles a C<HEAD> request exactly as it would the equivalent C<GET> --
+same C<http.response.start>, same headers, same body events -- and the server
+B<MUST NOT> transmit the body bytes. Suppression is transparent to the
+application: each C<$send> Future resolves as usual, the terminal body event
+(C<< more => 0 >>) completes the request, and C<on_complete> /
+C<response_complete> behave exactly as for any other method.
+
+Server requirements:
+
+=over
+
+=item -
+
+The server B<MUST NOT> transmit response body content for a C<HEAD> request,
+regardless of HTTP version.
+
+=item -
+
+An application-supplied C<Content-Length> header B<MUST> be passed through
+untouched: per RFC 9110 it advertises the length the C<GET> response would
+have had. The server B<MUST NOT> apply C<Transfer-Encoding: chunked> framing
+to a C<HEAD> response; when no C<Content-Length> was supplied, the response
+simply ends after the header section, with no body-framing headers at all.
+
+=item -
+
+For C<file> and C<fh> body events the server skips streaming entirely. It is
+B<NOT> required to open or C<stat> the file to synthesize a C<Content-Length>;
+an application that wants the length advertised sets the header itself.
+
+=item -
+
+A C<http.response.trailers> event on a C<HEAD> response is accepted and
+discarded.
+
+=back
+
+Application guidance:
+
+=over
+
+=item -
+
+C<HEAD> requests are delivered to the application like any other method --
+the server does B<not> answer them itself and does B<not> rewrite them to
+C<GET>. An application whose routing only matches C<GET> will return its
+not-found response to C<HEAD> clients.
+
+=item -
+
+An application B<MAY> short-circuit on C<< $scope->{method} eq 'HEAD' >> and
+skip generating an expensive body: send C<http.response.start> with the same
+headers the C<GET> would carry, then a single empty terminal body event. This
+is purely an optimization -- an unmodified C<GET> code path is equally
+correct, the server discards the bytes.
+
+=item -
+
+Set C<Content-Length> explicitly when the size matters to C<HEAD> clients. A
+response that relies on the server's chunked framing gives a C<GET> client
+the size implicitly through the body, but a C<HEAD> client receives B<no>
+length information at all.
+
+=item -
+
+Middleware that measures response size by observing body events will
+over-report for C<HEAD>: the bytes it counts are discarded by the server.
+Wire-accurate sizes come from the server's own logging.
 
 =back
 
@@ -2142,8 +2219,9 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 C<0.3> (Draft): C<pagi.transport> flow control; C<websocket.http.response>
 denial-response extension; C<on_complete> plus reworked abnormal-only disconnect
 reasons; C<response_started> (MUST) and C<response_complete> (SHOULD) connection-state
-accessors for per-request response progress; documented server-supplied behaviors and
-WebSocket over HTTP/2; removed C<pagi.features> and the per-send C<timeout> field.
+accessors for per-request response progress; documented server-supplied behaviors,
+HEAD response semantics, and WebSocket over HTTP/2; removed C<pagi.features> and
+the per-send C<timeout> field.
 
 =item -
 
