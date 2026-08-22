@@ -25,7 +25,8 @@ disconnect handling into one abnormal-only reason vocabulary, adding
 C<on_complete> (successful completion) alongside C<on_disconnect> (abnormal
 drops) on C<pagi.connection>. Documented the server-supplied HTTP, SSE, and
 WebSocket behaviors, HEAD response semantics (server-side body suppression),
-and WebSocket over HTTP/2 (RFC 8441). B<Removed>
+incomplete-response handling (forced closure), and WebSocket over HTTP/2
+(RFC 8441). B<Removed>
 C<pagi.features> (superseded by C<extensions>) and the per-send C<timeout> field
 (superseded by transport backpressure and keepalive timeouts).
 
@@ -688,6 +689,54 @@ exception, which the server treats identically -- the same C<500> backstop.
 If the client has B<already disconnected> (see L</Disconnect - C<receive> event>),
 this is not an application error: the server MUST NOT synthesize a C<500> and MUST
 NOT log an error.
+
+=head3 Application Left a Response Incomplete
+
+A response is B<incomplete> when the application's Future resolves after
+C<http.response.start> was sent but before the response reached its terminal
+event: the final C<http.response.body> with C<< more => 0 >>, a C<file>/C<fh>
+body event, or -- when C<http.response.start> promised trailers with
+C<< trailers => 1 >> -- the C<http.response.trailers> event.
+
+The server MUST treat this as an B<abnormal end>, never a clean one. The
+governing principle: a truncated response must be B<observable as truncated>
+by the client, and a connection with unfinished framing must never carry
+another response. Concretely, the server:
+
+=over
+
+=item -
+
+MUST NOT synthesize the terminal framing the application failed to send.
+Writing the chunked terminator or signaling C<END_STREAM> on the
+application's behalf would present a truncated response to the client as
+complete -- a lie that downstream caches would then store.
+
+=item -
+
+MUST terminate the transport so the client observes truncation. Over
+HTTP/1.1 this means closing the connection without the chunk terminator (or,
+for a C<Content-Length>-framed response, before the declared length was
+delivered); the connection MUST NOT be kept alive or serve a pipelined
+request. Over HTTP/2 the server resets the stream (C<RST_STREAM>, e.g.
+C<INTERNAL_ERROR>); other streams on the connection are unaffected.
+
+=item -
+
+MUST report the abnormal end on the C<pagi.connection> object: fire
+C<on_disconnect> with reason C<server_error>. C<on_complete> MUST NOT fire
+-- the response was not fully delivered (see L</Connection State>).
+
+=item -
+
+SHOULD log the event at error level.
+
+=back
+
+As with L</Application Produced No Response>, if the client had B<already
+disconnected> before the application's Future resolved, this is not an
+application error: the request already ended abnormally with its own
+disconnect reason, and the server MUST NOT log an incomplete-response error.
 
 =head3 Server-Supplied Headers and Behaviors
 
@@ -2220,8 +2269,8 @@ C<0.3> (Draft): C<pagi.transport> flow control; C<websocket.http.response>
 denial-response extension; C<on_complete> plus reworked abnormal-only disconnect
 reasons; C<response_started> (MUST) and C<response_complete> (SHOULD) connection-state
 accessors for per-request response progress; documented server-supplied behaviors,
-HEAD response semantics, and WebSocket over HTTP/2; removed C<pagi.features> and
-the per-send C<timeout> field.
+HEAD response semantics, incomplete-response handling, and WebSocket over HTTP/2;
+removed C<pagi.features> and the per-send C<timeout> field.
 
 =item -
 
