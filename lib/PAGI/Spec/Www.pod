@@ -1153,6 +1153,17 @@ callbacks in registration order and MUST leave C<disconnect_reason()> as
 C<undef>. C<on_disconnect> callbacks and C<disconnect_future()> MUST NOT fire on
 this path.
 
+B<Exceptions after the terminal event.> Delivery defines completion: an
+exception raised by the application B<after> its response reached the
+terminal event (the final body, a C<file>/C<fh> body, or the final
+trailers) does not un-complete the request. The server MUST still treat
+the request as completed — C<on_complete> fires, C<disconnect_reason()>
+stays C<undef> — and SHOULD log the exception at error level as an
+operational event. The server MAY close the connection afterwards rather
+than reuse it; the delivered response is unaffected either way. (This
+matches ASGI-ecosystem practice, where a post-completion exception is
+logged and the already-granted keep-alive stands.)
+
 =head4 Applicability
 
 =over 4
