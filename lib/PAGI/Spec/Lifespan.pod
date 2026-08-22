@@ -140,6 +140,37 @@ C<lifespan.startup.complete> -- for example, a long-lived background task starte
 during lifespan crashes -- the server B<should> log the error at error level and
 B<may> continue running in a degraded state. It is not required to shut down.
 
+=head2 Strict Mode
+
+The decline tolerance above is the server's B<default> behavior (what the
+wider ecosystem calls C<auto> mode), and it has one deliberate blind spot: a
+broken startup handler is indistinguishable from a decline. An application
+whose lifespan handler dies because its database is unreachable looks, to the
+server, exactly like one that never supported lifespan at all -- the server
+continues, and the application serves traffic without the initialization it
+depended on.
+
+For deployments where that trade is unacceptable, a server B<may> offer
+explicit operator configuration making lifespan B<mandatory> (conventionally
+called C<on>, or strict, mode). In strict mode a decline -- a raised
+exception, or a clean return that never sent C<lifespan.startup.complete> or
+C<lifespan.startup.failed> -- is a B<fatal startup failure>, handled as if
+the application had sent C<lifespan.startup.failed>: the server B<must not>
+begin accepting connections and B<should> log why. Strict mode changes only
+the consequence of a decline; every other requirement in this document
+applies unchanged.
+
+Strict mode B<must not> be the default: it is an operator's explicit
+assertion that the application uses lifespan, never a judgment the server
+makes on its own.
+
+B<Skipping the lifespan protocol entirely is not a conforming option.> Every
+server instance or worker B<must> send the lifespan events (see L</Execution
+Model>); a configuration that never invokes the application with a
+C<lifespan> scope leaves it no way to initialize or clean up, and an
+application that does not use lifespan declines at effectively no cost. A
+server B<must not> offer an "off" switch for this protocol.
+
 =head2 Lifespan State
 
 Applications often want to persist data from the lifespan cycle to request/response handling.
@@ -297,7 +328,9 @@ C<message> (String) - Optional; if missing defaults to C<"">.
 
 =item -
 
-0.3 (Draft): No changes from 0.2
+0.3 (Draft): Documented deployment modes: decline tolerance is the required
+default, an explicit strict mode (decline is a fatal startup failure) is
+permitted, and skipping the lifespan protocol entirely is nonconforming
 
 =item -
 

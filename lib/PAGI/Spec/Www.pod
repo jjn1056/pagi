@@ -24,7 +24,10 @@ and the C<websocket.http.response> WebSocket denial-response extension. Reworked
 disconnect handling into one abnormal-only reason vocabulary, adding
 C<on_complete> (successful completion) alongside C<on_disconnect> (abnormal
 drops) on C<pagi.connection>. Documented the server-supplied HTTP, SSE, and
-WebSocket behaviors and WebSocket over HTTP/2 (RFC 8441). B<Removed>
+WebSocket behaviors, HEAD response semantics (server-side body suppression),
+incomplete-response handling (forced closure), and WebSocket over HTTP/2
+(RFC 8441). Tightened SSE detection to an exact media-range match with
+C<< q > 0 >> (wildcards and C<q=0> never signal SSE). B<Removed>
 C<pagi.features> (superseded by C<extensions>) and the per-send C<timeout> field
 (superseded by transport backpressure and keepalive timeouts).
 
@@ -478,7 +481,7 @@ C<more> (Int, default C<0>) -- Indicates more body content to follow (C<1> if tr
 
 =back
 
-The C<body>, C<file>, and C<fh> keys are B<mutually exclusive> - exactly one MUST be provided per event. Applications B<MUST> provide C<body> as encoded bytes. For text content, this typically means UTF-8 encoding before sending. The C<Content-Length> header (if present) MUST reflect byte length, not character length.
+The C<body>, C<file>, and C<fh> keys are B<mutually exclusive> - at most one may be provided per event. If none is provided, the event is treated as if C<< body => '' >> had been given (per the C<body> default above); an event with no payload keys and C<< more => 0 >> is therefore a valid way to end a response. Applications B<MUST> provide C<body> as encoded bytes. For text content, this typically means UTF-8 encoding before sending. The C<Content-Length> header (if present) MUST reflect byte length, not character length.
 
 B<Note:> When using C<file> or C<fh>, the response is implicitly complete after the file/handle contents are sent. The C<more> key is ignored for these response types - there is no need to specify C<<< more => 0 >>>.
 
@@ -590,6 +593,82 @@ C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers encoded
 
 =back
 
+=head3 HEAD Requests
+
+A response to a C<HEAD> request carries no content on the wire, on B<every>
+HTTP version (RFC 9110 S9.3.2). The server's send path is the single point
+that guards the wire, so B<suppression is the server's job>: the application
+handles a C<HEAD> request exactly as it would the equivalent C<GET> --
+same C<http.response.start>, same headers, same body events -- and the server
+B<MUST NOT> transmit the body bytes. Suppression is transparent to the
+application: each C<$send> Future resolves as usual, the terminal body event
+(C<< more => 0 >>) completes the request, and C<on_complete> /
+C<response_complete> behave exactly as for any other method.
+
+Server requirements:
+
+=over
+
+=item -
+
+The server B<MUST NOT> transmit response body content for a C<HEAD> request,
+regardless of HTTP version.
+
+=item -
+
+An application-supplied C<Content-Length> header B<MUST> be passed through
+untouched: per RFC 9110 it advertises the length the C<GET> response would
+have had. The server B<MUST NOT> apply C<Transfer-Encoding: chunked> framing
+to a C<HEAD> response; when no C<Content-Length> was supplied, the response
+simply ends after the header section, with no body-framing headers at all.
+
+=item -
+
+For C<file> and C<fh> body events the server skips streaming entirely. It is
+B<NOT> required to open or C<stat> the file to synthesize a C<Content-Length>;
+an application that wants the length advertised sets the header itself.
+
+=item -
+
+A C<http.response.trailers> event on a C<HEAD> response is accepted and
+discarded.
+
+=back
+
+Application guidance:
+
+=over
+
+=item -
+
+C<HEAD> requests are delivered to the application like any other method --
+the server does B<not> answer them itself and does B<not> rewrite them to
+C<GET>. An application whose routing only matches C<GET> will return its
+not-found response to C<HEAD> clients.
+
+=item -
+
+An application B<MAY> short-circuit on C<< $scope->{method} eq 'HEAD' >> and
+skip generating an expensive body: send C<http.response.start> with the same
+headers the C<GET> would carry, then a single empty terminal body event. This
+is purely an optimization -- an unmodified C<GET> code path is equally
+correct, the server discards the bytes.
+
+=item -
+
+Set C<Content-Length> explicitly when the size matters to C<HEAD> clients. A
+response that relies on the server's chunked framing gives a C<GET> client
+the size implicitly through the body, but a C<HEAD> client receives B<no>
+length information at all.
+
+=item -
+
+Middleware that measures response size by observing body events will
+over-report for C<HEAD>: the bytes it counts are discarded by the server.
+Wire-accurate sizes come from the server's own logging.
+
+=back
+
 =head3 Application Produced No Response
 
 If an HTTP application's Future resolves without any C<http.response.start> having
@@ -611,6 +690,54 @@ exception, which the server treats identically -- the same C<500> backstop.
 If the client has B<already disconnected> (see L</Disconnect - C<receive> event>),
 this is not an application error: the server MUST NOT synthesize a C<500> and MUST
 NOT log an error.
+
+=head3 Application Left a Response Incomplete
+
+A response is B<incomplete> when the application's Future resolves after
+C<http.response.start> was sent but before the response reached its terminal
+event: the final C<http.response.body> with C<< more => 0 >>, a C<file>/C<fh>
+body event, or -- when C<http.response.start> promised trailers with
+C<< trailers => 1 >> -- the C<http.response.trailers> event.
+
+The server MUST treat this as an B<abnormal end>, never a clean one. The
+governing principle: a truncated response must be B<observable as truncated>
+by the client, and a connection with unfinished framing must never carry
+another response. Concretely, the server:
+
+=over
+
+=item -
+
+MUST NOT synthesize the terminal framing the application failed to send.
+Writing the chunked terminator or signaling C<END_STREAM> on the
+application's behalf would present a truncated response to the client as
+complete -- a lie that downstream caches would then store.
+
+=item -
+
+MUST terminate the transport so the client observes truncation. Over
+HTTP/1.1 this means closing the connection without the chunk terminator (or,
+for a C<Content-Length>-framed response, before the declared length was
+delivered); the connection MUST NOT be kept alive or serve a pipelined
+request. Over HTTP/2 the server resets the stream (C<RST_STREAM>, e.g.
+C<INTERNAL_ERROR>); other streams on the connection are unaffected.
+
+=item -
+
+MUST report the abnormal end on the C<pagi.connection> object: fire
+C<on_disconnect> with reason C<server_error>. C<on_complete> MUST NOT fire
+-- the response was not fully delivered (see L</Connection State>).
+
+=item -
+
+SHOULD log the event at error level.
+
+=back
+
+As with L</Application Produced No Response>, if the client had B<already
+disconnected> before the application's Future resolved, this is not an
+application error: the request already ended abnormally with its own
+disconnect reason, and the server MUST NOT log an incomplete-response error.
 
 =head3 Server-Supplied Headers and Behaviors
 
@@ -1535,7 +1662,19 @@ PAGI servers MUST detect SSE requests and assign a scope of type C<sse> when all
 
 =item -
 
-The C<Accept> header includes the media type C<text/event-stream>.
+The request carries the B<SSE client signal>: parsing the C<Accept> header
+value (values from repeated C<Accept> headers are combined) as a
+comma-separated list of media ranges per RFC 9110 S12.5.1, the B<exact>
+range C<text/event-stream> appears with an effective quality value greater
+than zero. A range with C<q=0> is an explicit refusal and does not signal
+SSE. Media-type parameters other than C<q> are ignored for this test, as is
+case (media types are case-insensitive).
+
+=item -
+
+Wildcard ranges B<never> satisfy the test: neither C<*/*> nor C<text/*>
+signals SSE. Browsers send C<*/*> on ordinary navigation; a rule that
+counted wildcards would classify every plain page load as an SSE request.
 
 =item -
 
@@ -1544,6 +1683,24 @@ The request has not been upgraded to WebSocket.
 =back
 
 Otherwise the connection uses a normal C<http> scope.
+
+This is a B<boolean client-signal check, not content negotiation>. Real SSE
+clients are unambiguous -- WHATWG requires C<EventSource> to send exactly
+C<Accept: text/event-stream>, and C<fetch-event-source> does the same -- so
+the server only asks "did the client ask for an event stream?", never "which
+representation does the client prefer?". Preference ranking among acceptable
+types (a client that accepts both C<text/event-stream> and C<text/html>,
+say) is the application's business, and fuller RFC 9110 content negotiation
+MAY be layered on as middleware. When the boolean signal classifies a
+request as C<sse> that the application would rather answer with an ordinary
+HTTP response, the decline mechanism (see L</Decline SSE - C<send> event>)
+is the correction path.
+
+B<Middleware note:> because C<http> and C<sse> are sibling scope types for
+what is on the wire an ordinary HTTP request, middleware that filters on
+C<< $scope->{type} eq 'http' >> silently skips SSE requests to the same
+URL. Middleware guarding HTTP endpoints (authentication, rate limiting,
+logging) SHOULD match both types.
 
 B<Note on HTTP methods:> SSE works with any HTTP method, not just GET. While the browser's native C<EventSource> API only supports GET, libraries like Microsoft's C<fetch-event-source> (used by htmx 4, datastar, and others) enable SSE over POST, PUT, and other methods via the Fetch API. PAGI servers MUST support SSE for all HTTP methods to enable these modern patterns.
 
@@ -2142,8 +2299,10 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 C<0.3> (Draft): C<pagi.transport> flow control; C<websocket.http.response>
 denial-response extension; C<on_complete> plus reworked abnormal-only disconnect
 reasons; C<response_started> (MUST) and C<response_complete> (SHOULD) connection-state
-accessors for per-request response progress; documented server-supplied behaviors and
-WebSocket over HTTP/2; removed C<pagi.features> and the per-send C<timeout> field.
+accessors for per-request response progress; documented server-supplied behaviors,
+HEAD response semantics, incomplete-response handling, and WebSocket over HTTP/2;
+tightened SSE detection to an exact media-range match with C<< q > 0 >>;
+removed C<pagi.features> and the per-send C<timeout> field.
 
 =item -
 
