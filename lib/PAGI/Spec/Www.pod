@@ -478,7 +478,7 @@ C<more> (Int, default C<0>) -- Indicates more body content to follow (C<1> if tr
 
 =back
 
-The C<body>, C<file>, and C<fh> keys are B<mutually exclusive> - exactly one MUST be provided per event. Applications B<MUST> provide C<body> as encoded bytes. For text content, this typically means UTF-8 encoding before sending. The C<Content-Length> header (if present) MUST reflect byte length, not character length.
+The C<body>, C<file>, and C<fh> keys are B<mutually exclusive> - at most one may be provided per event. If none is provided, the event is treated as if C<< body => '' >> had been given (per the C<body> default above); an event with no payload keys and C<< more => 0 >> is therefore a valid way to end a response. Applications B<MUST> provide C<body> as encoded bytes. For text content, this typically means UTF-8 encoding before sending. The C<Content-Length> header (if present) MUST reflect byte length, not character length.
 
 B<Note:> When using C<file> or C<fh>, the response is implicitly complete after the file/handle contents are sent. The C<more> key is ignored for these response types - there is no need to specify C<<< more => 0 >>>.
 
