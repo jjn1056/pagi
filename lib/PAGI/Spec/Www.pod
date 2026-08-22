@@ -579,6 +579,17 @@ B<Examples:>
 
 Only valid when C<http.response.start> was sent with C<<< trailers => 1 >>>. After trailers are transmitted the server MUST consider the response body complete.
 
+B<Framing requirement (HTTP/1.1).> Over HTTP/1.1, trailers exist only in
+chunked transfer coding (RFC 9112): when the application supplied
+C<Content-Length> — so the server framed the response without chunking — a
+trailer section cannot be transmitted. The server MUST reject a
+C<http.response.trailers> event on such a response by failing the C<$send>
+Future, and MUST NOT silently discard it or treat the response as complete
+with trailers unsent — the same fail-don't-mutate rule the spec applies to
+header byte safety. HTTP/2 carries trailers as trailing HEADERS frames and
+has no such framing restriction. (On a C<HEAD> response the trailers event
+is accepted and discarded per L</HEAD Requests>, which takes precedence.)
+
 Keys:
 
 =over
