@@ -1384,6 +1384,24 @@ C<pagi.transport> (Object, optional) -- Outbound flow-control introspection hand
 
 =item -
 
+C<max_frame_size> (Int, optional) -- The server's inbound WebSocket frame
+size ceiling in bytes, when the server enforces one. Frames from the peer
+exceeding it terminate the connection, so an application that directs its
+client's framing (for example, a chunked-upload protocol advertising a
+chunk size at handshake) SHOULD size against this value rather than
+hard-coding a guess.
+
+=item -
+
+C<max_receive_queue> (Int, optional) -- The server's inbound event-queue
+ceiling for this connection, when the server enforces one. Overflow closes
+the connection with C<1008>/C<queue_overflow>, so an application doing
+expensive per-message work can use this value to apply its own flow
+control (acknowledgement throttling, pause messages) before the server
+sheds the session.
+
+=item -
+
 C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>, C<websocket.http.response>). See L<PAGI::Spec::Extensions>.
 
 =back
