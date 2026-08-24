@@ -53,6 +53,12 @@
     covering Thunderhorse, PAGI::FastAPI, WebDyne, PAGI::Nano, and
     Uniform::HTMX::PAGI, and an Announcements section pointing at the
     pagi-announce mailing list.
+  - Reworked UTF-8 HANDLING OVERVIEW in PAGI.pm to lead with the
+    PAGI-Tools version of the example (PAGI::Request/PAGI::Response,
+    where decoding and encoding are encapsulated at the boundary) and to
+    present the raw-interface version as the contract toolkits implement
+    rather than a recommended application style; the raw example now
+    percent-decodes with URI::Escape and handles '+' as space.
 
   [Specification additions]
   - Widened the idle_timeout and keepalive_timeout disconnect-reason
