@@ -525,7 +525,24 @@ If C<file> cannot be opened (not found, permission denied), the C<<< $send->() >
 
 =item -
 
-If C<fh> is invalid or closed, the C<<< $send->() >>> Future MUST fail immediately
+If C<fh> is invalid or closed, or a read or seek on it fails, the C<<< $send->() >>> Future MUST fail
+
+=item -
+
+B<Delivery failure is fail-don't-mutate.> When a C<file>/C<fh> send fails,
+the server MUST leave the response sequence state as it was before the
+event -- the same rule as header byte safety -- so the application may
+recover, for example by sending an alternative body. Once body bytes from
+the failed event have already reached the wire, recovery is no longer
+possible and L</Application Left a Response Incomplete> governs the
+outcome.
+
+=item -
+
+The failed Future is the application's notification of the failure; an
+application that does not await its send Futures forfeits per-send failure
+notification, and delivery problems then surface only through the
+connection-state callbacks and disconnect events.
 
 =item -
 
