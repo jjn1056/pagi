@@ -378,6 +378,10 @@ C<pagi.connection> (Object) -- Per-request connection-state object for disconnec
 
 =item -
 
+C<pagi.transport> (Object, optional) -- Outbound flow-control introspection handle (C<buffered_amount>, watermarks, drain callbacks), when the server provides one. See L</Transport Flow Control>.
+
+=item -
+
 C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>). Each present key names an extension mapping to a hashref of extension data; applications check for a key before relying on it. See L<PAGI::Spec::Extensions>.
 
 =back
@@ -854,6 +858,13 @@ truncate the connection -- see L</Disconnected Client - sending after disconnect
 C<501 Not Implemented> -- an unsupported request, e.g. an unrecognized
 C<Transfer-Encoding>, or an Extended C<CONNECT> without a supported C<:protocol>.
 
+=item -
+
+C<503 Service Unavailable> -- the server is at an admission-control limit
+(for example, a configured maximum connection count) and declines the
+connection before invoking any application; a C<Retry-After> header SHOULD
+accompany it (RFC 9110 Section 15.6.4).
+
 =back
 
 The exact reason phrases and body text are server-defined; applications MUST NOT
@@ -967,6 +978,14 @@ May be called multiple times to register multiple callbacks
 =item -
 
 Callbacks are invoked in registration order
+
+=item -
+
+An exception raised by a registered callback (here, in C<on_complete>, or in
+the C<pagi.transport> callbacks) B<must not> prevent the remaining callbacks
+from running and B<must not> disturb the server's own processing; servers
+SHOULD log such exceptions. Two independently registered cleanup callbacks
+must not be able to sabotage each other.
 
 =item -
 
@@ -1358,6 +1377,10 @@ C<subprotocols> (ArrayRef[String], default C<[]>)
 =item -
 
 C<state> (HashRef, optional)
+
+=item -
+
+C<pagi.transport> (Object, optional) -- Outbound flow-control introspection handle, when the server provides one. See L</Transport Flow Control>.
 
 =item -
 
@@ -1785,7 +1808,7 @@ Routing based on URL or application logic is not used to infer SSE.
 
 =head3 SSE Connection Scope
 
-SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, and C<extensions>) but set C<<< type => 'sse' >>>. Header casing rules follow the HTTP section.
+SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, C<pagi.transport> where provided, and C<extensions>) but set C<<< type => 'sse' >>>. Header casing rules follow the HTTP section.
 
 =head3 Request Body - C<receive> event
 
