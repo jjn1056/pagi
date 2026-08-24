@@ -1044,11 +1044,14 @@ Client stopped responding (read timeout)
 
 =item C<idle_timeout>
 
-Connection idle too long before the request arrived
+Connection or stream idle too long -- before a request arrived, or
+mid-stream on a quiet WebSocket or SSE session
 
 =item C<keepalive_timeout>
 
-Keep-alive connection idled out between requests
+Keep-alive connection idled out between requests, or a WebSocket
+keepalive ping received no pong within its timeout (see
+C<websocket.keepalive>)
 
 =item C<write_timeout>
 
