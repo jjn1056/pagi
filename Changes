@@ -48,6 +48,12 @@
     and the pagi.transport callbacks) must not prevent remaining callbacks
     from running or disturb server processing; servers should log them.
 
+  [Documentation]
+  - Expanded THE PAGI ECOSYSTEM in PAGI.pm: a Built on PAGI section
+    covering Thunderhorse, PAGI::FastAPI, WebDyne, PAGI::Nano, and
+    Uniform::HTMX::PAGI, and an Announcements section pointing at the
+    pagi-announce mailing list.
+
   [Specification additions]
   - Widened the idle_timeout and keepalive_timeout disconnect-reason
     definitions to the senses in real-world use: mid-stream idleness on a

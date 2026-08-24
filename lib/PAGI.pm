@@ -170,9 +170,55 @@ C<PAGI-Server> distribution and the application toolkit in C<PAGI-Tools>. The
 project repository is L<https://github.com/jjn1056/pagi>; its history holds the
 original combined distribution from before the split.
 
-Beyond the core distributions, other projects build on PAGI -- for example
-L<Thunderhorse>, an asynchronous web framework. See the project repository for
-an up-to-date list of conforming servers, frameworks, and tools.
+=head2 Built on PAGI
+
+Beyond the core distributions, a growing set of projects target PAGI
+directly. A sampling, roughly from full frameworks down to focused tools:
+
+=over 4
+
+=item L<Thunderhorse>
+
+An asynchronous web framework built for PAGI from the ground up.
+
+=item L<PAGI::FastAPI>
+
+A FastAPI-style asynchronous microframework: C<Future::AsyncAwait>-native
+handlers, type-safe request validation via L<Type::Tiny>, automatic OpenAPI
+documentation, WebSocket support, and dependency injection, with concerns
+like CORS, rate limiting, and authentication composed as middleware and
+route dependencies.
+
+=item L<WebDyne>
+
+A long-standing server-page framework rendering F<.psp> files with embedded
+Perl; it runs under Apache/mod_perl, PSGI, or PAGI as its application
+runtime.
+
+=item L<PAGI::Nano>
+
+A compact micro-framework front door over C<PAGI-Tools>, aimed at demos and
+small applications: routing, middleware, lifecycle, static files, streaming,
+WebSocket, and SSE, arranged so a whole small app fits on one screen and
+reads top to bottom.
+
+=item L<Uniform::HTMX::PAGI>
+
+Bridges L<Uniform::HTMX> into native PAGI web-context routines, with
+chainable helpers (for example C<res_retarget>, C<res_trigger>) for shaping
+HTMX response headers from PAGI applications.
+
+=back
+
+See the project repository for an up-to-date list of conforming servers,
+frameworks, and tools -- and if you have built something on PAGI, open a
+pull request adding it here.
+
+=head2 Announcements
+
+Release and specification announcements are posted to the C<pagi-announce>
+mailing list at L<https://groups.google.com/g/pagi-announce>, and to the
+project repository at L<https://github.com/jjn1056/pagi>.
 
 =head1 INSTALLATION AND BACKWARD COMPATIBILITY
 
