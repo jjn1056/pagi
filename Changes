@@ -1,5 +1,66 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002003 - 2026-08-24
+  [Specification clarifications - resolved ambiguities]
+  - http.response.body payload keys (body / file / fh) are at-most-one per
+    event; omitting all three means an empty body chunk.
+  - Defined HEAD response semantics: the application responds as it would to
+    GET and the server suppresses the body on every HTTP version -
+    Content-Length passes through, no chunked framing, file/fh bodies are
+    never opened or statted, trailers are validated and discarded.
+  - A response left incomplete after http.response.start forces abnormal
+    closure on every transport: the server never synthesizes the missing
+    terminal framing, the client observably sees truncation (HTTP/1.1 close
+    without the chunk terminator; HTTP/2 RST_STREAM such as INTERNAL_ERROR),
+    on_disconnect fires with reason server_error, and on_complete never does.
+  - SSE detection is an exact text/event-stream media-range match with
+    q > 0; wildcards and explicit q=0 refusals never signal SSE.
+  - Lifespan strict mode (operator-configured startup-failure-is-fatal) is
+    sanctioned; a decline-tolerant mode remains the required default; an
+    "off" switch that skips the protocol entirely is expressly nonconforming.
+  - Over HTTP/1.1, trailers exist only in chunked framing: a server must
+    reject http.response.trailers on a Content-Length-framed response by
+    failing the send Future, never by silently dropping the trailers.
+  - Delivery defines completion: an application exception raised after the
+    response's terminal event does not un-complete the request - on_complete
+    fires, disconnect_reason stays undef, the server should log the exception
+    and may close the connection.
+
+  [Specification clarifications - send and delivery contracts]
+  - Sends are sequential: an application must not issue a new send on a
+    connection before the previous send's Future resolves; the effect of
+    overlapping sends is unspecified.
+  - file/fh delivery failure is fail-don't-mutate: a missing or unreadable
+    file, or a read or seek failure, fails that send's Future and leaves the
+    response sequence state as it was, so the application may recover; once
+    body bytes reached the wire the incomplete-response rules govern. The
+    failed Future is the application's notification channel.
+  - Connection-level and framing response headers belong to the server:
+    HTTP/2 strips the connection-specific set from application responses
+    (RFC 9113 forbids them); HTTP/1.1 must ignore or strip
+    application-supplied Transfer-Encoding and Connection, continuing the
+    WSGI/ASGI hop-by-hop lineage.
+  - WebSocket denial events after websocket.accept, and sends after the
+    application's own websocket.close, fail the send Future (the
+    fail-don't-mutate rule); only a transport-initiated closure makes a
+    subsequent send a race-friendly no-op.
+  - Exceptions raised by registered callbacks (on_complete, on_disconnect,
+    and the pagi.transport callbacks) must not prevent remaining callbacks
+    from running or disturb server processing; servers should log them.
+
+  [Specification additions]
+  - Widened the idle_timeout and keepalive_timeout disconnect-reason
+    definitions to the senses in real-world use: mid-stream idleness on a
+    quiet WebSocket or SSE session, and a WebSocket keepalive ping that
+    received no pong.
+  - Added 503 Service Unavailable (admission control, with Retry-After) to
+    the generated-response catalog.
+  - Listed pagi.transport in the HTTP, WebSocket, and SSE scope-key tables,
+    where it was specified but unlisted.
+  - Added optional WebSocket scope keys max_frame_size and
+    max_receive_queue so applications can size client framing and apply
+    their own flow control against the limits the server actually enforces.
+
 0.002002 - 2026-08-21
   [Specification 0.4 Draft]
   - Distinguished the canonical runtime PAGI code reference from an
