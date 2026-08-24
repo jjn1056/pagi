@@ -787,6 +787,21 @@ server sends an interim C<100 Continue> before the application first reads the
 request body, then delivers the body through C<receive> as usual. This is
 transparent to the application. HTTP/2 has no C<Expect: 100-continue> mechanism.
 
+=item -
+
+B<Connection-level and framing headers belong to the server.> An application
+MAY include C<Connection>, C<Transfer-Encoding>, C<Keep-Alive>, C<Upgrade>,
+C<Proxy-Connection>, or C<TE> among its response headers, but the server
+controls connection disposition and message framing and B<must not> let an
+application-supplied value contradict them. Over HTTP/2 the server strips all
+of these from application responses (RFC 9113 forbids connection-specific
+fields). Over HTTP/1.1 the server B<must> ignore or strip application-supplied
+C<Transfer-Encoding> and C<Connection> -- it supplies its own -- and SHOULD
+log when it does. Applications express content encoding through
+C<Content-Encoding>, and connection lifetime through completing or not
+completing responses, never through these headers. (This continues the WSGI
+and ASGI rule that hop-by-hop headers are the gateway's to manage.)
+
 =back
 
 B<Server-generated responses.> A server MAY originate a response on its own --
