@@ -1564,7 +1564,15 @@ on C<reason> rather than C<code>.
 
 =head4 Disconnected Client - sending after disconnect
 
-A C<$send> after the connection has closed is a B<no-op>; applications detect a closed WebSocket through the C<websocket.disconnect> event delivered to C<$receive>.
+How a C<$send> behaves after closure depends on who closed. After the
+B<transport> closed -- the peer disconnected, a timeout fired, the server is
+shutting down -- a C<$send> is a B<no-op>: it neither delivers data nor
+raises, because the application may race the disconnect through no fault of
+its own; applications detect a closed WebSocket through the
+C<websocket.disconnect> event delivered to C<$receive>. After the
+B<application itself> sent C<websocket.close>, further sends are a
+programming error and the server MUST fail the C<$send> Future -- the
+application cannot race itself.
 
 =head4 Close - C<send> event
 
@@ -1685,7 +1693,10 @@ the body in multiple events.
 
 The server sends the resulting HTTP response and then closes the connection; the
 WebSocket is never established, so no C<websocket.disconnect> is delivered. After
-C<websocket.accept> these events are invalid and MUST be ignored.
+C<websocket.accept> these events are invalid and the server MUST fail the
+C<$send> Future without transmitting anything or disturbing the established
+WebSocket -- the same fail-don't-mutate rule as every other out-of-sequence
+send.
 
     # Reject the handshake with a custom 401 instead of a bare 403:
     my $connect = await $receive->();   # websocket.connect
