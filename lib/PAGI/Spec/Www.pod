@@ -859,6 +859,15 @@ C<Transfer-Encoding>, or an Extended C<CONNECT> without a supported C<:protocol>
 The exact reason phrases and body text are server-defined; applications MUST NOT
 depend on them.
 
+=head3 Sends Are Sequential
+
+An application B<must not> issue a new C<$send> on a connection before the
+previous send's Future has resolved; the effect of overlapping sends is
+unspecified. Applications with concurrent producers serialize them (for
+example through a queue) before sending. (This matches the one-outstanding-
+write rule of comparable streaming interfaces; a normally structured
+application that awaits each send satisfies it automatically.)
+
 =head3 Disconnected Client - sending after disconnect
 
 If the client disconnects or cancels the connection, servers MUST send an explicit C<http.disconnect> event to the application and update the connection state (see L</Connection State>).
