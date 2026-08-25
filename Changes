@@ -3,6 +3,13 @@
 0.002004 - UNRELEASED
 
   [Specification clarifications - resolved ambiguities]
+  - Connection-level headers: over HTTP/1.1, when an application response
+    carries an Upgrade header (e.g. on a 426 Upgrade Required), the server
+    must include 'upgrade' among the tokens of the Connection header it
+    supplies, per RFC 9110's requirement on any Upgrade sender. The
+    application never sends Connection: upgrade itself; the server
+    completes the pair. Closes the conflict between the
+    server-owns-connection-headers rule and RFC 9110's 426 requirements.
   - The incomplete-response definition now says explicitly that it covers an
     application Future that fails with an exception, not only one that
     resolves, after http.response.start and before the terminal event. No

@@ -824,6 +824,13 @@ C<Content-Encoding>, and connection lifetime through completing or not
 completing responses, never through these headers. (This continues the WSGI
 and ASGI rule that hop-by-hop headers are the gateway's to manage.)
 
+One companion obligation follows from server ownership: over HTTP/1.1, when
+an application response carries an C<Upgrade> header (which HTTP/1.1
+applications MAY send -- e.g. on a C<426 Upgrade Required>), the server
+B<must> include C<upgrade> among the tokens of the C<Connection> header it
+supplies, as RFC 9110 requires of any C<Upgrade> sender. The application
+never sends C<Connection: upgrade> itself; the server completes the pair.
+
 =back
 
 B<Server-generated responses.> A server MAY originate a response on its own --
