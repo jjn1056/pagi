@@ -1,5 +1,14 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002004 - UNRELEASED
+
+  [Specification clarifications - resolved ambiguities]
+  - The incomplete-response definition now says explicitly that it covers an
+    application Future that fails with an exception, not only one that
+    resolves, after http.response.start and before the terminal event. No
+    behavior change: the neighboring clauses already treat exceptions
+    identically, and the reference server conforms both ways.
+
 0.002003 - 2026-08-24
   [Specification clarifications - resolved ambiguities]
   - http.response.body payload keys (body / file / fh) are at-most-one per

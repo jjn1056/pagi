@@ -725,8 +725,9 @@ NOT log an error.
 
 =head3 Application Left a Response Incomplete
 
-A response is B<incomplete> when the application's Future resolves after
-C<http.response.start> was sent but before the response reached its terminal
+A response is B<incomplete> when the application's Future becomes ready --
+resolves B<or fails with an exception> -- after C<http.response.start> was
+sent but before the response reached its terminal
 event: the final C<http.response.body> with C<< more => 0 >>, a C<file>/C<fh>
 body event, or -- when C<http.response.start> promised trailers with
 C<< trailers => 1 >> -- the C<http.response.trailers> event.
