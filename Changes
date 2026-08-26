@@ -1,5 +1,16 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002005 - UNRELEASED
+
+  [Specification clarifications - resolved ambiguities]
+  - Consolidated the connection-level-headers rule: PAGI defines no header
+    exceptions of its own -- where the HTTP RFCs carve one out (te with the
+    trailers token per RFC 9113, forwarded normalized; the Connection:
+    upgrade companion an Upgrade sender owes per RFC 9110), the server
+    implements the RFC rather than the blanket strip. Replaces the separate
+    426-companion paragraph and corrects the blanket "strips all of these"
+    overstatement; no server behavior change.
+
 0.002004 - 2026-08-25
 
   [Specification clarifications - resolved ambiguities]

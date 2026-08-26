@@ -815,21 +815,23 @@ B<Connection-level and framing headers belong to the server.> An application
 MAY include C<Connection>, C<Transfer-Encoding>, C<Keep-Alive>, C<Upgrade>,
 C<Proxy-Connection>, or C<TE> among its response headers, but the server
 controls connection disposition and message framing and B<must not> let an
-application-supplied value contradict them. Over HTTP/2 the server strips all
-of these from application responses (RFC 9113 forbids connection-specific
-fields). Over HTTP/1.1 the server B<must> ignore or strip application-supplied
-C<Transfer-Encoding> and C<Connection> -- it supplies its own -- and SHOULD
-log when it does. Applications express content encoding through
-C<Content-Encoding>, and connection lifetime through completing or not
-completing responses, never through these headers. (This continues the WSGI
-and ASGI rule that hop-by-hop headers are the gateway's to manage.)
-
-One companion obligation follows from server ownership: over HTTP/1.1, when
-an application response carries an C<Upgrade> header (which HTTP/1.1
-applications MAY send -- e.g. on a C<426 Upgrade Required>), the server
-B<must> include C<upgrade> among the tokens of the C<Connection> header it
-supplies, as RFC 9110 requires of any C<Upgrade> sender. The application
-never sends C<Connection: upgrade> itself; the server completes the pair.
+application-supplied value contradict them: it strips or ignores
+application-supplied values in this family (the full set over HTTP/2, per
+RFC 9113; C<Transfer-Encoding> and C<Connection> over HTTP/1.1), supplies
+its own, and SHOULD log when it strips. PAGI defines no exceptions of its
+own to this rule -- where the HTTP RFCs themselves carve one out, the
+server implements the RFC rather than the blanket strip. The two the RFCs
+define today: RFC 9113 permits C<te> when its value is the C<trailers>
+token (a server forwarding it normalizes to the canonical token, since the
+RFC forbids surrounding whitespace in field values), and RFC 9110 obliges
+any C<Upgrade> sender to pair it with C<Connection: upgrade>, so over
+HTTP/1.1 a server B<must> supply that token itself when an application
+response carries C<Upgrade> (e.g. a C<426 Upgrade Required>) -- the
+application never sends C<Connection: upgrade> directly. Applications
+express content encoding through C<Content-Encoding>, and connection
+lifetime through completing or not completing responses, never through
+these headers. (This continues the WSGI and ASGI rule that hop-by-hop
+headers are the gateway's to manage.)
 
 =back
 
