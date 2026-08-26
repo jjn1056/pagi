@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002005 - UNRELEASED
+0.002005 - 2026-08-26
 
   [Specification clarifications - resolved ambiguities]
   - Consolidated the connection-level-headers rule: PAGI defines no header
