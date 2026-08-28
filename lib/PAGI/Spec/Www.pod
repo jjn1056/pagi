@@ -1009,6 +1009,29 @@ If registered after disconnect already occurred, the callback is invoked immedia
 
 =back
 
+B<Callback invocation context.> Servers MUST NOT deliver abnormal-disconnect
+notifications -- invoking C<on_disconnect> callbacks, or resolving
+C<disconnect_future> -- synchronously within an application's call into
+C<$send> or C<$receive>. A server that detects a disconnect while such a call
+is on the stack updates the synchronous facts immediately (C<is_connected>,
+C<disconnect_reason>) and defers only the delivery to the event loop.
+Deferred notifications MUST still be delivered even if the connection is torn
+down before the deferred delivery runs -- deferral changes I<when> a
+notification arrives, never I<whether>. The registration-time rule above is
+unchanged: registering a callback after the transition has already happened
+invokes it immediately, within the registering call; that re-entrancy is
+under the application's control.
+
+No equivalent guarantee exists for C<on_complete> or for C<pagi.transport>
+callbacks: in particular, a completion callback may be invoked within the
+application's terminal send call.
+
+Rationale: a callback that can run inside an application's own half-finished
+call into C<$send> would force every framework to build re-entrancy defenses
+around every send. Deferring delivery to the event loop is cheap for servers
+and eliminates the hazard class, while the synchronous facts stay immediate
+for polling code.
+
 B<C<response_started()>> - Returns true once B<this request's> response has started
 -- that is, once C<http.response.start> has been emitted for this scope -- and false
 before. The server sets it when it processes the response-start event, so it is true no

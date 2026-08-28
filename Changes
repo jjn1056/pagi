@@ -22,6 +22,15 @@
     or $receive and then consulting pagi.connection is race-free by
     construction. The sending-after-disconnect section gains the matching
     in-flight paragraph.
+  - Callback invocation context: on_disconnect callbacks and
+    disconnect_future resolution are never delivered synchronously within
+    an application's call into $send or $receive -- synchronous facts flip
+    immediately, delivery defers to the event loop, and deferred
+    notifications are still delivered even if the connection is torn down
+    in the interim. Registration-after-transition immediate invocation is
+    unchanged. Recorded honestly: no equivalent guarantee for on_complete
+    (it may run within the application's terminal send call) or for
+    pagi.transport callbacks.
 
 0.002005 - 2026-08-26
 
