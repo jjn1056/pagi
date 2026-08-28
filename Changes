@@ -14,6 +14,14 @@
     Future. Applications should not cancel a send Future (effect
     unspecified). Closes a deadlock latent in requiring applications to
     await every send while leaving in-flight settlement undefined.
+  - State Transition Order: step 5 now also resolves an already-pending
+    receive Future with the disconnect event; new step 6 settles any
+    pending send per the Send Completion Contract. Steps 5 and 6 may run
+    in either order, both after step 4, so a coroutine resumed by either
+    settlement always observes the transition complete -- awaiting $send
+    or $receive and then consulting pagi.connection is race-free by
+    construction. The sending-after-disconnect section gains the matching
+    in-flight paragraph.
 
 0.002005 - 2026-08-26
 
