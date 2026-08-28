@@ -2,51 +2,14 @@
 
 0.002006 - 2026-08-28
 
-  [Specification clarifications - resolved ambiguities]
-  - Send Completion Contract: defined settlement of a send Future still
-    pending when the connection (or, on a multiplexed transport, the
-    scope's stream) ends -- it must settle promptly, by resolving
-    successfully; servers never fail it with a disconnect-derived error,
-    never cancel it, and never rewrite an already-settled send. Successful
-    resolution now explicitly means the server is finished with the event
-    and its resources (accepted into outbound processing, or discarded
-    because the connection ended); which of the two is not reported by the
-    Future. Applications should not cancel a send Future (effect
-    unspecified). Closes a deadlock latent in requiring applications to
-    await every send while leaving in-flight settlement undefined.
-  - State Transition Order: step 5 now also resolves an already-pending
-    receive Future with the disconnect event; new step 6 settles any
-    pending send per the Send Completion Contract. Steps 5 and 6 may run
-    in either order, both after step 4, so a coroutine resumed by either
-    settlement always observes the transition complete -- awaiting $send
-    or $receive and then consulting pagi.connection is race-free by
-    construction. The sending-after-disconnect section gains the matching
-    in-flight paragraph.
-  - Callback invocation context: on_disconnect callbacks and
-    disconnect_future resolution are never delivered synchronously within
-    an application's call into $send or $receive -- synchronous facts flip
-    immediately, delivery defers to the event loop, and deferred
-    notifications are still delivered even if the connection is torn down
-    in the interim. Registration-after-transition immediate invocation is
-    unchanged. Recorded honestly: no equivalent guarantee for on_complete
-    (it may run within the application's terminal send call) or for
-    pagi.transport callbacks.
-  - HTTP/2 RST_STREAM: the frame-mapping bullet no longer says "cancel any
-    outstanding Futures for that scope" -- wording that contradicted the
-    settlement contract (servers settle pending sends and receives, never
-    cancel them) and, read literally, cancelled the application's own
-    Future mid-cleanup, contradicting the app-may-finish-cleanup rule.
-    RST_STREAM is now defined as the standard abnormal-disconnect
-    transition for that stream's scope, with the machinery stated once in
-    State Transition Order. No server behavior change: the reference
-    server has always settled rather than cancelled.
-  - Cancellation and Disconnects (core spec): a receive Future already
-    pending when the server detects a disconnect must resolve with that
-    protocol's disconnect event -- stated once, generically, for HTTP,
-    WebSocket, and SSE. The WebSocket sending-after-disconnect section
-    notes that an in-flight send at transport close resolves per the Send
-    Completion Contract; SSE deliberately gains no protocol-local text
-    (the generic contract is the whole story there).
+  [Specification - pending I/O at disconnect]
+  - Core spec 0.4 -> 0.5, HTTP/WebSocket/SSE sub-spec 0.3 -> 0.4: defined
+    settlement of send and receive Futures still pending at disconnect
+    (settle by resolving, never cancel), the disconnect-transition
+    ordering invariant, loop-deferred delivery of disconnect
+    notifications, and the corrected HTTP/2 RST_STREAM mapping. See the
+    Send Completion Contract in PAGI::Spec and State Transition Order in
+    PAGI::Spec::Www.
 
 0.002005 - 2026-08-26
 
