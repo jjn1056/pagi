@@ -2480,7 +2480,10 @@ reasons; C<response_started> (MUST) and C<response_complete> (SHOULD) connection
 accessors for per-request response progress; documented server-supplied behaviors,
 HEAD response semantics, incomplete-response handling, and WebSocket over HTTP/2;
 tightened SSE detection to an exact media-range match with C<< q > 0 >>;
-removed C<pagi.features> and the per-send C<timeout> field.
+removed C<pagi.features> and the per-send C<timeout> field; defined settlement
+of in-flight sends and receives at disconnect (settle by resolving, never
+cancel), the disconnect-transition ordering invariant, and loop-deferred
+delivery of disconnect notifications.
 
 =item -
 
