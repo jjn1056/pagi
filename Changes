@@ -1,5 +1,20 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002006
+
+  [Specification clarifications - resolved ambiguities]
+  - Send Completion Contract: defined settlement of a send Future still
+    pending when the connection (or, on a multiplexed transport, the
+    scope's stream) ends -- it must settle promptly, by resolving
+    successfully; servers never fail it with a disconnect-derived error,
+    never cancel it, and never rewrite an already-settled send. Successful
+    resolution now explicitly means the server is finished with the event
+    and its resources (accepted into outbound processing, or discarded
+    because the connection ended); which of the two is not reported by the
+    Future. Applications should not cancel a send Future (effect
+    unspecified). Closes a deadlock latent in requiring applications to
+    await every send while leaving in-flight settlement undefined.
+
 0.002005 - 2026-08-26
 
   [Specification clarifications - resolved ambiguities]

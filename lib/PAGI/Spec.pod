@@ -368,10 +368,13 @@ Each application is called per-connection, and remains active until the connecti
 =head3 Send Completion Contract
 
 Every call to C<$send> returns a Future. Successful resolution means the server
-has validated and finished consuming the event, including any
-application-owned resource whose lifetime is tied to that send, and has
-accepted the resulting output into its outbound processing path. The
-application may release such a resource after the Future resolves.
+is B<finished with the event>: it has validated it and consumed it -- including
+any application-owned resource whose lifetime is tied to that send -- and has
+either accepted the resulting output into its outbound processing path or
+discarded it because the connection had ended. The application may release such
+a resource after the Future resolves. Whether output was accepted or discarded
+is not reported by the Future; applications that care consult the protocol's
+disconnect event and any applicable connection-state object.
 
 Resolution does B<not> mean that bytes have reached the network socket, an
 intermediary, or the client. It also does not mean that the complete response
@@ -384,12 +387,28 @@ coroutine, not the Perl thread. This contract applies whether or not the server
 provides the optional C<pagi.transport> introspection object described by the
 applicable protocol specification.
 
+A send Future still pending when the server detects that the connection -- or,
+on a multiplexed transport, this scope's stream -- has ended MUST settle
+promptly, as part of the server's disconnect processing, and MUST settle by
+resolving successfully once the server has stopped using the event and any
+application-owned resource it references. The server MUST NOT fail a pending
+send with a disconnect-derived error and MUST NOT cancel it. A send Future that
+has already settled is never rewritten: in particular, a send that failed for
+an event-validation or event-resource reason stays failed. Because an
+application must await every send (see L</Application Completion Contract>), a
+server that left a send Future pending across a disconnect would deadlock a
+conforming application; prompt settlement is what makes the required awaiting
+safe.
+
 Before the connection closes, event-validation and event-resource failures
 required by the applicable protocol specification MUST fail the returned
 Future. After the connection has closed, C<$send> instead returns a
 successfully resolved Future and performs no work: it neither delivers the
 event nor signals closure. Applications detect closure through the protocol's
 disconnect event and any applicable connection-state object.
+
+Applications SHOULD NOT cancel the Future returned by C<$send>; the effect of
+cancelling one is unspecified.
 
 =head3 Application Completion Contract
 
