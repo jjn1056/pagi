@@ -587,6 +587,9 @@ Other protocols: see their respective specifications for the canonical event nam
 
 =back
 
+If a receive Future is already pending when the server detects the
+disconnect, the server B<must> resolve it with that disconnect event.
+
 Applications receiving these events should immediately halt unnecessary work, optionally send minimal acknowledgments if the protocol allows it, and perform cleanup for open resources or background tasks. Servers must also ensure timely cleanup after the application finishes its cancellation handling.
 
 =head3 Error Handling
