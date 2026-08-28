@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002006
+0.002006 - 2026-08-28
 
   [Specification clarifications - resolved ambiguities]
   - Send Completion Contract: defined settlement of a send Future still
