@@ -1670,6 +1670,11 @@ B<application itself> sent C<websocket.close>, further sends are a
 programming error and the server MUST fail the C<$send> Future -- the
 application cannot race itself.
 
+A send already B<in flight> when the transport closes settles per the Send
+Completion Contract in L<PAGI::Spec>: it resolves successfully; the
+application learns of the closure from the C<websocket.disconnect> event,
+not from the send.
+
 =head4 Close - C<send> event
 
 =over

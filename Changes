@@ -40,6 +40,13 @@
     transition for that stream's scope, with the machinery stated once in
     State Transition Order. No server behavior change: the reference
     server has always settled rather than cancelled.
+  - Cancellation and Disconnects (core spec): a receive Future already
+    pending when the server detects a disconnect must resolve with that
+    protocol's disconnect event -- stated once, generically, for HTTP,
+    WebSocket, and SSE. The WebSocket sending-after-disconnect section
+    notes that an in-flight send at transport close resolves per the Send
+    Completion Contract; SSE deliberately gains no protocol-local text
+    (the generic contract is the whole story there).
 
 0.002005 - 2026-08-26
 
