@@ -258,7 +258,7 @@ B<END_STREAM>: if no DATA frames, send an C<http.request> with C<<< body => '' >
 
 =item -
 
-B<RST_STREAM>: trigger a C<http.disconnect> event and cancel any outstanding Futures for that scope.
+B<RST_STREAM>: an abnormal disconnect of that stream's scope; the server performs the standard disconnect transition for it (see L</State Transition Order>).
 
 =item -
 
