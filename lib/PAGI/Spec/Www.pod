@@ -18,6 +18,18 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 =item -
 
+C<0.4>: Defined settlement of in-flight I/O at disconnect: a send Future
+still pending when the connection (or the scope's stream) ends settles by
+resolving successfully, a pending receive resolves with the disconnect
+event, and both settlements are ordered after the connection-state
+transition so that await-then-check is race-free. C<on_disconnect> callbacks
+and C<disconnect_future> resolution are never delivered synchronously within
+an application's call into C<$send> or C<$receive>. The HTTP/2
+C<RST_STREAM> mapping now names the standard disconnect transition instead
+of "cancel any outstanding Futures".
+
+=item -
+
 C<0.3>: Added C<pagi.transport> outbound flow-control introspection
 (C<buffered_amount>, high/low watermarks, C<on_high_water>/C<on_drain> callbacks)
 and the C<websocket.http.response> WebSocket denial-response extension. Reworked
@@ -322,11 +334,11 @@ C<type> (String) -- C<"http">
 
 =item -
 
-C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.4'>)
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.5'>)
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.3'>). Optional; if omitted, assume C<'0.1'>.
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.4'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -1383,11 +1395,11 @@ C<type> (String) -- C<"websocket">
 
 =item -
 
-C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.4'>)
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.5'>)
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.3'>). Optional; if omitted, assume C<'0.1'>.
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.4'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -2474,16 +2486,20 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 
 =item -
 
+C<0.4> (Draft): Settlement of in-flight I/O at disconnect -- pending sends
+resolve, pending receives resolve with the disconnect event, both ordered
+after the connection-state transition; loop-deferred delivery of disconnect
+notifications; C<RST_STREAM> mapped to the standard disconnect transition.
+
+=item -
+
 C<0.3> (Draft): C<pagi.transport> flow control; C<websocket.http.response>
 denial-response extension; C<on_complete> plus reworked abnormal-only disconnect
 reasons; C<response_started> (MUST) and C<response_complete> (SHOULD) connection-state
 accessors for per-request response progress; documented server-supplied behaviors,
 HEAD response semantics, incomplete-response handling, and WebSocket over HTTP/2;
 tightened SSE detection to an exact media-range match with C<< q > 0 >>;
-removed C<pagi.features> and the per-send C<timeout> field; defined settlement
-of in-flight sends and receives at disconnect (settle by resolving, never
-cancel), the disconnect-transition ordering invariant, and loop-deferred
-delivery of disconnect notifications.
+removed C<pagi.features> and the per-send C<timeout> field.
 
 =item -
 
