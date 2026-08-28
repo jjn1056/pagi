@@ -31,6 +31,15 @@
     unchanged. Recorded honestly: no equivalent guarantee for on_complete
     (it may run within the application's terminal send call) or for
     pagi.transport callbacks.
+  - HTTP/2 RST_STREAM: the frame-mapping bullet no longer says "cancel any
+    outstanding Futures for that scope" -- wording that contradicted the
+    settlement contract (servers settle pending sends and receives, never
+    cancel them) and, read literally, cancelled the application's own
+    Future mid-cleanup, contradicting the app-may-finish-cleanup rule.
+    RST_STREAM is now defined as the standard abnormal-disconnect
+    transition for that stream's scope, with the machinery stated once in
+    State Transition Order. No server behavior change: the reference
+    server has always settled rather than cancelled.
 
 0.002005 - 2026-08-26
 
