@@ -9,7 +9,7 @@ PAGI::Spec - The base PAGI specification: application interface and core concept
 I<Note: code examples are illustrative; their style is a documentation
 convenience, not a requirement of the specification.>
 
-B<Version>: 0.4 (Draft)
+B<Version>: 0.5 (Draft)
 
 =head2 Introduction
 
@@ -101,11 +101,11 @@ C<pagi>: A hashref containing:
 
 =item -
 
-C<version> -- the core PAGI specification version, e.g. C<'0.4'>
+C<version> -- the core PAGI specification version, e.g. C<'0.5'>
 
 =item -
 
-C<spec_version> -- the protocol sub-spec version, e.g. C<'0.3'>. It may be
+C<spec_version> -- the protocol sub-spec version, e.g. C<'0.4'>. It may be
 omitted only as permitted by that protocol specification; if omitted, use the
 protocol's documented default.
 
@@ -646,6 +646,18 @@ Byte content (e.g., body payloads) must be passed as Perl scalars B<without> the
 =head2 Version History
 
 =over
+
+=item -
+
+0.5 (Draft): Send Completion Contract: successful resolution redefined as the
+server being finished with the event and its resources (accepted into
+outbound processing, or discarded because the connection ended); a send
+Future still pending when the connection or stream ends settles promptly by
+resolving successfully -- never failed with a disconnect-derived error, never
+cancelled, an already-settled send never rewritten; a receive Future pending
+at disconnect detection resolves with the protocol's disconnect event;
+applications should not cancel send Futures. See L<PAGI::Spec::Www> for the
+protocol-level 0.4 changes.
 
 =item -
 
