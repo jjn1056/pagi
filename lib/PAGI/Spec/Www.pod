@@ -895,6 +895,12 @@ If the client disconnects or cancels the connection, servers MUST send an explic
 
 A subsequent C<$send> is a B<no-op>: it neither delivers data nor raises. Applications therefore detect disconnection through the C<http.disconnect> event or the C<pagi.connection> connection-state object (see L</Connection State>) -- PAGI's non-destructive, race-friendly mechanism for exactly this -- rather than by inspecting the result of C<$send>.
 
+A send already B<in flight> when the disconnect is detected is not an error
+either: it settles by resolving successfully, per the Send Completion
+Contract in L<PAGI::Spec>. The application resumes from its await, observes
+the disconnect through C<pagi.connection> (already updated -- see L</State
+Transition Order>), and stops or cleans up as it chooses.
+
 Applications MUST gracefully handle disconnect events by:
 
 =over
@@ -1217,9 +1223,25 @@ Invoke C<on_disconnect> callbacks in registration order
 
 =item 5.
 
-Send C<http.disconnect> message to receive queue
+Deliver the disconnect event: append C<http.disconnect> to the receive queue,
+and if a receive Future is already pending, resolve it with that event
+
+=item 6.
+
+Settle any send Future still pending for this scope, per the Send Completion
+Contract in L<PAGI::Spec> (it resolves successfully)
 
 =back
+
+Steps 5 and 6 MAY be performed in either order, but both MUST happen after
+step 4.
+
+An application coroutine resumed by step 5 or step 6 therefore always
+observes the transition already complete: C<is_connected()> returns false,
+C<disconnect_reason()> returns the reason, and any registered
+C<on_disconnect> callbacks have been invoked or scheduled. Awaiting C<$send>
+or C<$receive> and then consulting the connection state is race-free by
+construction.
 
 When a request B<completes successfully>, servers MUST invoke C<on_complete>
 callbacks in registration order and MUST leave C<disconnect_reason()> as
