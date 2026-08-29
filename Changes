@@ -1,5 +1,15 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002007 - 2026-08-29
+
+  [Specification clarifications - resolved ambiguities]
+  - Connection State: futures returned by disconnect_future are
+    cancellation-isolated -- cancelling one (directly, or as the losing
+    component of a combinator such as Future->wait_any) never disturbs
+    the server's disconnect processing or any other returned Future.
+    Makes explicit what the accessor's definition already promises; the
+    racing example is correct as written.
+
 0.002006 - 2026-08-28
 
   [Specification - pending I/O at disconnect]
