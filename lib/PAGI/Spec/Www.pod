@@ -1097,6 +1097,18 @@ B<C<disconnect_future()>> - Returns a Future that resolves, with the reason, on 
     my $future = $conn->disconnect_future;  # Future or undef
     my $reason = await $future;
 
+Each returned Future MUST be B<cancellation-isolated>: cancelling it --
+directly, or implicitly as the losing component of a combinator such as
+C<< Future->wait_any >> -- MUST NOT affect the server's disconnect
+processing, the delivery of other notifications, or a Future returned by
+another call to this method. Successive calls MAY return distinct
+Futures; obtain a fresh one for each race, since a Future that lost one
+race cannot win a later one. This makes explicit what the definition
+above already promises: I<every> returned Future "resolves, with the
+reason, on abnormal disconnect" -- a Future one consumer can cancel out
+from under the others cannot keep that promise, and step 3 of
+L</State Transition Order> cannot be performed on it.
+
 =head4 What "connection" means here
 
 The object is named for the connection, but it is scoped to a B<single request>:
