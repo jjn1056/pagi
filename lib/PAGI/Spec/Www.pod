@@ -820,6 +820,35 @@ fault read the request's C<disconnect_reason> (see L</Connection State>);
 a defined reason means the request ended abnormally, while C<undef>
 distinguishes a clean completion, which C<is_connected> alone does not.
 
+B<Which signal answers which question.> The two signals above are not
+alternatives, and an intermediary needs both. The absence of the terminal
+event answers B<whether the response completed>; C<disconnect_reason>
+answers B<why the request ended>. An intermediary decides what to
+B<forward> -- and whether it may attach completeness-dependent metadata --
+from the event stream alone: it may synthesize a terminal event, an C<ETag>,
+or a C<Content-Length> only if it observed a terminal event itself. It
+consults C<disconnect_reason> only to decide whether to B<raise or log>,
+never to decide whether to forward what the application already produced.
+
+Using the disconnect signal to make the forwarding decision is a fault in
+both directions. A buffering intermediary that discards its buffered
+C<http.response.start> because the client disconnected destroys a response
+the application really did start: every outer observer then sees a request
+that never started a response, which is a different state with different
+consequences -- servers report it differently, and a client that read no
+bytes at all may retry an idempotent request under RFC 9110 Section 9.2.2.
+Conversely, an intermediary that keys on the disconnect signal alone still
+fabricates whenever an application stops early while its client is B<still
+connected>, which the disconnect signal cannot see. Forward the events you
+withheld; withhold only the metadata you did not earn.
+
+B<Re-emitting a buffered body event.> An intermediary that buffers body
+events and later re-emits them B<MUST> preserve each event's C<more> value.
+Because C<more> defaults to C<0> (see L</Response Body - C<send> event>),
+omitting it on a re-emitted non-terminal event asserts a completeness the
+application never claimed -- the same prohibition as above, reached by
+omission rather than intent.
+
 =head3 Server-Supplied Headers and Behaviors
 
 Beyond the headers an application sets on C<http.response.start>, a conforming

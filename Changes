@@ -26,6 +26,23 @@
     also clears it.
   - Cites RFC 9111 S3.3 where the spec already warned about "a lie that
     downstream caches would then store".
+  - States which of the two signals answers which question, because the
+    previous wording left it to inference and every consumer inferred the
+    same way and wrong. The absence of the terminal event answers whether
+    the response completed and governs what an intermediary may FORWARD or
+    synthesize; disconnect_reason answers why the request ended and governs
+    only whether to RAISE OR LOG. Keying the forwarding decision on the
+    disconnect signal fails in both directions: it discards a response the
+    application really started (leaving observers to see a request that
+    never started one, a different state -- and a client that read no bytes
+    may retry an idempotent request under RFC 9110 S9.2.2), and it still
+    fabricates when an application stops early while its client is STILL
+    CONNECTED, which that signal cannot see.
+  - An intermediary that buffers body events and re-emits them MUST
+    preserve each event's more value. Since more defaults to 0, omitting it
+    on a re-emitted non-terminal event asserts a completeness the
+    application never claimed -- the same prohibition reached by omission
+    rather than intent.
 
 0.002007 - 2026-08-29
 
