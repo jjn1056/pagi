@@ -744,6 +744,14 @@ event: the final C<http.response.body> with C<< more => 0 >>, a C<file>/C<fh>
 body event, or -- when C<http.response.start> promised trailers with
 C<< trailers => 1 >> -- the C<http.response.trailers> event.
 
+B<What the terminal event asserts.> The terminal event is the application's
+claim that the response is B<complete> in the sense of RFC 9110 Section 6.1 --
+that all the octets its framing indicates are available. The server renders
+that claim on the wire as the zero-length chunk of the chunked coding
+(RFC 9112 Section 7.1) or as C<END_STREAM> (RFC 9113 Section 8.1). Everything
+below follows from that: the event is a statement about the representation,
+not a formality that ends a code path.
+
 The server MUST treat this as an B<abnormal end>, never a clean one. The
 governing principle: a truncated response must be B<observable as truncated>
 by the client, and a connection with unfinished framing must never carry
@@ -756,7 +764,9 @@ another response. Concretely, the server:
 MUST NOT synthesize the terminal framing the application failed to send.
 Writing the chunked terminator or signaling C<END_STREAM> on the
 application's behalf would present a truncated response to the client as
-complete -- a lie that downstream caches would then store.
+complete -- a lie that downstream caches would then store (RFC 9111
+Section 3.3 permits storing an incomplete response only when it is recorded
+as incomplete, and forbids answering a request with one).
 
 =item -
 
@@ -783,6 +793,32 @@ As with L</Application Produced No Response>, if the client had B<already
 disconnected> before the application's Future resolved, this is not an
 application error: the request already ended abnormally with its own
 disconnect reason, and the server MUST NOT log an incomplete-response error.
+
+B<The application side of the same rule.> An application that stops early
+because its client disconnected B<MUST NOT> send the terminal event to
+"tidy up": it did not produce the whole representation, so it may not assert
+that it did. Its C<$send> would be a successful no-op in that state
+(see L</Disconnected Client - sending after disconnect>), but the assertion
+would still be false to every intermediary in the C<$send> chain, and an
+application that aborts for some other reason -- a failed backend, say --
+may not yet be inside the post-disconnect no-op guarantee at all, in which
+case a live client receives a terminal marker over a truncated body. The
+absence of the terminal event B<is> the signal that the response stopped
+short; that is what makes it distinguishable from one that completed.
+
+B<Every producer is bound, not only the server.> The prohibition on
+synthesizing terminal framing applies to B<anything that emits response
+events> -- middleware that buffers a body and re-emits it, a framework
+component that adapts one response into another, or any other intermediary
+wrapping C<$send> -- not only to the server writing bytes. An intermediary
+that observes an incomplete event stream MUST NOT complete it on the
+application's behalf, and MUST NOT compute or attach a representation
+validator (an C<ETag> or digest), a C<Content-Length>, or any other
+completeness-dependent metadata from the bytes it happened to observe.
+Intermediaries that need to distinguish an abnormal end from an application
+fault read the request's C<disconnect_reason> (see L</Connection State>);
+a defined reason means the request ended abnormally, while C<undef>
+distinguishes a clean completion, which C<is_connected> alone does not.
 
 =head3 Server-Supplied Headers and Behaviors
 

@@ -1,5 +1,32 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002008 - UNRELEASED
+
+  [Specification - incomplete responses bind every producer]
+  - The terminal response event is now defined as what it asserts: the
+    application's claim that the response is complete per RFC 9110 S6.1,
+    rendered on the wire as the zero-length chunk (RFC 9112 S7.1) or
+    END_STREAM (RFC 9113 S8.1). The existing prohibitions follow from that
+    rather than standing as bare rules.
+  - Application-side rule stated explicitly: an application that stops early
+    because its client disconnected MUST NOT send the terminal event. Its
+    send would be a successful no-op, but the assertion would still be false
+    to every intermediary in the $send chain -- and an application aborting
+    for another reason may not be inside the no-op guarantee at all, where a
+    live client would receive a terminal marker over a truncated body. The
+    absence of the terminal event is the signal.
+  - The prohibition on synthesizing terminal framing now binds every
+    producer, not only the server: middleware that buffers and re-emits a
+    body, or any intermediary wrapping $send, MUST NOT complete an
+    incomplete event stream on the application's behalf, and MUST NOT
+    compute a validator (ETag/digest), a Content-Length, or other
+    completeness-dependent metadata from the bytes it happened to observe.
+    Intermediaries distinguish an abnormal end by a defined
+    disconnect_reason; is_connected alone does not, since a clean completion
+    also clears it.
+  - Cites RFC 9111 S3.3 where the spec already warned about "a lie that
+    downstream caches would then store".
+
 0.002007 - 2026-08-29
 
   [Specification clarifications - resolved ambiguities]
