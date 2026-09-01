@@ -2,6 +2,15 @@
 
 0.002008 - UNRELEASED
 
+  [Specification version]
+  - HTTP/WebSocket/SSE sub-spec 0.4 -> 0.5. The clauses below add normative
+    requirements, not clarifications: a server that mixed inline and file/fh
+    payloads within one response, or an intermediary that attached a validator
+    to a 206 body, conformed under 0.4 and does not under 0.5. Since
+    $scope->{pagi}{spec_version} is what an application reads to know which
+    rules its server follows, that value has to move or the field cannot be
+    relied on. The core spec is unchanged; only the Www sub-spec moves.
+
   [Specification - incomplete responses bind every producer]
   - The terminal response event is now defined as what it asserts: the
     application's claim that the response is complete per RFC 9110 S6.1,

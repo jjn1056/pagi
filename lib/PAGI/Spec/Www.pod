@@ -18,6 +18,22 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 =item -
 
+C<0.5>: Constrained what a response body may contain and what an intermediary
+may do to one. A response's body is B<either> a sequence of inline C<body>
+events B<or> a single C<file>/C<fh> event, never both; an application MUST NOT
+send C<file>/C<fh> after inline bytes and the server MUST fail that send. An
+intermediary MUST NOT invalidate a commitment the response head made -- a
+C<< trailers => 1 >> declaration, or a C<206>/C<Content-Range> body that is a
+range rather than the representation -- and MUST examine the head before
+transforming a body or attaching metadata derived from one. An intermediary
+re-emitting a buffered event MUST preserve the event's other keys, including
+C<more>, whose default of C<0> makes an omission an assertion of completeness.
+Also states which of the two incomplete-response signals answers which
+question: absence of the terminal event governs what may be forwarded or
+synthesized, C<disconnect_reason> governs only whether to raise or log.
+
+=item -
+
 C<0.4>: Defined settlement of in-flight I/O at disconnect: a send Future
 still pending when the connection (or the scope's stream) ends settles by
 resolving successfully, a pending receive resolves with the disconnect
@@ -338,7 +354,7 @@ C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.4'>). Optional; if omitted, assume C<'0.1'>.
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.5'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -1535,7 +1551,7 @@ C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.4'>). Optional; if omitted, assume C<'0.1'>.
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.5'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -2619,6 +2635,15 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 =head2 Version History
 
 =over
+
+=item -
+
+C<0.5> (Draft): Response body payload kinds do not mix -- inline events or one
+C<file>/C<fh> event, never both, enforced by the server failing the send.
+Intermediaries must not invalidate what the response head promised
+(C<< trailers => 1 >>, a C<206>/C<Content-Range> range) and must preserve a
+re-emitted event's other keys. States which incomplete-response signal governs
+forwarding and which governs diagnostics.
 
 =item -
 

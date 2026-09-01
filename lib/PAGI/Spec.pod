@@ -105,7 +105,7 @@ C<version> -- the core PAGI specification version, e.g. C<'0.5'>
 
 =item -
 
-C<spec_version> -- the protocol sub-spec version, e.g. C<'0.4'>. It may be
+C<spec_version> -- the protocol sub-spec version, e.g. C<'0.5'>. It may be
 omitted only as permitted by that protocol specification; if omitted, use the
 protocol's documented default.
 
