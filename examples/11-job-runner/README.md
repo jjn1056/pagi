@@ -2,13 +2,27 @@
 
 A real-time job queue dashboard demonstrating PAGI's async capabilities with HTTP, SSE, and WebSocket protocols working together.
 
-> **Note: this example is IO::Async-specific.** The background worker tick, the
-> WebSocket ping, and the per-job countdown timers use `IO::Async::Timer::*` and
-> obtain the loop directly via `IO::Async::Loop`, so it runs only under an
-> IO::Async-based server such as PAGI::Server. It could be made loop-agnostic by
-> replacing those timers with `Future::IO` (e.g. `Future::IO->sleep`), which
-> works under any conforming server -- the rest of the app is plain PAGI
-> protocol and would not need to change.
+> **This example names no event loop.** The background worker tick, the
+> WebSocket keepalive ping and the per-job delays all pace themselves with
+> `Future::IO->sleep`, which dispatches to whichever implementation the server
+> bound at startup. Nothing here constructs an `IO::Async::Loop` or holds a
+> timer object, so the same application runs unchanged under any conforming
+> PAGI server.
+>
+> The pattern is worth copying: where you would reach for a loop timer, an
+> `async sub` that sleeps and re-checks its own flag does the same job without
+> binding the application to one implementation.
+>
+>     $worker_tick = (async sub {
+>         while ($is_running) {
+>             _check_queue();
+>             await Future::IO->sleep(0.1);
+>         }
+>     })->();
+>
+> Stopping is a flag plus a `cancel`, so shutdown does not wait out the
+> interval. See `PAGI-Tools/examples/process-streaming` for the same principle
+> applied to reading a subprocess.
 
 ## Running
 

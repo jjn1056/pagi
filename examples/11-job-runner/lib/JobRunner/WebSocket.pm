@@ -5,8 +5,7 @@ use warnings;
 
 use Future::AsyncAwait;
 use JSON::MaybeXS;
-use IO::Async::Loop;
-use IO::Async::Timer::Periodic;
+use Future::IO;
 use Scalar::Util qw(weaken);
 
 use JobRunner::Queue qw(
@@ -53,22 +52,21 @@ sub handler {
         # Send initial state
         await _send_full_state($send);
 
-        # Set up ping timer
-        my $loop = IO::Async::Loop->new;
-        my $ping_timer = IO::Async::Timer::Periodic->new(
-            interval => 25,
-            on_tick  => sub {
-                return unless $connected && $weak_send;
+        # Keepalive ping. A self-rescheduling sleep rather than an
+        # event-loop timer object, so this names no loop and runs under any
+        # conforming PAGI server.
+        my $ping_loop = (async sub {
+            while ($connected) {
+                await Future::IO->sleep(25);
+                last unless $connected && $weak_send;
                 eval {
                     $weak_send->({
                         type => 'websocket.send',
                         text => $JSON->encode({ type => 'ping', ts => time() }),
                     });
                 };
-            },
-        );
-        $loop->add($ping_timer);
-        $ping_timer->start;
+            }
+        })->();
 
         # Message loop
         eval {
@@ -89,8 +87,7 @@ sub handler {
 
         # Cleanup
         $connected = 0;
-        $ping_timer->stop;
-        $loop->remove($ping_timer);
+        $ping_loop->cancel unless $ping_loop->is_ready;
         remove_queue_subscriber($sub_id);
 
         die $error if $error && $error !~ /disconnect|closed/i;

@@ -5,7 +5,7 @@ use warnings;
 
 use Exporter 'import';
 use Future::AsyncAwait;
-use IO::Async::Timer::Periodic;
+use Future::IO;
 use Scalar::Util qw(weaken);
 
 use JobRunner::Queue qw(
@@ -20,8 +20,7 @@ our @EXPORT_OK = qw(
 );
 
 # Worker state
-my $worker_timer;
-my $event_loop;
+my $worker_tick;            # the running tick loop's Future
 my $concurrency = 3;        # Default max concurrent jobs
 my $running_count = 0;      # Currently running jobs
 my $total_processed = 0;    # Total jobs completed
@@ -32,23 +31,28 @@ my $is_running = 0;
 #
 
 sub start_worker {
-    my ($loop, $max_concurrent) = @_;
+    my ($max_concurrent) = @_;
     $max_concurrent //= 3;
 
     return if $is_running;
 
-    $event_loop = $loop;
     $concurrency = $max_concurrent;
     $is_running = 1;
 
-    # Create worker timer - polls for new jobs every 100ms
-    $worker_timer = IO::Async::Timer::Periodic->new(
-        interval => 0.1,
-        on_tick  => \&_check_queue,
-    );
+    # A self-rescheduling tick rather than an event-loop timer object. This
+    # names no loop: Future::IO->sleep dispatches to whichever implementation
+    # the server bound at startup, so the worker runs unchanged under any
+    # conforming PAGI server.
+    $worker_tick = (async sub {
+        while ($is_running) {
+            _check_queue();
+            await Future::IO->sleep(0.1);
+        }
+    })->();
 
-    $loop->add($worker_timer);
-    $worker_timer->start;
+    $worker_tick->on_fail(sub {
+        warn "[worker] tick loop stopped: $_[0]";
+    });
 
     return 1;
 }
@@ -58,12 +62,13 @@ sub stop_worker {
 
     return unless $is_running;
 
+    # The tick loop checks this on its next pass; cancelling ends the pending
+    # sleep so shutdown does not wait out the interval.
     $is_running = 0;
 
-    if ($worker_timer) {
-        $worker_timer->stop;
-        $event_loop->remove($worker_timer) if $event_loop;
-        $worker_timer = undef;
+    if ($worker_tick) {
+        $worker_tick->cancel unless $worker_tick->is_ready;
+        $worker_tick = undef;
     }
 
     return 1;
@@ -127,7 +132,7 @@ sub _execute_job_async {
     };
 
     # Execute the job
-    my $future = execute_job($job, $event_loop, $progress_cb, $cancel_check);
+    my $future = execute_job($job, $progress_cb, $cancel_check);
 
     $future->on_done(sub {
         my ($result) = @_;
@@ -168,7 +173,7 @@ concurrency limit.
 use JobRunner::Worker qw(start_worker stop_worker get_worker_stats);
 
 # Start worker with max 3 concurrent jobs
-start_worker($loop, 3);
+start_worker(3);
 
 # Get worker status
 my $stats = get_worker_stats();

@@ -15,7 +15,6 @@ our @EXPORT_OK = qw(
     add_queue_subscriber remove_queue_subscriber broadcast_queue_event
     add_job_subscriber remove_job_subscriber broadcast_job_event
     get_queue_stats clear_completed_jobs
-    set_event_loop
 );
 
 # Job storage
@@ -29,7 +28,6 @@ my %queue_subscribers;  # subscriber_id => send_cb (for queue-wide events)
 my %job_subscribers;    # job_id => { subscriber_id => send_cb } (for per-job progress)
 
 # Event loop reference
-my $event_loop;
 
 # Job statuses
 use constant {
@@ -39,18 +37,6 @@ use constant {
     STATUS_FAILED    => 'failed',
     STATUS_CANCELLED => 'cancelled',
 };
-
-sub set_event_loop {
-    my ($loop) = @_;
-
-    $event_loop = $loop;
-}
-
-sub get_event_loop {
-    my () = @_;
-
-    return $event_loop;
-}
 
 #
 # Job Lifecycle

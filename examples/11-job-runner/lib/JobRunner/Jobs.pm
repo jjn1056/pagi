@@ -5,7 +5,7 @@ use warnings;
 
 use Exporter 'import';
 use Future::AsyncAwait;
-use IO::Async::Timer::Countdown;
+use Future::IO;
 
 our @EXPORT_OK = qw(
     get_job_types get_job_type
@@ -180,7 +180,7 @@ sub validate_job_params {
 #
 
 sub execute_job {
-    my ($job, $loop, $progress_cb, $cancel_check) = @_;
+    my ($job, $progress_cb, $cancel_check) = @_;
 
     my $job_type = $JOB_TYPES{$job->{type}};
 
@@ -188,7 +188,7 @@ sub execute_job {
         return Future->fail("Unknown job type: $job->{type}");
     }
 
-    return $job_type->{execute}->($job, $loop, $progress_cb, $cancel_check);
+    return $job_type->{execute}->($job, $progress_cb, $cancel_check);
 }
 
 #
@@ -196,7 +196,7 @@ sub execute_job {
 #
 
 async sub _execute_countdown {
-    my ($job, $loop, $progress_cb, $cancel_check) = @_;
+    my ($job, $progress_cb, $cancel_check) = @_;
 
     my $seconds = $job->{params}{seconds} // 10;
     my $remaining = $seconds;
@@ -215,7 +215,7 @@ async sub _execute_countdown {
         $progress_cb->($percent, $message);
 
         # Wait 1 second
-        await _delay($loop, 1);
+        await _delay(1);
 
         $remaining--;
     }
@@ -230,7 +230,7 @@ async sub _execute_countdown {
 }
 
 async sub _execute_prime {
-    my ($job, $loop, $progress_cb, $cancel_check) = @_;
+    my ($job, $progress_cb, $cancel_check) = @_;
 
     my $limit = $job->{params}{limit} // 1000;
     my @primes;
@@ -262,7 +262,7 @@ async sub _execute_prime {
             $last_update = $percent;
 
             # Yield to event loop periodically
-            await _delay($loop, 0.01) if $percent % 20 == 0;
+            await _delay(0.01) if $percent % 20 == 0;
         }
     }
 
@@ -277,7 +277,7 @@ async sub _execute_prime {
 }
 
 async sub _execute_fibonacci {
-    my ($job, $loop, $progress_cb, $cancel_check) = @_;
+    my ($job, $progress_cb, $cancel_check) = @_;
 
     my $count = $job->{params}{count} // 20;
     my @fib = (0, 1);
@@ -293,7 +293,7 @@ async sub _execute_fibonacci {
         $progress_cb->($percent, "Calculated F($i) = $fib[-1]");
 
         # Small delay to make progress visible
-        await _delay($loop, 0.1);
+        await _delay(0.1);
     }
 
     $progress_cb->(100, 'Complete!');
@@ -307,7 +307,7 @@ async sub _execute_fibonacci {
 }
 
 async sub _execute_echo {
-    my ($job, $loop, $progress_cb, $cancel_check) = @_;
+    my ($job, $progress_cb, $cancel_check) = @_;
 
     my $message = $job->{params}{message} // 'Hello, World!';
     my $delay = $job->{params}{delay} // 3;
@@ -321,7 +321,7 @@ async sub _execute_echo {
         my $percent = int((($i - 1) / $delay) * 100);
         $progress_cb->($percent, "Echoing in $remaining second" . ($remaining == 1 ? '' : 's') . "...");
 
-        await _delay($loop, 1);
+        await _delay(1);
     }
 
     $progress_cb->(100, 'Complete!');
@@ -338,25 +338,13 @@ async sub _execute_echo {
 #
 
 sub _delay {
-    my ($loop, $seconds) = @_;
+    my ($seconds) = @_;
 
-    my $future = $loop->new_future;
-
-    my $timer = IO::Async::Timer::Countdown->new(
-        delay     => $seconds,
-        on_expire => sub { $future->done },
-    );
-
-    $loop->add($timer);
-    $timer->start;
-
-    return $future->on_done(sub {
-        $loop->remove($timer);
-    })->on_fail(sub {
-        $loop->remove($timer);
-    });
+    # Names no event loop: Future::IO dispatches to whichever implementation
+    # the server bound at startup, so this job runs unchanged under any
+    # conforming PAGI server.
+    return Future::IO->sleep($seconds);
 }
-
 1;
 
 __END__

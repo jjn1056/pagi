@@ -6,9 +6,7 @@ use warnings;
 use Future::AsyncAwait;
 use File::Basename;
 use File::Spec;
-use IO::Async::Loop;
 
-use JobRunner::Queue qw(set_event_loop);
 use JobRunner::Worker qw(start_worker stop_worker);
 use JobRunner::HTTP;
 use JobRunner::SSE;
@@ -55,12 +53,11 @@ async sub _handle_lifespan {
 
         if ($event_type eq 'lifespan.startup') {
             eval {
-                my $loop = IO::Async::Loop->new;
-
-                set_event_loop($loop);
-
-                # Start worker with 3 concurrent jobs
-                start_worker($loop, 3);
+                # No event loop is named here. The worker paces itself with
+                # Future::IO, which dispatches to whichever implementation the
+                # server bound at startup, so this application runs unchanged
+                # under any conforming PAGI server.
+                start_worker(3);
 
                 warn "[lifespan] Job Runner started (worker concurrency: 3)";
             };
