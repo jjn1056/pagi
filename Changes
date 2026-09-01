@@ -2,82 +2,33 @@
 
 0.002008 - UNRELEASED
 
-  [Specification version]
-  - HTTP/WebSocket/SSE sub-spec 0.4 -> 0.5. The clauses below add normative
-    requirements, not clarifications: a server that mixed inline and file/fh
-    payloads within one response, or an intermediary that attached a validator
-    to a 206 body, conformed under 0.4 and does not under 0.5. Since
-    $scope->{pagi}{spec_version} is what an application reads to know which
-    rules its server follows, that value has to move or the field cannot be
-    relied on. The core spec is unchanged; only the Www sub-spec moves.
-
-  [Specification - incomplete responses bind every producer]
-  - The terminal response event is now defined as what it asserts: the
-    application's claim that the response is complete per RFC 9110 S6.1,
-    rendered on the wire as the zero-length chunk (RFC 9112 S7.1) or
-    END_STREAM (RFC 9113 S8.1). The existing prohibitions follow from that
-    rather than standing as bare rules.
-  - Application-side rule stated explicitly: an application that stops early
-    because its client disconnected MUST NOT send the terminal event. Its
-    send would be a successful no-op, but the assertion would still be false
-    to every intermediary in the $send chain -- and an application aborting
-    for another reason may not be inside the no-op guarantee at all, where a
-    live client would receive a terminal marker over a truncated body. The
-    absence of the terminal event is the signal.
-  - The prohibition on synthesizing terminal framing now binds every
-    producer, not only the server: middleware that buffers and re-emits a
-    body, or any intermediary wrapping $send, MUST NOT complete an
-    incomplete event stream on the application's behalf, and MUST NOT
-    compute a validator (ETag/digest), a Content-Length, or other
-    completeness-dependent metadata from the bytes it happened to observe.
-    Intermediaries distinguish an abnormal end by a defined
-    disconnect_reason; is_connected alone does not, since a clean completion
-    also clears it.
-  - Cites RFC 9111 S3.3 where the spec already warned about "a lie that
-    downstream caches would then store".
-  - States which of the two signals answers which question, because the
-    previous wording left it to inference and every consumer inferred the
-    same way and wrong. The absence of the terminal event answers whether
-    the response completed and governs what an intermediary may FORWARD or
-    synthesize; disconnect_reason answers why the request ended and governs
-    only whether to RAISE OR LOG. Keying the forwarding decision on the
-    disconnect signal fails in both directions: it discards a response the
-    application really started (leaving observers to see a request that
-    never started one, a different state -- and a client that read no bytes
-    may retry an idempotent request under RFC 9110 S9.2.2), and it still
-    fabricates when an application stops early while its client is STILL
-    CONNECTED, which that signal cannot see.
-  - An intermediary that buffers body events and re-emits them MUST
-    preserve each event's more value. Since more defaults to 0, omitting it
-    on a re-emitted non-terminal event asserts a completeness the
-    application never claimed -- the same prohibition reached by omission
-    rather than intent.
-
-  [Specification - body integrity and head promises]
-  - Payload kinds no longer mix within a response: a body is either a
-    sequence of inline body events or a single file/fh event, never both.
-    An application MUST NOT send file/fh once inline bytes have been
-    delivered, and the server MUST fail that send. The spec was silent
-    before, so this is a clarification rather than a reversal. It exists for
-    intermediaries: a compressing middleware commits to an encoding before
-    it can know a delegated payload will follow, and cannot compress bytes
-    the server streams on the application's behalf -- the mix produced a
-    response whose declared encoding did not describe its bytes. ASGI's Path
-    Send extension draws the same line; PSGI and Rack make the combination
-    unrepresentable. A failed file/fh send delivers no bytes and does not
-    engage the rule, so recovery by sending an inline body is still allowed.
-  - An intermediary MUST NOT invalidate what the response head promised, and
-    MUST examine the head before transforming a body or attaching metadata
-    derived from one. Two instances, with the list left open: trailers => 1
-    commits the server to chunked framing over HTTP/1.1, so an intermediary
-    that adds Content-Length makes the server reject the application's own
-    trailers event; and a 206 body is a range rather than the
-    representation, so computing an ETag or digest from it labels the
-    resource with a validator identifying only the fragment.
-  - An intermediary re-emitting a buffered event MUST preserve the event's
-    other keys rather than rebuilding it from the fields it cares about.
-    Reconstructing an http.response.start from status and headers alone
-    silently drops trailers => 1.
+  [Specification]
+  - HTTP/WebSocket/SSE sub-spec 0.4 -> 0.5. These are new requirements, not
+    clarifications, so $scope->{pagi}{spec_version} moves with them. The core
+    spec is unchanged.
+  - The terminal response event is defined as what it asserts: the
+    application's claim that the response is complete (RFC 9110 S6.1), which
+    the server renders as the chunked terminator or END_STREAM. The existing
+    prohibitions follow from that.
+  - The ban on synthesizing terminal framing binds every producer, not only
+    the server. Middleware that buffers and re-emits a body MUST NOT complete
+    an incomplete stream, nor derive an ETag, Content-Length, or other
+    completeness-dependent metadata from the bytes it happened to see.
+  - Says which of the two signals answers which question: absence of the
+    terminal event governs what may be forwarded or synthesized;
+    disconnect_reason governs only whether to raise or log. The previous
+    wording left it to inference, and every consumer inferred it the same way
+    and wrong.
+  - A response body is either inline events or one file/fh event, never both.
+    Mixing them leaves a body-transforming intermediary unable to honour the
+    encoding it already declared; the server now fails such a send.
+  - An intermediary MUST examine the response head before transforming a body
+    or attaching metadata derived from one, and MUST NOT invalidate what that
+    head promised -- trailers => 1 commits the server to chunked framing, and
+    a 206 body is a range rather than the representation.
+  - An intermediary re-emitting a buffered event MUST preserve its other
+    keys, including more, whose default of 0 makes an omission an assertion
+    of completeness.
 
 0.002007 - 2026-08-29
 
