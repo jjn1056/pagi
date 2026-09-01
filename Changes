@@ -44,6 +44,32 @@
     application never claimed -- the same prohibition reached by omission
     rather than intent.
 
+  [Specification - body integrity and head promises]
+  - Payload kinds no longer mix within a response: a body is either a
+    sequence of inline body events or a single file/fh event, never both.
+    An application MUST NOT send file/fh once inline bytes have been
+    delivered, and the server MUST fail that send. The spec was silent
+    before, so this is a clarification rather than a reversal. It exists for
+    intermediaries: a compressing middleware commits to an encoding before
+    it can know a delegated payload will follow, and cannot compress bytes
+    the server streams on the application's behalf -- the mix produced a
+    response whose declared encoding did not describe its bytes. ASGI's Path
+    Send extension draws the same line; PSGI and Rack make the combination
+    unrepresentable. A failed file/fh send delivers no bytes and does not
+    engage the rule, so recovery by sending an inline body is still allowed.
+  - An intermediary MUST NOT invalidate what the response head promised, and
+    MUST examine the head before transforming a body or attaching metadata
+    derived from one. Two instances, with the list left open: trailers => 1
+    commits the server to chunked framing over HTTP/1.1, so an intermediary
+    that adds Content-Length makes the server reject the application's own
+    trailers event; and a 206 body is a range rather than the
+    representation, so computing an ETag or digest from it labels the
+    resource with a validator identifying only the fragment.
+  - An intermediary re-emitting a buffered event MUST preserve the event's
+    other keys rather than rebuilding it from the fields it cares about.
+    Reconstructing an http.response.start from status and headers alone
+    silently drops trailers => 1.
+
 0.002007 - 2026-08-29
 
   [Specification clarifications - resolved ambiguities]
