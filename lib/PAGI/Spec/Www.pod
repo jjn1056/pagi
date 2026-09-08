@@ -2074,9 +2074,10 @@ C<http.response.trailers> where the start declared them, with exactly the
 semantics those events have on an C<http> scope (see L</HTTP>). This is the
 one place where a scope carries events from another protocol's namespace,
 and it exists because the wire really is HTTP until the C<101>. On the wire
-the refusal is byte-identical to the same response on an C<http> scope. Every
-server offering C<websocket> scopes MUST support it; there is nothing to
-advertise or detect.
+the refusal's status, headers, and body are identical to the same response on
+an C<http> scope, apart from the connection-lifecycle headers the server owns
+(see below). Every server offering C<websocket> scopes MUST support it; there
+is nothing to advertise or detect.
 
     await $send->({ type => 'http.response.start', status => 401,
                     headers => [['www-authenticate', 'Bearer realm="ws"'],
@@ -2238,9 +2239,11 @@ an C<http> scope (see L</HTTP>): a C<404> for an unknown endpoint, a
 C<401>/C<403> for an unauthenticated request, a C<204> to tell an
 C<EventSource> client to stop reconnecting, a redirect. This carries events
 from another protocol's namespace for the same reason as
-L</"Refusing the handshake">, and on the wire the refusal is byte-identical
-to the same response on an C<http> scope. Every server offering C<sse> scopes
-MUST support it; there is nothing to advertise or detect.
+L</"Refusing the handshake">, and on the wire the refusal's status, headers,
+and body are identical to the same response on an C<http> scope, apart from
+the connection-lifecycle headers the server owns (see below). Every server
+offering C<sse> scopes MUST support it; there is nothing to advertise or
+detect.
 
 Body semantics, including C<< more => 1 >> streaming, C<file>, C<fh>, and
 trailers, are inherited from L</HTTP> and not restated here; the note under
