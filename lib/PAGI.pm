@@ -59,8 +59,9 @@ applications, supporting HTTP/1.1, WebSocket, and Server-Sent Events (SSE).
 
 This document presents a high level overview of L<PAGI>.  If you are a web developer
 who is looking to write PAGI compliant apps, you should also review the tutorial:
-L<PAGI::Tutorial>. Coming from PSGI? See L<PAGI::PSGI>. Building a framework on
-PAGI? See L<PAGI::Building>.
+L<PAGI::Tutorial>. Coming from PSGI? See L<PAGI::PSGI>. Upgrading between
+sub-spec versions? See L<PAGI::Upgrading>. Building a framework on PAGI? See
+L<PAGI::Building>.
 
 =head2 Why PAGI?
 
@@ -427,6 +428,8 @@ requires L<Future::AsyncAwait>).
 =item L<PAGI::Cookbook> - Worked, runnable recipes for each protocol feature
 
 =item L<PAGI::PSGI> - Coming to PAGI from PSGI
+
+=item L<PAGI::Upgrading> - What changed between sub-spec versions
 
 =item L<PAGI::Building> - Building frameworks and toolkits on PAGI
 
