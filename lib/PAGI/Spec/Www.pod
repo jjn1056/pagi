@@ -2102,12 +2102,10 @@ C<websocket.accept>, HTTP response events MUST fail the C<$send> Future
 without transmitting anything, the same fail-don't-mutate rule as every
 other out-of-sequence send. A normally completed refusal is a clean end
 (see L</Meaning per scope>): the WebSocket was never established, so no
-C<websocket.disconnect> is delivered. Because the refusal is an ordinary HTTP
-response, what happens to the connection after it is the transport's ordinary
-business: on HTTP/1.1 the server keeps the connection alive or closes it
-exactly as it would after the same response on an C<http> scope, honouring the
-response's own framing and C<Connection> header; on HTTP/2 only this stream
-ends.
+C<websocket.disconnect> is delivered. On HTTP/1.1 the server closes the
+connection after the refusal and the response carries C<Connection: close>, so
+a pooling client does not reuse the socket; on HTTP/2 the refusal ends the
+stream and the connection is unaffected.
 
 =head2 Server-Sent Events (SSE)
 
@@ -2252,9 +2250,10 @@ C<http.response.start> are mutually exclusive: after C<sse.start>, HTTP
 response events MUST fail; after a refusal has started, the stream events
 (C<sse.send>, C<sse.comment>, C<sse.keepalive>, C<sse.close>) MUST fail. A
 normally completed refusal is a clean end (see L</Meaning per scope>): no
-event stream was started and no C<sse.disconnect> is delivered, and what
-happens to the connection afterwards is the transport's ordinary business,
-as under L</"Refusing the handshake">.
+event stream was started and no C<sse.disconnect> is delivered. As with a
+WebSocket refusal, on HTTP/1.1 the server closes the connection after the
+refusal and the response carries C<Connection: close>; on HTTP/2 the refusal
+ends the stream and the connection is unaffected.
 
 =head3 Send SSE - C<send> event
 

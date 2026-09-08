@@ -340,9 +340,8 @@ pair instead of C<websocket.accept> (sub-spec 0.6):
     };
 
 These events are valid only before C<websocket.accept>: the server writes the
-HTTP response and the WebSocket never opens. The refusal is an ordinary HTTP
-response, so what happens to the connection after it is the transport's
-ordinary business. The C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
+HTTP response and closes, so the WebSocket never opens. The C<PAGI::WebSocket>
+helper in C<PAGI-Tools> wraps this as
 C<< $ws->deny(status => 401, headers => [...], body => ...) >>. See
 L<PAGI::Spec::Www/"Refusing the handshake">.
 
