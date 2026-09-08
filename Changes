@@ -22,6 +22,11 @@
     received) is the terminal event of an accepted socket. Returning without
     them is an incomplete response; a WebSocket so abandoned is closed with
     code 1011 and websocket.disconnect carries 1011 / server_error.
+  - A WebSocket refusal's status must be 300 or above; a 1xx or 2xx start
+    fails without mutating state (101 and, on HTTP/2, any 2xx to the CONNECT
+    are handshake acceptances). SSE refusals may carry any status. The
+    websocket.disconnect code/reason pairings are normative where the server
+    names the ending; peer Close-frame code and text are never replaced.
 
   [Documentation]
   - New PAGI::Upgrading with the 0.5 -> 0.6 guide for application authors,
@@ -29,6 +34,9 @@
     mixed Accept headers.
   - Tutorial SSE examples use the sub-spec's sse.start and sse.send event
     names.
+  - The SSE broadcaster and job-runner examples end finite streams with
+    sse.close; the job runner refuses bad requests with an HTTP response
+    and observes the end of the stream through pagi.connection.
 
 0.002008 - 2026-09-01
 

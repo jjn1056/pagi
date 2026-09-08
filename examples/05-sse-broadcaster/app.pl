@@ -43,6 +43,11 @@ async sub app {
         await $send->({ type => 'sse.send', %$msg });
     }
 
+    # A finite stream ends with sse.close. Skip it if the client already left:
+    # a terminal event after a disconnect would assert a delivery that did not
+    # happen.
+    await $send->({ type => 'sse.close' }) unless $disconnect->is_ready;
+
     $disconnect->cancel if $disconnect->can('cancel') && !$disconnect->is_ready;
 }
 

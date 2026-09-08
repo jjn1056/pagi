@@ -80,6 +80,9 @@ After:
     await $send->({ type => 'http.response.body', body => 'unauthorized' });
 
 C<websocket.close> before accept now fails as an out-of-sequence send.
+A WebSocket refusal's status must be C<300> or above; a C<1xx> or C<2xx>
+start fails, because those are handshake acceptances on the wire. An SSE
+refusal may use any status.
 Refusal bodies stream when C<< more => 1 >>, exactly like HTTP bodies:
 finish them or watch the connection object, because a refusal you abandon
 after its start is an incomplete response. Prefer a complete body.
@@ -210,7 +213,8 @@ Accept the HTTP response events on C<websocket> scopes before accept and
 on C<sse> scopes before start, through your ordinary HTTP response path.
 Remove the protocol-prefixed refusal events and the
 C<websocket.http.response> extension advertisement. Fail C<websocket.close>
-before accept.
+before accept. Fail a C<websocket>-scope refusal start whose status is
+below C<300>.
 
 =item *
 

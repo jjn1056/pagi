@@ -354,7 +354,8 @@ I<Example: F<examples/05-sse-broadcaster>> (needs C<use Future::IO;>)
 
 Open the stream with C<sse.start>, then push C<sse.send> events, each a
 C<< { event => ..., data => ... } >>. Hold a C<$receive> Future and check it so
-you stop when the client closes:
+you stop when the client closes, and end a finite stream with C<sse.close>
+unless the client already left:
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
@@ -379,6 +380,8 @@ you stop when the client closes:
             await Future::IO->sleep(1);
             await $send->({ type => 'sse.send', %$msg });
         }
+
+        await $send->({ type => 'sse.close' }) unless $disconnect->is_ready;
     };
 
 Using C<< Future::IO->sleep >> rather than C<sleep> keeps the handler

@@ -2013,10 +2013,14 @@ Incomplete>).
 
 =back
 
-These pairings describe the reference server. The binding contract is only that
-C<code> is a valid RFC 6455 close code and C<reason>, when the server can name
-one, is a token from L</Standard Disconnect Reasons>; applications SHOULD branch
-on C<reason> rather than C<code>.
+The pairings above are normative wherever the server names the ending: a
+server-reported abnormal end carries the standard token as C<reason> and the
+code shown (see L</Meaning per scope>, B<Agreement with disconnect events>);
+an incomplete session carries C<1011> and C<server_error>; an C<abort>
+carries C<1006> and C<app_abort>. When the peer sent the Close frame,
+C<code> and C<reason> are the peer's own and are never replaced by a token.
+Applications SHOULD branch on C<reason> where it is a token and treat
+peer-supplied text as data.
 
 =head4 Disconnected Client - sending after disconnect
 
@@ -2166,7 +2170,16 @@ carve-out; and, as with any streamed body, a client that disconnects
 mid-stream may have received part of it.
 
 C<websocket.accept> and the refusal's C<http.response.start> are the only
-handshake choices and are mutually exclusive. After a refusal has started,
+handshake choices and are mutually exclusive.
+
+A refusal's status MUST be C<300> or above. A C<1xx> or C<2xx> status is not
+a refusal: C<101> is the HTTP/1.1 acceptance, and on HTTP/2 any C<2xx> answer
+to the C<CONNECT> request opens the tunnel (RFC 8441 section 5), so an
+C<http.response.start> carrying such a status on a C<websocket> scope is
+invalid and the server MUST fail the C<$send> Future without transmitting
+anything or mutating state, on either transport.
+
+After a refusal has started,
 only HTTP response events are valid until its terminal event; after
 C<websocket.accept>, HTTP response events MUST fail the C<$send> Future
 without transmitting anything, the same fail-don't-mutate rule as every
@@ -2313,6 +2326,13 @@ and body are identical to the same response on an C<http> scope, apart from
 the connection-lifecycle headers the server owns (see below). Every server
 offering C<sse> scopes MUST support it; there is nothing to advertise or
 detect.
+
+Unlike a WebSocket refusal, an SSE refusal may carry any status, C<200>
+included. An C<sse> scope is distinguished from a stream by the event that
+answers it, C<http.response.start> rather than C<sse.start>, not by the
+status, and an ordinary C<200> page is the documented answer for a request
+the application does not treat as a stream (see
+L<PAGI::Upgrading/"Known issue">).
 
 Body semantics, including C<< more => 1 >> streaming, C<file>, C<fh>, and
 trailers, are inherited from L</HTTP> and not restated here; the note under

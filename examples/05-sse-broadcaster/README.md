@@ -3,6 +3,7 @@
 Streams `text/event-stream` data by emitting:
 - `sse.start` (replaces `http.response.start` for SSE).
 - Multiple `sse.send` events with UTF-8 text payloads.
+- `sse.close` after the last event (skipped if the client already left).
 - Stops early if `sse.disconnect` arrives.
 
 ## Quick Start
