@@ -38,6 +38,32 @@
     sse.close; the job runner refuses bad requests with an HTTP response
     and observes the end of the stream through pagi.connection.
 
+  [What may break]
+  - Refusing a WebSocket handshake or an SSE stream with the
+    websocket.http.response.* or sse.http.response.* events. Those events no
+    longer exist, so a conforming server fails the send. Send
+    http.response.start and http.response.body on the scope before
+    websocket.accept or sse.start instead; no extension check is needed.
+  - Sending websocket.close before websocket.accept to get a bare 403. That
+    send now fails as out of sequence. Refuse with an HTTP response.
+  - Returning from a started SSE stream without sse.close. This was a clean
+    end; it is now an incomplete response: no end-of-stream marker, the
+    connection closes so the truncation is observable, on_disconnect fires
+    with server_error, and the server logs an error. Add sse.close after the
+    final sse.send. Streams that run until the client disconnects are not
+    affected.
+  - Returning from an accepted WebSocket without sending websocket.close or
+    receiving websocket.disconnect. The reference server reported a clean
+    end while the client saw 1006; it is now an incomplete response closed
+    with 1011 and logged. Loops that leave only on websocket.disconnect are
+    not affected.
+  - A WebSocket refusal with a 1xx or 2xx status. Those are handshake
+    acceptances on the wire and the send now fails.
+  - Not affected: http scopes, which already carried pagi.connection;
+    on_disconnect callbacks that ignore the new second argument; code that
+    tested on_complete or disconnect_future for definedness, which is now
+    merely redundant.
+
 0.002008 - 2026-09-01
 
   [Specification]
