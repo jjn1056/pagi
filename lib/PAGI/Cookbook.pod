@@ -215,11 +215,14 @@ it. Note that sending after a disconnect is simply a no-op -- it never raises --
 so you detect disconnection through these mechanisms, not by checking the result
 of C<$send>.
 
-For B<HTTP>, PAGI additionally gives you a connection-state object at
-C<< $scope->{'pagi.connection'} >>. It exists because calling C<$receive> on an
-HTTP scope just to poll for disconnect would consume request-body data; the
-object lets you check without touching the queue. It offers a cheap synchronous
-check, a cleanup callback, and a Future you can race against:
+PAGI additionally gives you a connection-state object at
+C<< $scope->{'pagi.connection'} >>, on every scope: C<http>, C<websocket>, and
+C<sse> alike. It exists because calling C<$receive> just to poll for disconnect
+consumes whatever the queue holds next -- request-body data on an HTTP scope, a
+client message on a WebSocket -- and because a refusal that completes normally
+delivers no disconnect event at all; the object lets you check without touching
+the queue. It offers a cheap synchronous check, a cleanup callback, and a
+Future you can race against:
 
     use Future;
     use Future::IO;
@@ -260,14 +263,19 @@ logic without juggling a flag yourself:
     $conn->on_complete(sub   { $txn->commit   });   # response fully delivered
     $conn->on_disconnect(sub { $txn->rollback });   # client left, or aborted
 
-B<WebSocket> and B<SSE> do not get a C<pagi.connection> object: their C<$receive>
-queues carry messages, not a body you must preserve, so awaiting the
-C<websocket.disconnect> / C<sse.disconnect> event is already the clean way to
-notice -- as the WebSocket and SSE recipes do. (The C<PAGI::WebSocket> and
-C<PAGI::SSE> helper objects in C<PAGI-Tools> wrap this for you.)
+On a B<WebSocket> or an B<SSE> scope the same object is present and means the
+same things, scoped to the session or the stream instead of a single response:
+C<on_complete> fires when a closing handshake finishes, when the stream ends,
+or when a refusal is fully written, and C<on_disconnect> fires on every
+abnormal ending. Awaiting the C<websocket.disconnect> / C<sse.disconnect> event
+remains the natural way for the receive loop itself to notice -- as the
+WebSocket and SSE recipes do -- but anything that does not own the queue uses
+the object. (The C<PAGI::WebSocket> and C<PAGI::SSE> helper objects in
+C<PAGI-Tools> wrap this for you.)
 
 The full connection-state interface (C<is_connected>, C<disconnect_reason>,
-C<on_disconnect>, C<on_complete>, C<disconnect_future>) is specified in
+C<disconnect_detail>, C<on_disconnect>, C<on_complete>, C<disconnect_future>,
+C<response_started>, C<response_complete>, and C<abort>) is specified in
 L<PAGI::Spec::Www/"Connection State">.
 
 =head1 WEBSOCKET
@@ -305,14 +313,11 @@ spans the whole connection:
         }
     };
 
-=head2 Rejecting a handshake with a custom response
+=head2 Rejecting a handshake with an HTTP response
 
-Sending C<websocket.close> before C<websocket.accept> rejects a handshake with a
-bare C<403>. To reject with a B<custom> response -- a C<401> with a
-C<WWW-Authenticate> header, a C<429>, a redirect -- send a
-C<websocket.http.response.start> + C<websocket.http.response.body> pair instead
-of C<websocket.accept>, when the server advertises the C<websocket.http.response>
-extension:
+To reject a handshake -- a C<401> with a C<WWW-Authenticate> header, a C<429>,
+a redirect -- send an ordinary C<http.response.start> + C<http.response.body>
+pair instead of C<websocket.accept> (sub-spec 0.6):
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
@@ -321,21 +326,12 @@ extension:
         await $receive->();   # websocket.connect
 
         if (!authorized($scope)) {                       # your auth check
-            if ($scope->{extensions}{'websocket.http.response'}) {
-                await $send->({
-                    type    => 'websocket.http.response.start',
-                    status  => 401,
-                    headers => [ [ 'content-type',     'application/json' ],
-                                 [ 'www-authenticate', 'Bearer' ] ],
-                });
-                await $send->({
-                    type => 'websocket.http.response.body',
-                    body => '{"error":"unauthorized"}',
-                });
-            }
-            else {
-                await $send->({ type => 'websocket.close' });   # bare 403 fallback
-            }
+            await $send->({
+                type    => 'http.response.start',
+                status  => 401,
+                headers => [['www-authenticate', 'Bearer realm="chat"']],
+            });
+            await $send->({ type => 'http.response.body', body => 'Unauthorized' });
             return;
         }
 
@@ -344,10 +340,11 @@ extension:
     };
 
 These events are valid only before C<websocket.accept>: the server writes the
-HTTP response and closes, so the WebSocket never opens. The C<PAGI::WebSocket>
-helper in C<PAGI-Tools> wraps this as
-C<< $ws->deny(status => 401, headers => [...], body => ...) >>, with the same
-fallback. See L<PAGI::Spec::Www/"WebSocket Denial Response (extension)">.
+HTTP response and, on HTTP/1.1, closes the connection (on HTTP/2 the stream
+ends and the connection is unaffected), so the WebSocket never opens. The
+C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
+C<< $ws->deny($response) >>, where C<$response> is any C<PAGI::Response>. See
+L<PAGI::Spec::Www/"Refusing the handshake">.
 
 =head1 SERVER-SENT EVENTS
 
@@ -357,7 +354,8 @@ I<Example: F<examples/05-sse-broadcaster>> (needs C<use Future::IO;>)
 
 Open the stream with C<sse.start>, then push C<sse.send> events, each a
 C<< { event => ..., data => ... } >>. Hold a C<$receive> Future and check it so
-you stop when the client closes:
+you stop when the client closes, and end a finite stream with C<sse.close>
+unless the client already left:
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
@@ -382,27 +380,27 @@ you stop when the client closes:
             await Future::IO->sleep(1);
             await $send->({ type => 'sse.send', %$msg });
         }
+
+        await $send->({ type => 'sse.close' }) unless $disconnect->is_ready;
     };
 
 Using C<< Future::IO->sleep >> rather than C<sleep> keeps the handler
 non-blocking and loop-agnostic.
 
-=head2 Ending a stream: return vs C<sse.close>
+=head2 Ending a stream: C<sse.close>
 
-A stream ends in one of two ways, and they are B<identical on the wire> -- the
-server writes the end-of-stream marker and closes; the client cannot tell them
-apart. B<Return> after the final C<sse.send> and the server ends the stream when
-your handler's Future resolves:
+A started stream ends with C<sse.close>. It is the stream's terminal event,
+the SSE analog of the final C<http.response.body> with C<< more => 0 >>: the
+server flushes buffered events, writes the end-of-stream marker, and closes.
+It takes effect immediately -- before the handler returns -- so a helper deep
+in the call stack can stop the stream in place, and you can attach a
+server-side C<reason> for your logs and metrics. The C<reason> is never sent
+to the client (SSE has no close frame):
 
     for my $msg (@events) {
         await $send->({ type => 'sse.send', %$msg });
     }
-    return;   # server flushes buffered events and closes
-
-Or end it B<explicitly> with C<sse.close>. This ends the stream B<immediately --
-before the handler returns> -- so a helper deep in the call stack can stop the
-stream in place, and you can attach a server-side C<reason> for your logs and
-metrics. The C<reason> is never sent to the client (SSE has no close frame):
+    await $send->({ type => 'sse.close' });
 
     async sub stream_until_done {
         my ($send, $source) = @_;
@@ -413,6 +411,14 @@ metrics. The C<reason> is never sent to the client (SSE has no close frame):
         }
         await $send->({ type => 'sse.close', reason => 'source_drained' });
     }
+
+Returning after C<sse.start> without C<sse.close> is an B<incomplete
+response>: the server does not write the end-of-stream marker for you, it
+closes so the truncation is observable, C<on_disconnect> fires with
+C<server_error>, and the event is logged. An C<EventSource> client
+reconnects either way, so this is not for the client's benefit; it is so
+that a stream a helper abandoned early -- a swallowed exception, a C<last>
+that skipped the close -- is reported as what it is.
 
 After C<sse.close>, any further C<sse.send>/C<sse.comment>/C<sse.keepalive>
 raises, and a second C<sse.close> is a no-op. To tell the I<client> anything --

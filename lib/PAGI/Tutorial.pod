@@ -971,6 +971,8 @@ Key points:
 
 =item * Check C<type eq 'websocket.disconnect'> to detect when the client closes the connection
 
+=item * End the session with C<websocket.close>, or leave the loop on C<websocket.disconnect>; returning from an accepted socket with neither is an incomplete response and the server closes it with code C<1011>
+
 =item * Messages can be text (C<text>) or binary (C<bytes>)
 
 =item * The receive loop blocks waiting for the next message
@@ -979,11 +981,10 @@ Key points:
 
 See L<PAGI::WebSocket> for higher-level utilities that make WebSocket handling easier.
 
-To reject a handshake, send C<websocket.close> before C<websocket.accept> (a bare
-C<403>), or -- where the server advertises the C<websocket.http.response>
-extension -- a C<websocket.http.response.start>/C<.body> pair for a custom
-response such as a C<401>. See the cookbook's "Rejecting a handshake with a
-custom response" and L<PAGI::Spec::Www/"WebSocket Denial Response (extension)">.
+To reject a handshake, send an ordinary HTTP response (C<http.response.start>/C<.body> before
+C<websocket.accept>) such as a C<401>. See the cookbook's
+"Rejecting a handshake with an HTTP response" and
+L<PAGI::Spec::Www/"Refusing the handshake">.
 
 =head2 2.5 SSE (Raw)
 
@@ -1002,7 +1003,7 @@ Server-Sent Events allow the server to push updates to clients over HTTP. Here's
 
       # Start the SSE response
       await $send->({
-          type => 'sse.response.start',
+          type => 'sse.start',
           status => 200,
           headers => [
               ['cache-control', 'no-cache'],
@@ -1013,7 +1014,7 @@ Server-Sent Events allow the server to push updates to clients over HTTP. Here's
       # Send the current time every second (loop-agnostic!)
       while (1) {
           await $send->({
-              type => 'sse.response.body',
+              type => 'sse.send',
               data => scalar(localtime()),
               # Optional fields:
               # event => 'clock',     # Event type
@@ -1055,11 +1056,13 @@ Key points:
 
 =over 4
 
-=item * Send C<sse.response.start> first with headers
+=item * Send C<sse.start> first with headers
 
-=item * Send C<sse.response.body> events with C<data> field
+=item * Send C<sse.send> events with C<data> field
 
 =item * Optional fields: C<event> (event type), C<id> (event ID), C<retry> (reconnect interval)
+
+=item * End a finite stream with C<sse.close>; returning without it is an incomplete response
 
 =item * Connection stays open for streaming
 
@@ -1855,8 +1858,9 @@ Receive:
 
 Send:
 
-  { type => 'sse.response.start', status => 200, headers => [...] }
-  { type => 'sse.response.body', data => $text, event => 'name', id => '1' }
+  { type => 'sse.start', status => 200, headers => [...] }
+  { type => 'sse.send', data => $text, event => 'name', id => '1' }
+  { type => 'sse.close', reason => 'done' }
 
 =head3 Lifespan Events
 

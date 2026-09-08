@@ -1,0 +1,252 @@
+=encoding UTF-8
+
+=head1 NAME
+
+PAGI::Upgrading - What changed between sub-spec versions, and what to do about it
+
+=head1 DESCRIPTION
+
+Each section below covers one version of the HTTP/WebSocket/SSE sub-spec
+(L<PAGI::Spec::Www>), newest first, split by audience: application authors
+writing to the raw spec, framework authors, and server implementers. The
+version a server implements is C<< $scope->{pagi}{spec_version} >>.
+
+=head1 0.5 TO 0.6
+
+Sub-spec 0.6 makes the connection state object universal, adds C<abort> and
+C<disconnect_detail>, and makes refusing a WebSocket handshake or an SSE
+stream an ordinary HTTP response. These are new requirements, so
+C<spec_version> moves to C<'0.6'>.
+
+=head2 Application authors
+
+=head3 pagi.connection is on every scope
+
+C<< $scope->{'pagi.connection'} >> is now present on C<websocket> and C<sse>
+scopes, with the same interface as on C<http>. Use it instead of watching
+the receive queue for a disconnect while you wait on something else.
+
+Before, the only signal was the queue, and racing it required protecting
+the live receive from cancellation:
+
+    my $gone   = $receive->();
+    my $lookup = $quota->lookup($scope);
+    await Future->wait_any($lookup, $gone->without_cancel);
+    if ($gone->is_ready) { ...; return }
+    # after a completed refusal, $gone never resolves and may not be cancelled
+
+After:
+
+    my $conn   = $scope->{'pagi.connection'};
+    my $lookup = $quota->lookup($scope);
+    await Future->wait_any($lookup, $conn->disconnect_future);
+    return unless $conn->is_connected;
+
+C<disconnect_future> returns a fresh, cancellation-isolated observer on
+every call; losing a race cancels nothing else. Register C<on_complete> and
+C<on_disconnect> for audit and cleanup; they fire on every ending including
+a completed refusal. C<on_disconnect> callbacks now receive
+C<($reason, $detail)>; C<disconnect_detail> is diagnostic text, never a
+branching key.
+
+=head3 abort
+
+C<< $conn->abort($detail) >> ends the scope's transport deliberately. The
+scope ends abnormally with token C<app_abort>, later sends are no-ops, and
+the server logs no error. Use it where you previously had no honest option:
+a middleware cutting off a stream that exceeded a quota, a handler giving
+up on a client. Before C<websocket.accept> or C<sse.start> it ends the
+handshake with no HTTP response, so the client sees a failed connection and
+may retry; to tell the client why, refuse with an HTTP response instead.
+
+=head3 Refusing a WebSocket handshake or an SSE stream
+
+Send an ordinary HTTP response on the scope before C<websocket.accept> or
+C<sse.start>. The C<websocket.http.response.*> and C<sse.http.response.*>
+events are gone, and so is the C<extensions> check.
+
+Before:
+
+    if ($scope->{extensions}{'websocket.http.response'}) {
+        await $send->({ type => 'websocket.http.response.start', status => 401, headers => [...] });
+        await $send->({ type => 'websocket.http.response.body', body => 'unauthorized' });
+    } else {
+        await $send->({ type => 'websocket.close', code => 1008 });   # bare 403
+    }
+
+After:
+
+    await $send->({ type => 'http.response.start', status => 401, headers => [...] });
+    await $send->({ type => 'http.response.body', body => 'unauthorized' });
+
+C<websocket.close> before accept now fails as an out-of-sequence send.
+A WebSocket refusal's status must be C<300> or above; a C<1xx> or C<2xx>
+start fails, because those are handshake acceptances on the wire. An SSE
+refusal may use any status.
+Refusal bodies stream when C<< more => 1 >>, exactly like HTTP bodies:
+finish them or watch the connection object, because a refusal you abandon
+after its start is an incomplete response. Prefer a complete body.
+
+=head3 sse.disconnect before sse.start
+
+C<sse.disconnect> can arrive before C<sse.start>; the previous wording
+suggested otherwise. Servers already behaved this way.
+
+=head3 SSE streams end with sse.close
+
+C<sse.close> is now the only terminal event of a started stream. Returning
+after C<sse.start> without it is an incomplete response: the server does not
+write the end-of-stream marker for you, closes so the client observes
+truncation, reports C<server_error> on the connection object, and logs the
+event.
+
+Before:
+
+    for my $msg (@events) {
+        await $send->({ type => 'sse.send', %$msg });
+    }
+    return;
+
+After:
+
+    for my $msg (@events) {
+        await $send->({ type => 'sse.send', %$msg });
+    }
+    await $send->({ type => 'sse.close' });
+
+A stream that never ends on its own (a clock, a feed) is unaffected. The
+rule exists for the early return you did not intend: a helper that swallowed
+an exception, or a C<last> that skipped the close, now shows up in the log
+instead of reporting a completed stream.
+
+=head3 WebSocket sessions end with a closing handshake
+
+After C<websocket.accept>, send C<websocket.close> or receive
+C<websocket.disconnect> before returning. Returning with neither is an
+incomplete response: the server sends a Close frame with code C<1011>
+("internal error"), closes the transport, reports C<server_error>, and logs
+the event. Previously the reference server closed the transport with no
+Close frame and reported a clean end while the client saw C<1006>.
+
+Before:
+
+    while (my $frame = await $receive->()) {
+        last if $frame->{type} eq 'websocket.disconnect';
+        last if ($frame->{text} // '') eq 'bye';
+        ...
+    }
+    return;
+
+After:
+
+    while (my $frame = await $receive->()) {
+        last if $frame->{type} eq 'websocket.disconnect';
+        if (($frame->{text} // '') eq 'bye') {
+            await $send->({ type => 'websocket.close', code => 1000 });
+            last;
+        }
+        ...
+    }
+    return;
+
+A loop that leaves only on C<websocket.disconnect> is unaffected.
+
+=head2 Framework authors
+
+=over 4
+
+=item *
+
+Handler objects for WebSocket and SSE may consult the connection object
+instead of duplicating its state. A streaming response helper races the
+object, never the queue.
+
+=item *
+
+On caller cancellation of a streaming response, call C<abort> so the wire
+reflects it.
+
+=item *
+
+Drop denial capability detection, bare-403 fallbacks, and any bridge that
+renamed HTTP response events to protocol-prefixed ones. Middleware that can
+refuse a request needs exactly one arm.
+
+=item *
+
+Handler objects that own a scope's lifetime send its terminal event when
+the handler returns: C<sse.close> after a started stream, C<websocket.close>
+with code C<1000> after an accepted socket that has no closing handshake yet.
+Applications built on them keep the shorter form.
+
+=item *
+
+Log C<disconnect_detail> alongside the token.
+
+=item *
+
+Gate on C<spec_version>: a scope reporting 0.6 or later carries the object
+unconditionally. Below that, refuse a streaming response through a refusal
+path rather than proceeding into a hang.
+
+=back
+
+=head2 Server implementers
+
+=over 4
+
+=item *
+
+Attach a connection state object to every C<http>, C<websocket>, and
+C<sse> scope; implement every accessor plus C<abort>; add the C<app_abort>
+token; populate C<disconnect_detail> where you know more than the token.
+
+=item *
+
+Drive the object from the same sites that queue disconnect events and
+finish clean responses; the object's reason and the event's reason must be
+the same token. See L<PAGI::Spec::Www/"Meaning per scope">.
+
+=item *
+
+Accept the HTTP response events on C<websocket> scopes before accept and
+on C<sse> scopes before start, through your ordinary HTTP response path.
+Remove the protocol-prefixed refusal events and the
+C<websocket.http.response> extension advertisement. Fail C<websocket.close>
+before accept. Fail a C<websocket>-scope refusal start whose status is
+below C<300>.
+
+=item *
+
+Treat an application return after C<sse.start> without C<sse.close>, or from
+an accepted WebSocket with no closing handshake, as an incomplete response:
+no end-of-stream marker on the application's behalf; on a WebSocket, a
+Close frame with code C<1011>, then transport teardown; C<server_error> on
+the object; C<websocket.disconnect> with code C<1011> and reason
+C<server_error>; an error-level log entry unless the client had already
+gone.
+
+=item *
+
+Report C<< spec_version => '0.6' >> once all of the above is in place.
+
+=back
+
+=head2 Known issue
+
+A request whose C<Accept> header carries C<text/event-stream> alongside
+other media ranges (htmx 4 with its SSE extension loaded sends
+C<text/html, text/event-stream> on every request) is classified as an
+C<sse> scope by L<PAGI::Spec::Www/"SSE Connection Detection">. An
+application that handles only C<http> scopes therefore returns an error to
+those requests. The specification's stated correction path is to answer
+the C<sse> scope with an ordinary HTTP response (see
+L<PAGI::Spec::Www/"Refusing the stream">), which now costs no special
+events. Every application and every scope-gated middleware must do so. A
+structural fix is planned for a later version.
+
+=head1 SEE ALSO
+
+L<PAGI::Spec::Www>, L<PAGI::Building>, L<PAGI::PSGI>
+
+=cut

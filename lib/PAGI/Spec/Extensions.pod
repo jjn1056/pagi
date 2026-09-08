@@ -102,12 +102,6 @@ C<fullflush> -- force-flush buffered output to the client (described above).
 C<tls> -- metadata about a TLS connection (PEM certificates, negotiated version,
 cipher suite). See L<PAGI::Spec::Tls>.
 
-=item -
-
-C<websocket.http.response> -- reject a WebSocket handshake with a custom HTTP
-response (status, headers, body) instead of a bare C<403 Forbidden>. See
-L<PAGI::Spec::Www/"WebSocket Denial Response (extension)">.
-
 =back
 
 (The C<pagi.connection> and C<pagi.transport> introspection handles are
@@ -151,6 +145,12 @@ See L<PAGI::Building> for using this to build event-driven layers on PAGI.
 =head2 Version History
 
 =over
+
+=item -
+
+0.6 (Draft): Removed C<websocket.http.response> from the registry; refusing
+a handshake is an ordinary HTTP response in the core WebSocket contract
+(L<PAGI::Spec::Www/"Refusing the handshake">).
 
 =item -
 

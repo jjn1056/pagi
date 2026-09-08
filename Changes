@@ -1,5 +1,43 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002009 - UNRELEASED
+
+  [Specification]
+  - HTTP/WebSocket/SSE sub-spec 0.5 -> 0.6. New requirements, not
+    clarifications, so $scope->{pagi}{spec_version} moves with them. The core
+    spec is unchanged.
+  - pagi.connection is provided on every http, websocket, and sse scope; all
+    accessors are required; abort($detail) and disconnect_detail added; new
+    standard reason app_abort; started, clean end, and abnormal end defined
+    per scope; the object's reason and the scope's disconnect event carry
+    the same token.
+  - Refusing a WebSocket handshake or an SSE stream is an ordinary HTTP
+    response sent with the HTTP response events before websocket.accept or
+    sse.start. websocket.http.response.* and sse.http.response.* are removed,
+    along with the websocket.http.response extension. websocket.close before
+    accept is an out-of-sequence send and fails.
+  - sse.disconnect is documented as deliverable before sse.start.
+  - sse.close is the terminal event of a started SSE stream, and the
+    WebSocket closing handshake (websocket.close sent or websocket.disconnect
+    received) is the terminal event of an accepted socket. Returning without
+    them is an incomplete response; a WebSocket so abandoned is closed with
+    code 1011 and websocket.disconnect carries 1011 / server_error.
+  - A WebSocket refusal's status must be 300 or above; a 1xx or 2xx start
+    fails without mutating state (101 and, on HTTP/2, any 2xx to the CONNECT
+    are handshake acceptances). SSE refusals may carry any status. The
+    websocket.disconnect code/reason pairings are normative where the server
+    names the ending; peer Close-frame code and text are never replaced.
+
+  [Documentation]
+  - New PAGI::Upgrading with the 0.5 -> 0.6 guide for application authors,
+    framework authors, and server implementers, and the known issue with
+    mixed Accept headers.
+  - Tutorial SSE examples use the sub-spec's sse.start and sse.send event
+    names.
+  - The SSE broadcaster and job-runner examples end finite streams with
+    sse.close; the job runner refuses bad requests with an HTTP response
+    and observes the end of the stream through pagi.connection.
+
 0.002008 - 2026-09-01
 
   [Specification]

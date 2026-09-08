@@ -6,7 +6,7 @@ PAGI::Spec::Www - PAGI message formats for HTTP, WebSocket, and SSE
 
 =head1 HTTP, WebSocket & SSE PAGI Message Format
 
-B<Version>: 0.3 (Draft)
+B<Version>: 0.6 (Draft)
 
 The HTTP, WebSocket & SSE PAGI sub-specification defines how HTTP/1.1, HTTP/2, WebSocket, and Server-Sent Events (SSE) connections are transported within PAGI.
 
@@ -15,6 +15,25 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 =head2 Spec Versions
 
 =over
+
+=item -
+
+C<0.6>: C<pagi.connection> is provided on every C<http>, C<websocket>, and
+C<sse> scope, with every accessor required, plus C<abort($detail)>,
+C<disconnect_detail>, the C<app_abort> reason, a per-scope definition of
+started, clean end, and abnormal end, and the rule that the object's reason
+and a scope's disconnect event carry the same token. Refusing a WebSocket
+handshake or an SSE stream is an ordinary HTTP response sent with the HTTP
+response events before C<websocket.accept> or C<sse.start>; the
+C<websocket.http.response.*> and C<sse.http.response.*> events and the
+C<websocket.http.response> extension are removed; C<websocket.close> before
+accept fails. C<sse.disconnect> is delivered before C<sse.start> as well as
+after. See L<PAGI::Upgrading>. C<sse.close> and the WebSocket closing
+handshake are the terminal events of their scopes: returning after
+C<sse.start> without C<sse.close>, or from an accepted WebSocket without
+sending C<websocket.close> or receiving C<websocket.disconnect>, is an
+incomplete response, and a WebSocket so abandoned is closed with code
+C<1011>.
 
 =item -
 
@@ -262,6 +281,569 @@ Check for key existence before assuming middleware ran
 
 =back
 
+=head2 Connection State
+
+The C<pagi.connection> scope key provides a mechanism for applications to detect client disconnection B<without consuming messages from the receive queue>. This addresses a fundamental limitation where checking for disconnect via C<receive()> consumes whatever the scope's queue holds next -- request body on an C<http> scope, C<websocket.connect> or a message on a C<websocket> scope, C<sse.request> on an C<sse> scope.
+
+=head3 The Problem
+
+In PAGI's pull-based receive model, the only way to learn that a client has
+disconnected by using C<$receive> alone is to consume the next event:
+
+    my $message = await $receive->();
+    if ($message->{type} eq 'http.disconnect') {
+        # Client is gone - but if it wasn't a disconnect, that data is lost!
+    }
+
+On an C<http> scope the event consumed may be request body. On a
+C<websocket> scope it may be C<websocket.connect> or a message; on an
+C<sse> scope it may be C<sse.request>. In every case a component that does
+not own the receive queue -- a response object, a middleware, a framework
+helper -- cannot check for a disconnect without stealing an event from the
+code that does. And after a normally completed refusal (see L</Meaning per
+scope>) no disconnect event is ever delivered, so a receive-based watcher
+has no terminal condition.
+
+The connection state object solves this with synchronous, non-destructive
+checks and callbacks, on every C<http>, C<websocket>, and C<sse> scope.
+
+=head3 Connection Object Interface
+
+Servers MUST provide C<< $scope->{'pagi.connection'} >> on every C<http>,
+C<websocket>, and C<sse> scope: one object per scope instance (per request,
+per WebSocket session including its handshake, per SSE stream), never shared
+across keep-alive requests or HTTP/2 streams. Every accessor and method in
+this section is REQUIRED; a server that omits any of them is not conforming.
+Frameworks may rely on all of them unconditionally on a scope whose
+C<< $scope->{pagi}{spec_version} >> is C<0.6> or later.
+
+The object reports two distinct ways a request can end, through B<separate>
+callbacks, so an application never has to disambiguate them:
+
+=over 4
+
+=item *
+
+An B<abnormal disconnect> -- the client goes away, a timeout fires, or an error
+occurs -- B<while the application is still working>.
+
+=item *
+
+The request B<completing successfully> -- the response was fully delivered.
+
+=back
+
+Exactly one of C<on_disconnect> and C<on_complete> fires for a given scope.
+
+Servers MUST provide:
+
+B<C<is_connected()>> - Returns true while the connection is open, false once it has closed (for any reason).
+
+    my $connected = $conn->is_connected;  # Boolean, synchronous
+
+B<C<disconnect_reason()>> - Returns the abnormal-disconnect reason string (see L</Standard Disconnect Reasons>), or C<undef> if the connection is still open or completed normally.
+
+    my $reason = $conn->disconnect_reason;  # String or undef
+
+B<C<disconnect_detail()>> - Returns a free-text diagnostic string for the
+abnormal end, or C<undef>. Its format is unspecified. It is diagnostic only:
+never placed on the wire, never included in a client-visible response, never
+a branching key. Servers MUST NOT require applications to parse it; anything
+an application needs to branch on is a token in C<disconnect_reason>. It
+MUST NOT contain request bodies, headers, credentials, or a peer's
+Close-frame reason text (which is delivered in C<websocket.disconnect>).
+Servers SHOULD supply it when they know more than the token says: the
+violated rule for C<protocol_error>; the OS or TLS error for
+C<write_error>, C<read_error>, and C<write_timeout>; the elapsed interval for
+C<keepalive_timeout> and C<idle_timeout>; the limit for C<body_too_large> and
+C<queue_overflow>; the RST_STREAM error code for an HTTP/2 C<client_closed>;
+the exception message for C<server_error>; the application's own string for
+C<app_abort>.
+
+    my $detail = $conn->disconnect_detail;   # e.g. "no pong within 10s", or undef
+
+B<C<on_disconnect($callback)>> - Registers a callback invoked once when the
+scope ends abnormally. The callback receives C<($reason, $detail)>:
+C<$reason> is the token C<disconnect_reason> will return and C<$detail> is
+the value of C<disconnect_detail>, possibly C<undef>. Callbacks that ignore
+the second argument are unaffected. Callbacks run in registration order;
+one callback's exception MUST NOT prevent the others from running. A
+callback registered after an abnormal end is invoked immediately; one
+registered after a clean end never runs. The server MUST release its
+references to registered callbacks once the terminal outcome has been
+delivered.
+
+    $conn->on_disconnect(sub ($reason, $detail) { ... });
+
+B<Callback invocation context.> Servers MUST NOT deliver abnormal-disconnect
+notifications -- invoking C<on_disconnect> callbacks, or resolving
+C<disconnect_future> -- synchronously within an application's call into
+C<$send> or C<$receive>. A server that detects a disconnect while such a call
+is on the stack updates the synchronous facts immediately (C<is_connected>,
+C<disconnect_reason>) and defers only the delivery to the event loop.
+Deferred notifications MUST still be delivered even if the connection is torn
+down before the deferred delivery runs -- deferral changes I<when> a
+notification arrives, never I<whether>. The registration-time rule above is
+unchanged: registering a callback after the transition has already happened
+invokes it immediately, within the registering call; that re-entrancy is
+under the application's control.
+
+No equivalent guarantee exists for C<on_complete> or for C<pagi.transport>
+callbacks: in particular, a completion callback may be invoked within the
+application's terminal send call.
+
+Rationale: a callback that can run inside an application's own half-finished
+call into C<$send> would force every framework to build re-entrancy defenses
+around every send. Deferring delivery to the event loop is cheap for servers
+and eliminates the hazard class, while the synchronous facts stay immediate
+for polling code.
+
+B<C<response_started()>> - Returns true once B<this request's> response has started
+-- that is, once C<http.response.start> has been emitted for this scope (see
+L</Meaning per scope> for the C<websocket> and C<sse> equivalents) -- and false
+before. The server sets it when it processes the response-start event, so it is true no
+matter who produced the response: the application, a framework, a middleware that
+short-circuited the request, or a B<server-synthesized error/backstop response>
+(e.g. the C<500> the server emits when the application produces nothing -- see
+L</Application Produced No Response>). Read-only to the application.
+
+C<response_started> does not identify which producer started the response; an
+application response and a server-synthesized backstop set it alike. The
+clean-versus-abnormal outcome is reported separately by the request's terminal
+signal -- C<on_complete> on a clean finish, C<on_disconnect> with
+C<disconnect_reason> C<'server_error'> on a server backstop.
+
+    my $started = $conn->response_started;  # Boolean, synchronous
+
+A streaming response counts as started for its whole lifetime: C<response_started>
+becomes true at C<http.response.start> and stays true while body chunks flow. Use
+C<response_complete> to learn when the body has actually finished.
+
+B<C<on_complete($callback)>> - Registers a callback invoked B<only when the request completes successfully> (the response was fully delivered without the client disconnecting). The counterpart to C<on_disconnect>.
+
+    $conn->on_complete(sub {
+        commit_transaction();   # finished cleanly
+    });
+
+A callback registered after a clean end is invoked immediately; one
+registered after an abnormal end never runs. The server MUST release its
+references to registered callbacks once the terminal outcome has been
+delivered.
+
+B<C<response_complete()>> - Returns true once B<this request's> response body has
+been fully sent -- the terminal C<http.response.body> with C<<< more => 0 >>>, a
+C<file>/C<fh> response, or the final trailers (see L</Meaning per scope> for the
+C<websocket> and C<sse> equivalents) -- false while a response is still
+streaming or has not started. It is a boolean: true only after a clean end,
+false while the scope is active and after an abnormal end. The synchronous
+counterpart to C<on_complete>, and read-only to the application.
+
+    my $done = $conn->response_complete;   # Boolean, synchronous
+
+B<C<disconnect_future()>> - Returns a Future that resolves, with the reason, on abnormal disconnect -- useful for racing against long-running work, e.g. C<< Future->wait_any($work, $conn->disconnect_future) >>.
+
+    my $future = $conn->disconnect_future;  # Future, resolves on abnormal disconnect
+    my $reason = await $future;
+
+Each returned Future MUST be B<cancellation-isolated>: cancelling it --
+directly, or implicitly as the losing component of a combinator such as
+C<< Future->wait_any >> -- MUST NOT affect the server's disconnect
+processing, the delivery of other notifications, or a Future returned by
+another call to this method. Successive calls MAY return distinct
+Futures; obtain a fresh one for each race, since a Future that lost one
+race cannot win a later one. This makes explicit what the definition
+above already promises: I<every> returned Future "resolves, with the
+reason, on abnormal disconnect" -- a Future one consumer can cancel out
+from under the others cannot keep that promise, and step 3 of
+L</State Transition Order> cannot be performed on it.
+
+B<C<abort($detail)>> - Requests that the server end this scope's transport
+now: close the connection on HTTP/1.1, reset only this stream
+(C<RST_STREAM>, e.g. C<CANCEL>) on HTTP/2. C<abort> returns immediately with no meaningful
+value; it is not awaitable and MUST NOT wait for an in-flight write to
+drain, since that write may be blocked by the peer. The server MUST then
+follow L</State Transition Order> exactly as for a transport-detected
+abnormal end: mark the scope abnormal with the standard token C<app_abort>
+and record C<$detail>, if given, as C<disconnect_detail>; resolve
+C<disconnect_future>; invoke C<on_disconnect> callbacks; then settle pending
+receives with the scope's disconnect event and pending sends successfully;
+and treat later sends as post-close no-ops. C<on_complete> does not fire. The
+server MUST NOT log an incomplete-response or no-response error for an
+aborted scope. C<abort> after either terminal outcome is a no-op that
+preserves that outcome. It is valid on every scope, before or after
+C<websocket.accept> or C<sse.start>. Before accept or start it ends the
+handshake with no HTTP response: the client observes a failed connection,
+not a status, and a reconnecting client may retry. An application that
+wants the client to know why refuses instead (see L</"Refusing the
+handshake"> and L</"Refusing the stream">).
+
+    $conn->abort("quota exceeded after $sent bytes");
+
+An exception raised by a registered C<on_disconnect>, C<on_complete>, or
+C<pagi.transport> callback MUST NOT prevent the remaining callbacks from
+running and MUST NOT disturb the server's own processing; servers SHOULD
+log such exceptions.
+
+=head3 What "connection" means here
+
+The object is named for the connection, but it is scoped to a B<single scope>:
+each HTTP request, WebSocket session, or SSE stream gets its own
+C<pagi.connection>, and the C<response_started> / C<response_complete> flags
+describe B<that scope's> response, never the transport as a whole. This matters
+the moment a transport carries more than one scope:
+
+=over 4
+
+=item *
+
+B<HTTP/1.1> reuses a connection for requests B<sequentially> (keep-alive); each
+request is a fresh scope with its own connection object.
+
+=item *
+
+B<HTTP/2> B<multiplexes> many requests over one TCP connection as independent
+streams. PAGI maps each stream to its own C<http> scope (see L</HTTP/2 Stream
+Mapping>), so ten concurrent streams have ten connection objects and ten
+independent C<response_started> flags -- one request starting its response is never
+visible as another's.
+
+=item *
+
+B<HTTP/3> (when supported) multiplexes streams over QUIC the same way; the
+per-request scoping is identical, so nothing here changes.
+
+=back
+
+The C<response_started> / C<response_complete> flags are defined on every
+C<http>, C<websocket>, and C<sse> scope; see L</Meaning per scope> for what a
+start and a clean end are on each.
+
+=head3 Standard Disconnect Reasons
+
+Every reason below describes an B<abnormal> end to the request -- the connection
+went away, a timeout fired, or the server aborted the exchange before the
+response was fully delivered. These are the values reported by
+C<disconnect_reason()>, passed to C<on_disconnect> callbacks, and resolved from
+C<disconnect_future()>. A request that completes successfully has B<no> reason
+(C<disconnect_reason()> returns C<undef> and C<on_complete> fires instead).
+
+Servers MUST use these standard reason strings where the condition applies:
+
+=over 4
+
+=item C<client_closed>
+
+Client initiated clean close (TCP FIN) mid-request
+
+=item C<client_timeout>
+
+Client stopped responding (read timeout)
+
+=item C<idle_timeout>
+
+Connection or stream idle too long -- before a request arrived, or
+mid-stream on a quiet WebSocket or SSE session
+
+=item C<keepalive_timeout>
+
+Keep-alive connection idled out between requests, or a WebSocket
+keepalive ping received no pong within its timeout (see
+C<websocket.keepalive>)
+
+=item C<write_timeout>
+
+Response write timed out
+
+=item C<write_error>
+
+Socket write failed (EPIPE, ECONNRESET)
+
+=item C<read_error>
+
+Socket read failed
+
+=item C<protocol_error>
+
+HTTP parse error, invalid request
+
+=item C<server_shutdown>
+
+Server shutting down gracefully
+
+=item C<server_error>
+
+Unhandled server-side error aborted the request
+
+=item C<body_too_large>
+
+Request body exceeded limit
+
+=item C<queue_overflow>
+
+A bounded server queue (e.g. outgoing frames or buffered events) overflowed and the connection was dropped to relieve backpressure
+
+=item C<app_abort>
+
+The application ended the connection deliberately by calling C<abort> on
+the connection state object. C<disconnect_detail> carries the application's
+string, if any.
+
+=back
+
+Servers MAY define additional reasons prefixed with C<x-> (e.g., C<x-rate-limited>).
+
+=head3 Server Requirements
+
+=over
+
+=item 1.
+
+MUST provide C<pagi.connection> on every C<http>, C<websocket>, and C<sse> scope
+
+=item 2.
+
+MUST implement C<is_connected()>, C<disconnect_reason()>, C<disconnect_detail()>, C<on_disconnect()>, C<on_complete()>, C<disconnect_future()>, C<response_started()>, C<response_complete()>, and C<abort()> methods
+
+=item 3.
+
+MUST fire C<on_disconnect> callbacks B<only> on abnormal disconnect, and C<on_complete> callbacks B<only> on successful completion -- never both for the same request
+
+=item 4.
+
+MUST update connection state as soon as disconnect is detected
+
+=item 5.
+
+MUST use standard reason strings where applicable
+
+=item 6.
+
+MUST NOT transition C<is_connected()> back to true once false (one-way transition)
+
+=back
+
+=head3 State Transition Order
+
+When an B<abnormal disconnect> is detected, servers MUST update state in this order:
+
+=over
+
+=item 1.
+
+Set C<is_connected()> to return false
+
+=item 2.
+
+Set C<disconnect_reason()> to return the reason string
+
+=item 3.
+
+Resolve C<disconnect_future()> with the reason
+
+=item 4.
+
+Invoke C<on_disconnect> callbacks in registration order, each with C<($reason, $detail)>
+
+=item 5.
+
+Deliver the scope's disconnect event: append C<http.disconnect>,
+C<websocket.disconnect>, or C<sse.disconnect> as the scope type requires
+to the receive queue, and if a receive Future is already pending, resolve
+it with that event. (A completed refusal delivers none; see L</Meaning per
+scope>.)
+
+=item 6.
+
+Settle any send Future still pending for this scope, per the Send Completion
+Contract in L<PAGI::Spec> (it resolves successfully)
+
+=back
+
+Steps 5 and 6 MAY be performed in either order, but both MUST happen after
+step 4.
+
+An application coroutine resumed by step 5 or step 6 therefore always
+observes the transition already complete: C<is_connected()> returns false,
+C<disconnect_reason()> returns the reason, and any registered
+C<on_disconnect> callbacks have been invoked or scheduled. Awaiting C<$send>
+or C<$receive> and then consulting the connection state is race-free by
+construction.
+
+This order applies to every scope type, and to an end initiated by
+C<abort> exactly as to one detected on the transport. Delivery of
+C<on_disconnect> callbacks and C<disconnect_future> resolution is never
+synchronous inside an application's own call into C<$send> or C<$receive>;
+a callback registered after the terminal transition is the one exception,
+and it runs immediately under the registering caller's control.
+C<on_complete> callbacks MAY run inside a terminal send.
+
+When a request B<completes successfully>, servers MUST invoke C<on_complete>
+callbacks in registration order and MUST leave C<disconnect_reason()> as
+C<undef>. C<on_disconnect> callbacks and C<disconnect_future()> MUST NOT fire on
+this path.
+
+B<Exceptions after the terminal event.> Delivery defines completion: an
+exception raised by the application B<after> its response reached the
+terminal event (the final body, a C<file>/C<fh> body, or the final
+trailers) does not un-complete the request. The server MUST still treat
+the request as completed — C<on_complete> fires, C<disconnect_reason()>
+stays C<undef> — and SHOULD log the exception at error level as an
+operational event. The server MAY close the connection afterwards rather
+than reuse it; the delivered response is unaffected either way. (This
+matches ASGI-ecosystem practice, where a post-completion exception is
+logged and the already-granted keep-alive stands.)
+
+=head3 Meaning per scope
+
+An B<abnormal end> is one rule for every scope: any condition named in
+L</Standard Disconnect Reasons> fires C<on_disconnect> with that token and
+sets C<disconnect_reason>. A B<clean end> and an abnormal end are mutually
+exclusive; the first to occur wins; the terminal state never reopens.
+After either, C<is_connected> returns false. C<response_complete> is a
+boolean: true only after a clean end, false while the scope is active and
+after an abnormal end. C<disconnect_reason> is C<undef> after a clean end.
+
+=over 4
+
+=item C<http>
+
+C<response_started>: the server has accepted a valid C<http.response.start>.
+Clean end: the server has finished its output of the terminal body, the
+C<file>/C<fh> body, or the final trailers without an abnormal end.
+
+=item C<websocket>
+
+C<response_started>: the server has accepted a valid C<websocket.accept>, or
+a valid C<http.response.start> refusing the handshake (see
+L</"Refusing the handshake">). Clean end: the server has finished its output
+of a refusal, or the accepted socket completed a closing handshake initiated
+by either side and its transport (its stream, on HTTP/2) closed without an
+abnormal end. The application's terminal act on an accepted socket is
+sending C<websocket.close> or receiving C<websocket.disconnect>; returning
+with neither is an incomplete response (see L</Application Left a Response
+Incomplete>).
+
+=item C<sse>
+
+C<response_started>: the server has accepted a valid C<sse.start>, or a
+valid C<http.response.start> refusing the stream (see L</"Refusing the
+stream">). Clean end: the server has finished its output of a refusal, or
+of a started stream that ended with C<sse.close>. C<sse.close> is the
+application's terminal act on a started stream; returning without it is an
+incomplete response (see L</Application Left a Response Incomplete>).
+
+=back
+
+C<response_started> reports acceptance of the start event, not that headers
+reached the wire; it is also set for server-generated responses. A clean end
+means the server finished its output processing, not that the client
+received anything. A resolved terminal send is not by itself proof of a
+clean end: the Send Completion Contract in L<PAGI::Spec> also covers an
+event discarded after the connection ended.
+
+Receiving a peer Close frame advances the closing handshake; it does not
+alone establish a clean end. A completed handshake is clean regardless of
+the peer's close code; that code and its reason text are protocol data
+delivered in C<websocket.disconnect> (RFC 6455 section 7.1.4). A
+server-detected protocol violation, timeout, or transport loss before a
+clean end is abnormal with the applicable standard token.
+
+B<Agreement with disconnect events.> Where a scope delivers a disconnect
+receive event for a server-reported abnormal end (C<http.disconnect> carries
+no reason; C<websocket.disconnect> and C<sse.disconnect> carry one), the
+event's C<reason> and the object's C<disconnect_reason> MUST be the same
+token. This does not apply to the free-text reason from a peer's Close
+frame, which is not a server lifetime reason and is never overwritten. A
+normally completed refusal is a clean end and delivers no disconnect event.
+What a C<$receive> call returns after a completed refusal is unspecified;
+frameworks observe C<on_complete>.
+
+B<Observing the end of a scope.> The callbacks are how anything that is not
+the scope's own receive loop learns how the scope ended: audit, metrics,
+subscription cleanup, a framework's close hook. They fire on every terminal
+outcome, including a completed refusal and an C<abort>. A receive loop on an
+accepted WebSocket needs no extra handling, because C<websocket.disconnect>
+arrives on every ending; an affirmative C<is_connected> check in the loop
+condition is a readability preference this specification neither requires
+nor discourages. A consumer that must act on either outcome registers both
+callback families; C<disconnect_future> resolves only on an abnormal end. A
+clean end leaves no watcher or timer behind.
+
+B<No response and incomplete.> Returning from a C<websocket> scope without
+C<websocket.accept> or a refusal, or from an C<sse> scope without
+C<sse.start> or a refusal, is governed by L</Application Produced No
+Response>, including its client-gone carve-out. Returning after a valid
+start without the scope's terminal event -- the terminal body or trailers
+after C<http.response.start> on any scope, refusals included; C<sse.close>
+after C<sse.start>; C<websocket.close> sent or C<websocket.disconnect>
+received after C<websocket.accept> -- is an incomplete response under
+L</Application Left a Response Incomplete>. Every scope has exactly one way
+to end cleanly from the application's side, and it is an explicit event.
+
+=head3 Example: Basic Connection Check
+
+    async sub handler {
+        my ($scope, $receive, $send) = @_;
+        my $conn = $scope->{'pagi.connection'};
+
+        # Check before expensive work
+        return unless $conn->is_connected;
+
+        my $result = await expensive_operation();
+
+        # Check again before responding
+        return unless $conn->is_connected;
+
+        await $send->({ type => 'http.response.start', status => 200, headers => [] });
+        await $send->({ type => 'http.response.body', body => $result, more => 0 });
+    }
+
+=head3 Example: Cleanup on Disconnect vs. Completion
+
+    async sub handler {
+        my ($scope, $receive, $send) = @_;
+        my $conn = $scope->{'pagi.connection'};
+
+        my $temp_file = create_temp_file();
+
+        # Abnormal end: client vanished, or a timeout/error fired mid-request.
+        $conn->on_disconnect(sub {
+            my ($reason) = @_;
+            $temp_file->unlink;
+            log_info("Aborted, client gone: $reason");
+        });
+
+        # Clean end: the response was fully delivered.
+        $conn->on_complete(sub {
+            $temp_file->unlink;
+            log_info("Delivered OK");
+        });
+
+        my $result = await process_data($temp_file);
+        await send_response($send, $result);
+    }
+
+Exactly one of the two callbacks runs, so the temp file is always removed
+exactly once -- no manual cleanup in the request body, and no risk of a
+double-unlink.
+
+=head3 Example: Racing Against Disconnect
+
+    async sub long_poll_handler {
+        my ($scope, $receive, $send) = @_;
+        my $conn = $scope->{'pagi.connection'};
+
+        my $event_future = wait_for_event();
+
+        # Race: wait for event OR disconnect
+        await Future->wait_any($conn->disconnect_future, $event_future);
+
+        return unless $conn->is_connected;
+
+        my $event = await $event_future;
+        await send_response($send, $event);
+    }
+
 =head2 HTTP
 
 PAGI covers HTTP/1.0, HTTP/1.1, and HTTP/2. Protocol servers assign separate scopes for requests within the same HTTP/2 connection and multiplex responses appropriately.
@@ -354,7 +936,7 @@ C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.5'>). Optional; if omitted, assume C<'0.1'>.
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.6'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -402,7 +984,7 @@ C<state> (HashRef, optional) -- A shallow copy of the lifespan C<state> namespac
 
 =item -
 
-C<pagi.connection> (Object) -- Per-request connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>). See L</Connection State> below.
+C<pagi.connection> (Object) -- Per-request connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>). See L</Connection State>.
 
 =item -
 
@@ -778,11 +1360,33 @@ NOT log an error.
 =head3 Application Left a Response Incomplete
 
 A response is B<incomplete> when the application's Future becomes ready --
-resolves B<or fails with an exception> -- after C<http.response.start> was
-sent but before the response reached its terminal
-event: the final C<http.response.body> with C<< more => 0 >>, a C<file>/C<fh>
-body event, or -- when C<http.response.start> promised trailers with
-C<< trailers => 1 >> -- the C<http.response.trailers> event.
+resolves B<or fails with an exception> -- after a valid start was accepted
+but before the scope reached its terminal event. The start and the terminal
+event are per scope:
+
+=over
+
+=item -
+
+C<http> scope, and a refusal on any scope: after C<http.response.start>,
+the terminal event is the final C<http.response.body> with
+C<< more => 0 >>, a C<file>/C<fh> body event, or -- when
+C<http.response.start> promised trailers with C<< trailers => 1 >> -- the
+C<http.response.trailers> event.
+
+=item -
+
+C<sse> scope: after C<sse.start>, the terminal event is C<sse.close>.
+
+=item -
+
+C<websocket> scope: after C<websocket.accept>, the terminal event is
+C<websocket.close> sent by the application or C<websocket.disconnect>
+received by it. A closing handshake the peer initiated is completed by the
+server, so receiving the disconnect event is the application's whole
+obligation in that case.
+
+=back
 
 B<What the terminal event asserts.> The terminal event is the application's
 claim that the response is B<complete> in the sense of RFC 9110 Section 6.1 --
@@ -791,6 +1395,13 @@ that claim on the wire as the zero-length chunk of the chunked coding
 (RFC 9112 Section 7.1) or as C<END_STREAM> (RFC 9113 Section 8.1). Everything
 below follows from that: the event is a statement about the representation,
 not a formality that ends a code path.
+
+The same holds on the other scopes. An SSE stream ends on the wire with the
+same chunked terminator or C<END_STREAM>, so a stream the application
+abandons has the same unfinished framing as an HTTP body. A WebSocket
+session ends with the closing handshake of RFC 6455 section 7.1, and a
+socket the application walks away from has no Close frame to tell the peer
+why it ended.
 
 The server MUST treat this as an B<abnormal end>, never a clean one. The
 governing principle: a truncated response must be B<observable as truncated>
@@ -811,17 +1422,26 @@ as incomplete, and forbids answering a request with one).
 =item -
 
 MUST terminate the transport so the client observes truncation. Over
-HTTP/1.1 this means closing the connection without the chunk terminator (or,
-for a C<Content-Length>-framed response, before the declared length was
+HTTP/1.1, for an C<http> scope, a refusal, or an C<sse> stream, this means
+closing the connection without the chunk terminator (or, for a
+C<Content-Length>-framed response, before the declared length was
 delivered); the connection MUST NOT be kept alive or serve a pipelined
 request. Over HTTP/2 the server resets the stream (C<RST_STREAM>, e.g.
-C<INTERNAL_ERROR>); other streams on the connection are unaffected.
+C<INTERNAL_ERROR>); other streams on the connection are unaffected. On an
+accepted WebSocket the server sends a Close frame with code C<1011>
+("internal error"), waits no longer than its ordinary close timeout for
+the peer's Close, and then closes the transport (the stream, on HTTP/2).
+The C<1011> frame is the WebSocket analog of C<RST_STREAM>
+C<INTERNAL_ERROR>: an error signal, not the completion the application
+failed to assert.
 
 =item -
 
 MUST report the abnormal end on the C<pagi.connection> object: fire
 C<on_disconnect> with reason C<server_error>. C<on_complete> MUST NOT fire
--- the response was not fully delivered (see L</Connection State>).
+-- the response was not fully delivered (see L</Connection State>). The
+scope's disconnect event carries the same token; on an accepted WebSocket
+it is C<websocket.disconnect> with code C<1011> and reason C<server_error>.
 
 =item -
 
@@ -1085,457 +1705,9 @@ C<type> -- C<"http.disconnect">
 
 =back
 
-=head3 Connection State
-
-The C<pagi.connection> scope key provides a mechanism for applications to detect client disconnection B<without consuming messages from the receive queue>. This addresses a fundamental limitation where checking for disconnect via C<receive()> may inadvertently consume request body data.
-
-=head4 The Problem
-
-In PAGI's pull-based receive model, the only way to know if a client has disconnected is to consume the next message:
-
-    my $message = await $receive->();
-    if ($message->{type} eq 'http.disconnect') {
-        # Client is gone - but if it wasn't a disconnect, that data is lost!
-    }
-
-The connection state object solves this with synchronous, non-destructive checks.
-
-=head4 Connection Object Interface
-
-The object reports two distinct ways a request can end, through B<separate>
-callbacks, so an application never has to disambiguate them:
-
-=over 4
-
-=item *
-
-An B<abnormal disconnect> -- the client goes away, a timeout fires, or an error
-occurs -- B<while the application is still working>.
-
-=item *
-
-The request B<completing successfully> -- the response was fully delivered.
-
-=back
-
-B<When a server provides C<on_complete>>, exactly one of C<on_disconnect> and C<on_complete> fires for a given request.
-
-Servers MUST provide:
-
-B<C<is_connected()>> - Returns true while the connection is open, false once it has closed (for any reason).
-
-    my $connected = $conn->is_connected;  # Boolean, synchronous
-
-B<C<disconnect_reason()>> - Returns the abnormal-disconnect reason string (see L</Standard Disconnect Reasons>), or C<undef> if the connection is still open or completed normally.
-
-    my $reason = $conn->disconnect_reason;  # String or undef
-
-B<C<on_disconnect($callback)>> - Registers a callback invoked B<only on abnormal disconnect> (client gone, timeout, error) -- not on normal completion. The callback receives the disconnect reason.
-
-    $conn->on_disconnect(sub {
-        my ($reason) = @_;
-        cancel_work();          # the client is gone; stop and clean up
-    });
-
-=over
-
-=item -
-
-May be called multiple times to register multiple callbacks
-
-=item -
-
-Callbacks are invoked in registration order
-
-=item -
-
-An exception raised by a registered callback (here, in C<on_complete>, or in
-the C<pagi.transport> callbacks) B<must not> prevent the remaining callbacks
-from running and B<must not> disturb the server's own processing; servers
-SHOULD log such exceptions. Two independently registered cleanup callbacks
-must not be able to sabotage each other.
-
-=item -
-
-If registered after disconnect already occurred, the callback is invoked immediately
-
-=back
-
-B<Callback invocation context.> Servers MUST NOT deliver abnormal-disconnect
-notifications -- invoking C<on_disconnect> callbacks, or resolving
-C<disconnect_future> -- synchronously within an application's call into
-C<$send> or C<$receive>. A server that detects a disconnect while such a call
-is on the stack updates the synchronous facts immediately (C<is_connected>,
-C<disconnect_reason>) and defers only the delivery to the event loop.
-Deferred notifications MUST still be delivered even if the connection is torn
-down before the deferred delivery runs -- deferral changes I<when> a
-notification arrives, never I<whether>. The registration-time rule above is
-unchanged: registering a callback after the transition has already happened
-invokes it immediately, within the registering call; that re-entrancy is
-under the application's control.
-
-No equivalent guarantee exists for C<on_complete> or for C<pagi.transport>
-callbacks: in particular, a completion callback may be invoked within the
-application's terminal send call.
-
-Rationale: a callback that can run inside an application's own half-finished
-call into C<$send> would force every framework to build re-entrancy defenses
-around every send. Deferring delivery to the event loop is cheap for servers
-and eliminates the hazard class, while the synchronous facts stay immediate
-for polling code.
-
-B<C<response_started()>> - Returns true once B<this request's> response has started
--- that is, once C<http.response.start> has been emitted for this scope -- and false
-before. The server sets it when it processes the response-start event, so it is true no
-matter who produced the response: the application, a framework, a middleware that
-short-circuited the request, or a B<server-synthesized error/backstop response>
-(e.g. the C<500> the server emits when the application produces nothing -- see
-L</Application Produced No Response>). Read-only to the application.
-
-C<response_started> does not identify which producer started the response; an
-application response and a server-synthesized backstop set it alike. The
-clean-versus-abnormal outcome is reported separately by the request's terminal
-signal -- C<on_complete> on a clean finish, C<on_disconnect> with
-C<disconnect_reason> C<'server_error'> on a server backstop.
-
-    my $started = $conn->response_started;  # Boolean, synchronous
-
-A streaming response counts as started for its whole lifetime: C<response_started>
-becomes true at C<http.response.start> and stays true while body chunks flow. Use
-C<response_complete> to learn when the body has actually finished.
-
-Servers SHOULD also provide:
-
-B<C<on_complete($callback)>> - Registers a callback invoked B<only when the request completes successfully> (the response was fully delivered without the client disconnecting). The counterpart to C<on_disconnect>.
-
-    $conn->on_complete(sub {
-        commit_transaction();   # finished cleanly
-    });
-
-B<C<response_complete()>> - Returns true once B<this request's> response body has
-been fully sent -- the terminal C<http.response.body> with C<<< more => 0 >>>, a
-C<file>/C<fh> response, or the final trailers -- false while a response is still
-streaming or has not started, and B<C<undef> if the server does not track
-completion>. The synchronous counterpart to C<on_complete>, and read-only to the
-application. As with C<disconnect_future>, test C<defined> to learn whether the
-feature is available before relying on it.
-
-    my $done = $conn->response_complete;   # undef = unsupported, else 0 or 1
-
-This accessor is B<SHOULD>, not MUST, on purpose. "The body has been fully sent"
-is not always a crisp instant: buffering, HTTP/2 flow-control windows, and
-intermediaries can blur exactly when the last byte reaches the client, so some
-servers cannot report completion precisely. The load-bearing fact -- whether a
-response B<started> -- is the MUST (C<response_started>); completion is a
-convenience layered on top, which is also why it shares the SHOULD level of its
-callback form C<on_complete>. A future revision may promote both to MUST if
-implementation experience shows the timing can be pinned down reliably across
-transports.
-
-B<C<disconnect_future()>> - Returns a Future that resolves, with the reason, on abnormal disconnect -- useful for racing against long-running work, e.g. C<< Future->wait_any($work, $conn->disconnect_future) >>. Returns C<undef> if not supported.
-
-    my $future = $conn->disconnect_future;  # Future or undef
-    my $reason = await $future;
-
-Each returned Future MUST be B<cancellation-isolated>: cancelling it --
-directly, or implicitly as the losing component of a combinator such as
-C<< Future->wait_any >> -- MUST NOT affect the server's disconnect
-processing, the delivery of other notifications, or a Future returned by
-another call to this method. Successive calls MAY return distinct
-Futures; obtain a fresh one for each race, since a Future that lost one
-race cannot win a later one. This makes explicit what the definition
-above already promises: I<every> returned Future "resolves, with the
-reason, on abnormal disconnect" -- a Future one consumer can cancel out
-from under the others cannot keep that promise, and step 3 of
-L</State Transition Order> cannot be performed on it.
-
-=head4 What "connection" means here
-
-The object is named for the connection, but it is scoped to a B<single request>:
-each request gets its own C<pagi.connection>, and the C<response_started> /
-C<response_complete> flags describe B<that request's> response, never the transport
-as a whole. This matters the moment a transport carries more than one request:
-
-=over 4
-
-=item *
-
-B<HTTP/1.1> reuses a connection for requests B<sequentially> (keep-alive); each
-request is a fresh scope with its own connection object.
-
-=item *
-
-B<HTTP/2> B<multiplexes> many requests over one TCP connection as independent
-streams. PAGI maps each stream to its own C<http> scope (see L</HTTP/2 Stream
-Mapping>), so ten concurrent streams have ten connection objects and ten
-independent C<response_started> flags -- one request starting its response is never
-visible as another's.
-
-=item *
-
-B<HTTP/3> (when supported) multiplexes streams over QUIC the same way; the
-per-request scoping is identical, so nothing here changes.
-
-=back
-
-The C<response_started> / C<response_complete> flags are defined for the C<http>
-scope only. B<SSE> is treated as its own scope type (C<< type => 'sse' >>) even
-though it is really a long-lived response over HTTP: it begins with C<sse.start>
-rather than C<http.response.start>, so these HTTP flags do not apply to it. An
-SSE-specific equivalent may be defined later if a need arises.
-
-=head4 Standard Disconnect Reasons
-
-Every reason below describes an B<abnormal> end to the request -- the connection
-went away, a timeout fired, or the server aborted the exchange before the
-response was fully delivered. These are the values reported by
-C<disconnect_reason()>, passed to C<on_disconnect> callbacks, and resolved from
-C<disconnect_future()>. A request that completes successfully has B<no> reason
-(C<disconnect_reason()> returns C<undef> and C<on_complete> fires instead).
-
-Servers MUST use these standard reason strings where the condition applies:
-
-=over 4
-
-=item C<client_closed>
-
-Client initiated clean close (TCP FIN) mid-request
-
-=item C<client_timeout>
-
-Client stopped responding (read timeout)
-
-=item C<idle_timeout>
-
-Connection or stream idle too long -- before a request arrived, or
-mid-stream on a quiet WebSocket or SSE session
-
-=item C<keepalive_timeout>
-
-Keep-alive connection idled out between requests, or a WebSocket
-keepalive ping received no pong within its timeout (see
-C<websocket.keepalive>)
-
-=item C<write_timeout>
-
-Response write timed out
-
-=item C<write_error>
-
-Socket write failed (EPIPE, ECONNRESET)
-
-=item C<read_error>
-
-Socket read failed
-
-=item C<protocol_error>
-
-HTTP parse error, invalid request
-
-=item C<server_shutdown>
-
-Server shutting down gracefully
-
-=item C<server_error>
-
-Unhandled server-side error aborted the request
-
-=item C<body_too_large>
-
-Request body exceeded limit
-
-=item C<queue_overflow>
-
-A bounded server queue (e.g. outgoing frames or buffered events) overflowed and the connection was dropped to relieve backpressure
-
-=back
-
-Servers MAY define additional reasons prefixed with C<x-> (e.g., C<x-rate-limited>).
-
-=head4 Server Requirements
-
-=over
-
-=item 1.
-
-MUST provide C<pagi.connection> in scope for C<http> type requests
-
-=item 2.
-
-MUST implement C<is_connected()>, C<disconnect_reason()>, and C<on_disconnect()> methods
-
-=item 3.
-
-SHOULD implement C<on_complete()> and C<disconnect_future()>
-
-=item 4.
-
-MUST fire C<on_disconnect> callbacks B<only> on abnormal disconnect, and C<on_complete> callbacks B<only> on successful completion -- never both for the same request
-
-=item 5.
-
-MUST update connection state as soon as disconnect is detected
-
-=item 6.
-
-MUST use standard reason strings where applicable
-
-=item 7.
-
-MUST NOT transition C<is_connected()> back to true once false (one-way transition)
-
-=back
-
-=head4 State Transition Order
-
-When an B<abnormal disconnect> is detected, servers MUST update state in this order:
-
-=over
-
-=item 1.
-
-Set C<is_connected()> to return false
-
-=item 2.
-
-Set C<disconnect_reason()> to return the reason string
-
-=item 3.
-
-Resolve C<disconnect_future()> with the reason (if provided)
-
-=item 4.
-
-Invoke C<on_disconnect> callbacks in registration order
-
-=item 5.
-
-Deliver the disconnect event: append C<http.disconnect> to the receive queue,
-and if a receive Future is already pending, resolve it with that event
-
-=item 6.
-
-Settle any send Future still pending for this scope, per the Send Completion
-Contract in L<PAGI::Spec> (it resolves successfully)
-
-=back
-
-Steps 5 and 6 MAY be performed in either order, but both MUST happen after
-step 4.
-
-An application coroutine resumed by step 5 or step 6 therefore always
-observes the transition already complete: C<is_connected()> returns false,
-C<disconnect_reason()> returns the reason, and any registered
-C<on_disconnect> callbacks have been invoked or scheduled. Awaiting C<$send>
-or C<$receive> and then consulting the connection state is race-free by
-construction.
-
-When a request B<completes successfully>, servers MUST invoke C<on_complete>
-callbacks in registration order and MUST leave C<disconnect_reason()> as
-C<undef>. C<on_disconnect> callbacks and C<disconnect_future()> MUST NOT fire on
-this path.
-
-B<Exceptions after the terminal event.> Delivery defines completion: an
-exception raised by the application B<after> its response reached the
-terminal event (the final body, a C<file>/C<fh> body, or the final
-trailers) does not un-complete the request. The server MUST still treat
-the request as completed — C<on_complete> fires, C<disconnect_reason()>
-stays C<undef> — and SHOULD log the exception at error level as an
-operational event. The server MAY close the connection afterwards rather
-than reuse it; the delivered response is unaffected either way. (This
-matches ASGI-ecosystem practice, where a post-completion exception is
-logged and the already-granted keep-alive stands.)
-
-=head4 Applicability
-
-=over 4
-
-=item C<http>
-
-MUST provide C<pagi.connection>
-
-=item C<websocket>
-
-NOT APPLICABLE (use C<websocket.disconnect> events)
-
-=item C<sse>
-
-NOT APPLICABLE (use C<sse.disconnect> events)
-
-=back
-
-WebSocket and SSE have dedicated disconnect events and typically use handler objects (like C<PAGI::WebSocket>, C<PAGI::SSE>) that already manage connection state.
-
-=head4 Example: Basic Connection Check
-
-    async sub handler {
-        my ($scope, $receive, $send) = @_;
-        my $conn = $scope->{'pagi.connection'};
-
-        # Check before expensive work
-        return unless $conn->is_connected;
-
-        my $result = await expensive_operation();
-
-        # Check again before responding
-        return unless $conn->is_connected;
-
-        await $send->({ type => 'http.response.start', status => 200, headers => [] });
-        await $send->({ type => 'http.response.body', body => $result, more => 0 });
-    }
-
-=head4 Example: Cleanup on Disconnect vs. Completion
-
-    async sub handler {
-        my ($scope, $receive, $send) = @_;
-        my $conn = $scope->{'pagi.connection'};
-
-        my $temp_file = create_temp_file();
-
-        # Abnormal end: client vanished, or a timeout/error fired mid-request.
-        $conn->on_disconnect(sub {
-            my ($reason) = @_;
-            $temp_file->unlink;
-            log_info("Aborted, client gone: $reason");
-        });
-
-        # Clean end: the response was fully delivered.
-        $conn->on_complete(sub {
-            $temp_file->unlink;
-            log_info("Delivered OK");
-        });
-
-        my $result = await process_data($temp_file);
-        await send_response($send, $result);
-    }
-
-Exactly one of the two callbacks runs, so the temp file is always removed
-exactly once -- no manual cleanup in the request body, and no risk of a
-double-unlink.
-
-=head4 Example: Racing Against Disconnect
-
-    async sub long_poll_handler {
-        my ($scope, $receive, $send) = @_;
-        my $conn = $scope->{'pagi.connection'};
-
-        my $disconnect_future = $conn->disconnect_future;
-        my $event_future = wait_for_event();
-
-        if ($disconnect_future) {
-            # Race: wait for event OR disconnect
-            await Future->wait_any($disconnect_future, $event_future);
-
-            return unless $conn->is_connected;
-        }
-
-        my $event = $event_future->get;
-        await send_response($send, $event);
-    }
-
 =head2 WebSocket
 
-WebSocket servers handle fragmentation and PING/PONG messages. Servers MUST wait for a reply to C<websocket.connect> before completing the handshake. If C<websocket.close> is sent instead of C<websocket.accept>, the server MUST reject the connection with HTTP 403.
+WebSocket servers handle fragmentation and PING/PONG messages. Servers MUST wait for a reply to C<websocket.connect> before completing the handshake.
 
 =head3 WebSocket Connection Scope
 
@@ -1551,7 +1723,7 @@ C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.5'>). Optional; if omitted, assume C<'0.1'>.
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.6'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -1599,6 +1771,10 @@ C<state> (HashRef, optional)
 
 =item -
 
+C<pagi.connection> (Object) -- Per-session connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>). See L</Connection State>.
+
+=item -
+
 C<pagi.transport> (Object, optional) -- Outbound flow-control introspection handle, when the server provides one. See L</Transport Flow Control>.
 
 =item -
@@ -1621,7 +1797,7 @@ sheds the session.
 
 =item -
 
-C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>, C<websocket.http.response>). See L<PAGI::Spec::Extensions>.
+C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>). See L<PAGI::Spec::Extensions>.
 
 =back
 
@@ -1672,6 +1848,9 @@ C<subprotocol> (String, optional)
 C<headers> (ArrayRef[ArrayRef[Bytes]], optional)
 
 =back
+
+The alternative to accepting is to refuse the handshake with an ordinary HTTP
+response; see L</"Refusing the handshake">.
 
 =head4 Receive - C<receive> event
 
@@ -1769,7 +1948,7 @@ B<Example:>
 
 =head4 Disconnect - C<receive> event
 
-Sent when the WebSocket connection is closed, either by the client, server, or due to error conditions.
+Sent when the C<websocket> scope ends -- by a closing handshake from either side, a transport drop, a server-detected error, or an C<abort> -- before or after C<websocket.accept>. A normally completed refusal is the one ending that delivers none.
 
 =over
 
@@ -1787,6 +1966,14 @@ C<reason> (String, default empty) -- For a server-detected abnormal close, the m
 
 =back
 
+This event is delivered whenever the C<websocket> scope ends abnormally, before
+as well as after C<websocket.accept>: a client that drops during the handshake,
+or an C<abort> before accept, produces it with code C<1006> and the standard
+reason token for the condition. A normally completed refusal (see
+L</"Refusing the handshake">) delivers none. An C<abort> on an accepted socket
+sends no Close frame -- the server ends the transport -- and delivers this event
+with code C<1006> and reason C<app_abort>.
+
 The C<code> carries the RFC 6455 close code and C<reason> supplements it with a
 standard token (see L</Standard Disconnect Reasons>), so an application can branch
 on one reason vocabulary across HTTP, WebSocket, and SSE. How the two pair up
@@ -1803,9 +1990,10 @@ The server does not substitute a PAGI token in this case.
 =item *
 
 B<Abnormal drop with no close handshake> -- a bare TCP FIN, a timeout, or a write
-failure. C<code> is C<1006> ("abnormal closure") and C<reason> is the token for
-the condition: C<client_closed>, C<keepalive_timeout>, C<write_timeout>,
-C<write_error>, or C<server_shutdown>.
+failure, before or after accept, or an C<abort>. C<code> is C<1006> ("abnormal
+closure") and C<reason> is the token for the condition: C<client_closed>,
+C<keepalive_timeout>, C<write_timeout>, C<write_error>, C<server_shutdown>,
+or C<app_abort>.
 
 =item *
 
@@ -1815,12 +2003,24 @@ fault (C<1002> for a framing/protocol error, C<1007> for an invalid UTF-8
 payload) with C<reason> C<protocol_error>; a bounded-queue overflow closes with
 C<1008> and C<reason> C<queue_overflow>.
 
+=item *
+
+B<Application left the session incomplete> -- the application returned from
+an accepted socket without sending C<websocket.close> or receiving this
+event. C<code> is C<1011> ("internal error"), the code the server sent, and
+C<reason> is C<server_error> (see L</Application Left a Response
+Incomplete>).
+
 =back
 
-These pairings describe the reference server. The binding contract is only that
-C<code> is a valid RFC 6455 close code and C<reason>, when the server can name
-one, is a token from L</Standard Disconnect Reasons>; applications SHOULD branch
-on C<reason> rather than C<code>.
+The pairings above are normative wherever the server names the ending: a
+server-reported abnormal end carries the standard token as C<reason> and the
+code shown (see L</Meaning per scope>, B<Agreement with disconnect events>);
+an incomplete session carries C<1011> and C<server_error>; an C<abort>
+carries C<1006> and C<app_abort>. When the peer sent the Close frame,
+C<code> and C<reason> are the peer's own and are never replaced by a token.
+Applications SHOULD branch on C<reason> where it is a token and treat
+peer-supplied text as data.
 
 =head4 Disconnected Client - sending after disconnect
 
@@ -1856,6 +2056,17 @@ C<code> (Int, default C<1000>)
 C<reason> (String, default empty)
 
 =back
+
+C<websocket.close> is valid only after C<websocket.accept>. Sent before
+accept it is an out-of-sequence event and the server MUST fail the
+C<$send> Future without mutating state; refusing a handshake is done with
+an HTTP response (see L</"Refusing the handshake">).
+
+After C<websocket.accept>, C<websocket.close> is the application's terminal
+event: send it, or receive C<websocket.disconnect>, before returning.
+Returning from an accepted socket with neither is an incomplete response
+(see L</Application Left a Response Incomplete>): the server closes with
+code C<1011>, not C<1000>.
 
 =head3 WebSocket Protocol Enforcement
 
@@ -1926,71 +2137,58 @@ WebSocket C<Close> frame carries its own code and reason as on HTTP/1.1.
 Servers that do not implement RFC 8441 simply never produce a C<websocket> scope
 over HTTP/2; applications need not distinguish the two cases.
 
-=head3 WebSocket Denial Response (extension)
+=head3 Refusing the handshake
 
-By default an application rejects a handshake by sending C<websocket.close>
-before C<websocket.accept>, and the server replies with a bare
-C<403 Forbidden>. The B<denial response> extension lets the application reject
-with a B<custom> HTTP response instead -- a C<401> with a C<WWW-Authenticate>
-header, a C<429> with C<Retry-After>, a redirect, a JSON error body, and so on.
-It mirrors ASGI's C<websocket.http.response> extension.
+Until the application sends C<websocket.accept>, a C<websocket> scope is an
+HTTP exchange (RFC 6455 section 4.2.2), and the application MAY refuse the
+handshake by answering it with an ordinary HTTP response using the HTTP
+response events: C<http.response.start>, C<http.response.body>, and
+C<http.response.trailers> where the start declared them, with exactly the
+semantics those events have on an C<http> scope (see L</HTTP>). This is the
+one place where a scope carries events from another protocol's namespace,
+and it exists because the wire really is HTTP until the C<101>. On the wire
+the refusal's status, headers, and body are identical to the same response on
+an C<http> scope, apart from the connection-lifecycle headers the server owns
+(see below). Every server offering C<websocket> scopes MUST support it; there
+is nothing to advertise or detect.
 
-A server that supports it advertises C<<< extensions->{'websocket.http.response'} >>>
-as an empty hashref on the C<websocket> scope. To deny, the application sends two
-events B<in place of> C<websocket.accept>, only valid before the connection is
-accepted:
+    await $send->({ type => 'http.response.start', status => 401,
+                    headers => [['www-authenticate', 'Bearer realm="ws"'],
+                                ['content-type', 'application/problem+json']] });
+    await $send->({ type => 'http.response.body', body => '{"title":"sign in"}' });
 
-=over
+Body semantics are inherited, not restated. A first body event with
+C<< more => 0 >> is a complete body the server may frame with
+Content-Length; C<< more => 1 >> streams under the transport's ordinary
+body, flow-control, and framing rules; C<file>, C<fh>, and trailers are
+allowed because they are allowed on HTTP responses. Nothing is buffered
+specially. Prefer a complete body for a refusal: once the first body event
+is accepted the status and headers are committed; a refusal abandoned after
+its start without the terminal body is an incomplete response under
+L</Application Left a Response Incomplete>, with that section's client-gone
+carve-out; and, as with any streamed body, a client that disconnects
+mid-stream may have received part of it.
 
-=item -
+C<websocket.accept> and the refusal's C<http.response.start> are the only
+handshake choices and are mutually exclusive.
 
-B<C<websocket.http.response.start>> -- C<{ status (Int), headers (ArrayRef[ArrayRef[Bytes]]) }>,
-structured exactly like C<http.response.start>.
+A refusal's status MUST be C<300> or above. A C<1xx> or C<2xx> status is not
+a refusal: C<101> is the HTTP/1.1 acceptance, and on HTTP/2 any C<2xx> answer
+to the C<CONNECT> request opens the tunnel (RFC 8441 section 5), so an
+C<http.response.start> carrying such a status on a C<websocket> scope is
+invalid and the server MUST fail the C<$send> Future without transmitting
+anything or mutating state, on either transport.
 
-=item -
-
-B<C<websocket.http.response.body>> -- C<{ body (Bytes, default ""), more (Int, default 0) }>,
-structured exactly like C<http.response.body> (only the C<body> form applies;
-C<file>/C<fh> are not used for denial responses); set C<<< more => 1 >>> to send
-the body in multiple events.
-
-=back
-
-The server sends the resulting HTTP response and then closes the connection; the
-WebSocket is never established, so no C<websocket.disconnect> is delivered. After
-C<websocket.accept> these events are invalid and the server MUST fail the
-C<$send> Future without transmitting anything or disturbing the established
-WebSocket -- the same fail-don't-mutate rule as every other out-of-sequence
-send.
-
-    # Reject the handshake with a custom 401 instead of a bare 403:
-    my $connect = await $receive->();   # websocket.connect
-    if (!authorized($scope)) {
-        await $send->({
-            type    => 'websocket.http.response.start',
-            status  => 401,
-            headers => [
-                [ 'content-type',     'application/json' ],
-                [ 'www-authenticate', 'Bearer' ],
-            ],
-        });
-        await $send->({
-            type => 'websocket.http.response.body',
-            body => '{"error":"unauthorized"}',
-        });
-        return;
-    }
-    await $send->({ type => 'websocket.accept' });
-
-Applications SHOULD check for the extension and fall back to C<websocket.close>
-when it is absent:
-
-    if ($scope->{extensions}{'websocket.http.response'}) { ... deny with a response ... }
-    else                                                 { await $send->({ type => 'websocket.close' }) }
-
-The C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
-C<< $ws->deny(status => 401, headers => [...], body => ...) >>, falling back to a
-plain close when the server does not advertise the extension.
+After a refusal has started,
+only HTTP response events are valid until its terminal event; after
+C<websocket.accept>, HTTP response events MUST fail the C<$send> Future
+without transmitting anything, the same fail-don't-mutate rule as every
+other out-of-sequence send. A normally completed refusal is a clean end
+(see L</Meaning per scope>): the WebSocket was never established, so no
+C<websocket.disconnect> is delivered. On HTTP/1.1 the server closes the
+connection after the refusal and the response carries C<Connection: close>, so
+a pooling client does not reuse the socket; on HTTP/2 the refusal ends the
+stream and the connection is unaffected.
 
 =head2 Server-Sent Events (SSE)
 
@@ -2034,9 +2232,9 @@ representation does the client prefer?". Preference ranking among acceptable
 types (a client that accepts both C<text/event-stream> and C<text/html>,
 say) is the application's business, and fuller RFC 9110 content negotiation
 MAY be layered on as middleware. When the boolean signal classifies a
-request as C<sse> that the application would rather answer with an ordinary
-HTTP response, the decline mechanism (see L</Decline SSE - C<send> event>)
-is the correction path.
+request as C<sse> that the application would rather answer as plain HTTP,
+an ordinary HTTP response (see L</"Refusing the stream">) is the correction
+path.
 
 B<Middleware note:> because C<http> and C<sse> are sibling scope types for
 what is on the wire an ordinary HTTP request, middleware that filters on
@@ -2050,7 +2248,7 @@ Routing based on URL or application logic is not used to infer SSE.
 
 =head3 SSE Connection Scope
 
-SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, C<pagi.transport> where provided, and C<extensions>) but set C<<< type => 'sse' >>>. Header casing rules follow the HTTP section.
+SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, C<pagi.connection>, C<pagi.transport> where provided, and C<extensions>) but set C<<< type => 'sse' >>>. C<pagi.connection> is the per-stream connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>); see L</Connection State>. Header casing rules follow the HTTP section.
 
 =head3 Request Body - C<receive> event
 
@@ -2112,65 +2310,42 @@ sends C<Connection: keep-alive> and frames the stream with chunked
 C<Transfer-Encoding>; HTTP/2 multiplexes and DATA-frames the stream, so those
 connection-specific headers do not apply. Applications need not set any of these.
 
-=head3 Decline SSE - C<send> event
+=head3 Refusing the stream
 
-An C<sse> request is an ordinary HTTP C<GET> with C<Accept: text/event-stream>;
-the server classifies it as an C<sse> scope before the application runs. Instead
-of starting an event stream, an application B<may> decline and return a normal
-HTTP response -- a C<404> for an unknown endpoint, a C<401>/C<403> for an
-unauthenticated request, a C<204> to tell an C<EventSource> client to stop
-reconnecting, a redirect, and so on. It sends two events B<in place of>
-C<sse.start>, valid only before the stream has started:
+An C<sse> request is an ordinary HTTP request until the application sends
+C<sse.start>. Instead of starting an event stream, the application MAY
+refuse by answering with an ordinary HTTP response using the HTTP response
+events C<http.response.start>, C<http.response.body>, and
+C<http.response.trailers>, with exactly the semantics those events have on
+an C<http> scope (see L</HTTP>): a C<404> for an unknown endpoint, a
+C<401>/C<403> for an unauthenticated request, a C<204> to tell an
+C<EventSource> client to stop reconnecting, a redirect. This carries events
+from another protocol's namespace for the same reason as
+L</"Refusing the handshake">, and on the wire the refusal's status, headers,
+and body are identical to the same response on an C<http> scope, apart from
+the connection-lifecycle headers the server owns (see below). Every server
+offering C<sse> scopes MUST support it; there is nothing to advertise or
+detect.
 
-=over
+Unlike a WebSocket refusal, an SSE refusal may carry any status, C<200>
+included. An C<sse> scope is distinguished from a stream by the event that
+answers it, C<http.response.start> rather than C<sse.start>, not by the
+status, and an ordinary C<200> page is the documented answer for a request
+the application does not treat as a stream (see
+L<PAGI::Upgrading/"Known issue">).
 
-=item -
-
-B<C<sse.http.response.start>> -- C<{ status (Int), headers (ArrayRef[ArrayRef[Bytes]]) }>,
-structured exactly like C<http.response.start>.
-
-=item -
-
-B<C<sse.http.response.body>> -- C<{ body (Bytes, default ""), more (Int, default 0) }>,
-structured exactly like C<http.response.body>; set C<<< more => 1 >>> to send the
-body in multiple events.
-
-=back
-
-These events are namespaced under C<sse.> -- mirroring the
-C<websocket.http.response> denial events -- so that an C<sse> scope only ever
-carries C<sse.*> events, keeping the server's per-scope dispatch and any
-event-type-aware middleware scope-separated.
-
-The server sends the resulting HTTP response and closes the connection; no event
-stream is started and no C<sse.disconnect> is delivered. This is a
-B<first-send-wins> choice: after C<sse.start>, C<sse.http.response.*> events are
-invalid and MUST raise; after C<sse.http.response.start>, the stream events
-(C<sse.send> / C<sse.comment> / C<sse.keepalive> / C<sse.close>) are invalid and
-MUST raise.
-
-Unlike the WebSocket denial response -- an optional extension with a
-C<websocket.close> fallback -- declining an SSE request is a B<core> capability:
-there is no event-stream fallback, so every conforming server MUST support it.
-
-    # Decline an unauthenticated SSE request with a 401 instead of streaming:
-    if (!authorized($scope)) {
-        await $send->({
-            type    => 'sse.http.response.start',
-            status  => 401,
-            headers => [
-                [ 'content-type',     'text/plain' ],
-                [ 'www-authenticate', 'Bearer' ],
-            ],
-        });
-        await $send->({ type => 'sse.http.response.body', body => 'Unauthorized' });
-        return;
-    }
-    await $send->({ type => 'sse.start', status => 200 });
-
-A C<204 No Content> (or any non-C<200>) response is the supported way to stop an
-C<EventSource> client's reconnection loop: the client treats it as a terminal
-failure and does not reconnect.
+Body semantics, including C<< more => 1 >> streaming, C<file>, C<fh>, and
+trailers, are inherited from L</HTTP> and not restated here; the note under
+L</"Refusing the handshake"> about committed status, abandoned refusals,
+and partial delivery applies equally. C<sse.start> and the refusal's
+C<http.response.start> are mutually exclusive: after C<sse.start>, HTTP
+response events MUST fail; after a refusal has started, the stream events
+(C<sse.send>, C<sse.comment>, C<sse.keepalive>, C<sse.close>) MUST fail. A
+normally completed refusal is a clean end (see L</Meaning per scope>): no
+event stream was started and no C<sse.disconnect> is delivered. As with a
+WebSocket refusal, on HTTP/1.1 the server closes the connection after the
+refusal and the response carries C<Connection: close>; on HTTP/2 the refusal
+ends the stream and the connection is unaffected.
 
 =head3 Send SSE - C<send> event
 
@@ -2210,10 +2385,11 @@ C<data> is the one field that legitimately contains newlines: the server splits 
 on newlines and emits one C<data:> line per segment, preserving multi-line
 payloads.
 
-To end the SSE stream the application either returns after its final C<sse.send>,
-or sends C<sse.close> explicitly (see L</Close SSE - C<send> event>). On return the
-server flushes buffered events and closes the HTTP connection; C<sse.close> does
-the same immediately, decoupled from the application returning.
+To end the SSE stream the application sends C<sse.close> (see L</Close SSE -
+C<send> event>); the server then flushes buffered events, writes the
+end-of-stream marker, and closes the stream. Returning after C<sse.start>
+without C<sse.close> is an incomplete response (see L</Application Left a
+Response Incomplete>).
 
 =head3 SSE Comment - C<send> event
 
@@ -2290,13 +2466,17 @@ B<Example:>
 
 =head3 Close SSE - C<send> event
 
-C<sse.close> ends the SSE stream explicitly. It is the SSE analog of
-C<http.response.body> with C<<< more => 0 >>>: the server flushes any buffered
-events, writes the end-of-stream marker, and closes the stream. An application
-B<may> end a stream either by returning after its final C<sse.send> or by sending
-C<sse.close>; the latter is the explicit form and ends the stream B<immediately>,
-decoupled from the application returning -- which lets a helper deep in the call
-stack end the stream without unwinding to the top.
+C<sse.close> ends the SSE stream. It is the SSE analog of
+C<http.response.body> with C<<< more => 0 >>>, and like that event it is the
+stream's terminal event: the server flushes any buffered events, writes the
+end-of-stream marker, and closes the stream. It takes effect B<immediately>
+on receipt, before the application returns, which lets a helper deep in the
+call stack end the stream without unwinding to the top; a subsequent return
+is a no-op. An application that returns after C<sse.start> without having
+sent C<sse.close> has left the response incomplete (see L</Application Left
+a Response Incomplete>): the server MUST NOT write the end-of-stream marker
+on its behalf, terminates the stream so the client observes truncation,
+reports C<server_error> on the connection object, and logs the event.
 
 =over
 
@@ -2326,38 +2506,20 @@ Unlike C<websocket.close>, C<sse.close> carries B<no> code or client-visible
 reason: WebSocket has an RFC 6455 close frame to carry them, while SSE has no such
 frame on the wire.
 
-B<Return vs C<sse.close>.> Both terminate the stream and are B<identical on the
-wire>: the server writes the end-of-stream marker (the chunked terminator over
-HTTP/1.1, C<END_STREAM> over HTTP/2) and closes the stream. A client cannot tell
-which path was taken -- C<sse.close> adds nothing to the wire, since its C<reason>
-never leaves the server. They differ only in who signals the end, when, and with
-what server-side metadata:
-
-=over
-
-=item -
-
-B<Return> sends no end-event: the server infers completion from the application's
-returned Future resolving and tears the stream down then. The end is tied to the
-application returning.
-
-=item -
-
-B<C<sse.close>> is an explicit C<send> event: the server tears the stream down
-B<immediately> on receipt, B<before> the application returns. This lets a helper
-deep in the call stack end the stream in place (without unwinding to a return),
-frees the client's connection ahead of any slow post-close cleanup the application
-still has to perform, and records the C<reason> for the server's access log. After
-C<sse.close>, further sends raise (see above) and a subsequent return is a no-op.
-
-=back
-
-When the application's final act is its last C<sse.send> immediately followed by a
-return, the two paths are equivalent apart from the server-side C<reason>.
+B<Why return is not a close.> An C<EventSource> client reconnects after any
+end of stream, clean or truncated, so the difference between C<sse.close>
+and a bare return is invisible in a browser. It is visible where it matters:
+in the server's log, on the connection object, and to every intermediary
+that wraps C<$send>. A stream that ends because a helper returned early --
+an exception it swallowed, a C<last> that skipped the close -- is reported
+as what it is, an incomplete response, rather than as a completed one.
 
 =head3 SSE Disconnect - C<receive> event
 
-Sent to the application if the client disconnects or if the server shuts down the SSE stream after C<sse.start>.
+Sent to the application when the client disconnects at any point after the
+C<sse> scope was dispatched, whether or not C<sse.start> has been sent, and
+when the server shuts down a started event stream. A normally completed
+refusal (see L</"Refusing the stream">) delivers no C<sse.disconnect>.
 
 =over
 
@@ -2635,6 +2797,15 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 =head2 Version History
 
 =over
+
+=item -
+
+C<0.6> (Draft): Universal connection state (C<pagi.connection> on every
+scope, C<abort>, C<disconnect_detail>, C<app_abort>); refusals as ordinary
+HTTP responses; C<websocket.close> before accept fails; C<sse.disconnect>
+timing; C<sse.close> and the WebSocket closing handshake required as terminal
+events (return without them is an incomplete response; WebSocket closed
+with C<1011>).
 
 =item -
 
