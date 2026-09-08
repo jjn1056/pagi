@@ -340,9 +340,10 @@ pair instead of C<websocket.accept> (sub-spec 0.6):
     };
 
 These events are valid only before C<websocket.accept>: the server writes the
-HTTP response and closes, so the WebSocket never opens. The C<PAGI::WebSocket>
-helper in C<PAGI-Tools> wraps this as
-C<< $ws->deny(status => 401, headers => [...], body => ...) >>. See
+HTTP response and, on HTTP/1.1, closes the connection (on HTTP/2 the stream
+ends and the connection is unaffected), so the WebSocket never opens. The
+C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
+C<< $ws->deny($response) >>, where C<$response> is any C<PAGI::Response>. See
 L<PAGI::Spec::Www/"Refusing the handshake">.
 
 =head1 SERVER-SENT EVENTS

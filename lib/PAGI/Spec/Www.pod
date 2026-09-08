@@ -486,10 +486,11 @@ log such exceptions.
 
 =head3 What "connection" means here
 
-The object is named for the connection, but it is scoped to a B<single request>:
-each request gets its own C<pagi.connection>, and the C<response_started> /
-C<response_complete> flags describe B<that request's> response, never the transport
-as a whole. This matters the moment a transport carries more than one request:
+The object is named for the connection, but it is scoped to a B<single scope>:
+each HTTP request, WebSocket session, or SSE stream gets its own
+C<pagi.connection>, and the C<response_started> / C<response_complete> flags
+describe B<that scope's> response, never the transport as a whole. This matters
+the moment a transport carries more than one scope:
 
 =over 4
 
@@ -1947,7 +1948,7 @@ B<Example:>
 
 =head4 Disconnect - C<receive> event
 
-Sent when the WebSocket connection is closed, either by the client, server, or due to error conditions.
+Sent when the C<websocket> scope ends -- by a closing handshake from either side, a transport drop, a server-detected error, or an C<abort> -- before or after C<websocket.accept>. A normally completed refusal is the one ending that delivers none.
 
 =over
 
