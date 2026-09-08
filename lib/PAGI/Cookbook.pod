@@ -307,12 +307,10 @@ spans the whole connection:
 
 =head2 Rejecting a handshake with a custom response
 
-Sending C<websocket.close> before C<websocket.accept> rejects a handshake with a
-bare C<403>. To reject with a B<custom> response -- a C<401> with a
-C<WWW-Authenticate> header, a C<429>, a redirect -- send a
-C<websocket.http.response.start> + C<websocket.http.response.body> pair instead
-of C<websocket.accept>, when the server advertises the C<websocket.http.response>
-extension:
+To reject a handshake with a B<custom> response -- a C<401> with a
+C<WWW-Authenticate> header, a C<429>, a redirect -- send an ordinary
+C<http.response.start> + C<http.response.body> pair instead of C<websocket.accept>
+(sub-spec 0.6):
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
@@ -321,21 +319,12 @@ extension:
         await $receive->();   # websocket.connect
 
         if (!authorized($scope)) {                       # your auth check
-            if ($scope->{extensions}{'websocket.http.response'}) {
-                await $send->({
-                    type    => 'websocket.http.response.start',
-                    status  => 401,
-                    headers => [ [ 'content-type',     'application/json' ],
-                                 [ 'www-authenticate', 'Bearer' ] ],
-                });
-                await $send->({
-                    type => 'websocket.http.response.body',
-                    body => '{"error":"unauthorized"}',
-                });
-            }
-            else {
-                await $send->({ type => 'websocket.close' });   # bare 403 fallback
-            }
+            await $send->({
+                type    => 'http.response.start',
+                status  => 401,
+                headers => [['www-authenticate', 'Bearer realm="chat"']],
+            });
+            await $send->({ type => 'http.response.body', body => 'Unauthorized' });
             return;
         }
 
@@ -346,8 +335,8 @@ extension:
 These events are valid only before C<websocket.accept>: the server writes the
 HTTP response and closes, so the WebSocket never opens. The C<PAGI::WebSocket>
 helper in C<PAGI-Tools> wraps this as
-C<< $ws->deny(status => 401, headers => [...], body => ...) >>, with the same
-fallback. See L<PAGI::Spec::Www/"WebSocket Denial Response (extension)">.
+C<< $ws->deny(status => 401, headers => [...], body => ...) >>. See
+L<PAGI::Spec::Www/"Refusing the handshake">.
 
 =head1 SERVER-SENT EVENTS
 

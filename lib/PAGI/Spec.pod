@@ -118,7 +118,7 @@ C<extensions>: A hashref in which the server advertises optional capabilities (s
 =back
 
 The C<extensions> hashref advertises optional server capabilities. Each present
-key names an extension (e.g. C<tls>, C<websocket.http.response>) mapping to a
+key names an extension (e.g. C<tls>, C<fullflush>) mapping to a
 (possibly empty) hashref of extension data; applications check for a key's
 presence before relying on it. An absent or empty C<extensions> means none are
 available. See L<PAGI::Spec::Extensions>.
