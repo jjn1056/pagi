@@ -980,8 +980,8 @@ Key points:
 See L<PAGI::WebSocket> for higher-level utilities that make WebSocket handling easier.
 
 To reject a handshake, send an ordinary HTTP response (C<http.response.start>/C<.body> before
-C<websocket.accept>) for a custom response such as a C<401>. See the cookbook's
-"Rejecting a handshake with a custom response" and
+C<websocket.accept>) such as a C<401>. See the cookbook's
+"Rejecting a handshake with an HTTP response" and
 L<PAGI::Spec::Www/"Refusing the handshake">.
 
 =head2 2.5 SSE (Raw)

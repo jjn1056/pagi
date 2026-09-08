@@ -620,7 +620,7 @@ Extra fields in events B<must not> cause errors -- this supports forward-compati
 
 The post-close behaviour of C<$send> is defined in L</Send Completion
 Contract>: it is a successful no-op and does not report closure. Applications
-use the protocol's disconnect event and, for HTTP, the C<pagi.connection> state
+use the protocol's disconnect event and the C<pagi.connection> state
 object instead.
 
 =head3 Extensions

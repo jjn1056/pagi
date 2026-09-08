@@ -215,11 +215,14 @@ it. Note that sending after a disconnect is simply a no-op -- it never raises --
 so you detect disconnection through these mechanisms, not by checking the result
 of C<$send>.
 
-For B<HTTP>, PAGI additionally gives you a connection-state object at
-C<< $scope->{'pagi.connection'} >>. It exists because calling C<$receive> on an
-HTTP scope just to poll for disconnect would consume request-body data; the
-object lets you check without touching the queue. It offers a cheap synchronous
-check, a cleanup callback, and a Future you can race against:
+PAGI additionally gives you a connection-state object at
+C<< $scope->{'pagi.connection'} >>, on every scope: C<http>, C<websocket>, and
+C<sse> alike. It exists because calling C<$receive> just to poll for disconnect
+consumes whatever the queue holds next -- request-body data on an HTTP scope, a
+client message on a WebSocket -- and because a refusal that completes normally
+delivers no disconnect event at all; the object lets you check without touching
+the queue. It offers a cheap synchronous check, a cleanup callback, and a
+Future you can race against:
 
     use Future;
     use Future::IO;
@@ -260,14 +263,19 @@ logic without juggling a flag yourself:
     $conn->on_complete(sub   { $txn->commit   });   # response fully delivered
     $conn->on_disconnect(sub { $txn->rollback });   # client left, or aborted
 
-B<WebSocket> and B<SSE> do not get a C<pagi.connection> object: their C<$receive>
-queues carry messages, not a body you must preserve, so awaiting the
-C<websocket.disconnect> / C<sse.disconnect> event is already the clean way to
-notice -- as the WebSocket and SSE recipes do. (The C<PAGI::WebSocket> and
-C<PAGI::SSE> helper objects in C<PAGI-Tools> wrap this for you.)
+On a B<WebSocket> or an B<SSE> scope the same object is present and means the
+same things, scoped to the session or the stream instead of a single response:
+C<on_complete> fires when a closing handshake finishes, when the stream ends,
+or when a refusal is fully written, and C<on_disconnect> fires on every
+abnormal ending. Awaiting the C<websocket.disconnect> / C<sse.disconnect> event
+remains the natural way for the receive loop itself to notice -- as the
+WebSocket and SSE recipes do -- but anything that does not own the queue uses
+the object. (The C<PAGI::WebSocket> and C<PAGI::SSE> helper objects in
+C<PAGI-Tools> wrap this for you.)
 
 The full connection-state interface (C<is_connected>, C<disconnect_reason>,
-C<on_disconnect>, C<on_complete>, C<disconnect_future>) is specified in
+C<disconnect_detail>, C<on_disconnect>, C<on_complete>, C<disconnect_future>,
+C<response_started>, C<response_complete>, and C<abort>) is specified in
 L<PAGI::Spec::Www/"Connection State">.
 
 =head1 WEBSOCKET
@@ -305,12 +313,11 @@ spans the whole connection:
         }
     };
 
-=head2 Rejecting a handshake with a custom response
+=head2 Rejecting a handshake with an HTTP response
 
-To reject a handshake with a B<custom> response -- a C<401> with a
-C<WWW-Authenticate> header, a C<429>, a redirect -- send an ordinary
-C<http.response.start> + C<http.response.body> pair instead of C<websocket.accept>
-(sub-spec 0.6):
+To reject a handshake -- a C<401> with a C<WWW-Authenticate> header, a C<429>,
+a redirect -- send an ordinary C<http.response.start> + C<http.response.body>
+pair instead of C<websocket.accept> (sub-spec 0.6):
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
@@ -333,8 +340,9 @@ C<http.response.start> + C<http.response.body> pair instead of C<websocket.accep
     };
 
 These events are valid only before C<websocket.accept>: the server writes the
-HTTP response and closes, so the WebSocket never opens. The C<PAGI::WebSocket>
-helper in C<PAGI-Tools> wraps this as
+HTTP response and the WebSocket never opens. The refusal is an ordinary HTTP
+response, so what happens to the connection after it is the transport's
+ordinary business. The C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
 C<< $ws->deny(status => 401, headers => [...], body => ...) >>. See
 L<PAGI::Spec::Www/"Refusing the handshake">.
 
