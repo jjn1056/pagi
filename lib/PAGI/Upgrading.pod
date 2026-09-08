@@ -87,6 +87,65 @@ after its start is an incomplete response. Prefer a complete body.
 C<sse.disconnect> can arrive before C<sse.start>; the previous wording
 suggested otherwise. Servers already behaved this way.
 
+=head3 SSE streams end with sse.close
+
+C<sse.close> is now the only terminal event of a started stream. Returning
+after C<sse.start> without it is an incomplete response: the server does not
+write the end-of-stream marker for you, closes so the client observes
+truncation, reports C<server_error> on the connection object, and logs the
+event.
+
+Before:
+
+    for my $msg (@events) {
+        await $send->({ type => 'sse.send', %$msg });
+    }
+    return;
+
+After:
+
+    for my $msg (@events) {
+        await $send->({ type => 'sse.send', %$msg });
+    }
+    await $send->({ type => 'sse.close' });
+
+A stream that never ends on its own (a clock, a feed) is unaffected. The
+rule exists for the early return you did not intend: a helper that swallowed
+an exception, or a C<last> that skipped the close, now shows up in the log
+instead of reporting a completed stream.
+
+=head3 WebSocket sessions end with a closing handshake
+
+After C<websocket.accept>, send C<websocket.close> or receive
+C<websocket.disconnect> before returning. Returning with neither is an
+incomplete response: the server sends a Close frame with code C<1011>
+("internal error"), closes the transport, reports C<server_error>, and logs
+the event. Previously the reference server closed the transport with no
+Close frame and reported a clean end while the client saw C<1006>.
+
+Before:
+
+    while (my $frame = await $receive->()) {
+        last if $frame->{type} eq 'websocket.disconnect';
+        last if ($frame->{text} // '') eq 'bye';
+        ...
+    }
+    return;
+
+After:
+
+    while (my $frame = await $receive->()) {
+        last if $frame->{type} eq 'websocket.disconnect';
+        if (($frame->{text} // '') eq 'bye') {
+            await $send->({ type => 'websocket.close', code => 1000 });
+            last;
+        }
+        ...
+    }
+    return;
+
+A loop that leaves only on C<websocket.disconnect> is unaffected.
+
 =head2 Framework authors
 
 =over 4
@@ -107,6 +166,13 @@ reflects it.
 Drop denial capability detection, bare-403 fallbacks, and any bridge that
 renamed HTTP response events to protocol-prefixed ones. Middleware that can
 refuse a request needs exactly one arm.
+
+=item *
+
+Handler objects that own a scope's lifetime send its terminal event when
+the handler returns: C<sse.close> after a started stream, C<websocket.close>
+with code C<1000> after an accepted socket that has no closing handshake yet.
+Applications built on them keep the shorter form.
 
 =item *
 
@@ -143,6 +209,16 @@ on C<sse> scopes before start, through your ordinary HTTP response path.
 Remove the protocol-prefixed refusal events and the
 C<websocket.http.response> extension advertisement. Fail C<websocket.close>
 before accept.
+
+=item *
+
+Treat an application return after C<sse.start> without C<sse.close>, or from
+an accepted WebSocket with no closing handshake, as an incomplete response:
+no end-of-stream marker on the application's behalf; on a WebSocket, a
+Close frame with code C<1011>, then transport teardown; C<server_error> on
+the object; C<websocket.disconnect> with code C<1011> and reason
+C<server_error>; an error-level log entry unless the client had already
+gone.
 
 =item *
 

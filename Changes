@@ -17,11 +17,18 @@
     along with the websocket.http.response extension. websocket.close before
     accept is an out-of-sequence send and fails.
   - sse.disconnect is documented as deliverable before sse.start.
+  - sse.close is the terminal event of a started SSE stream, and the
+    WebSocket closing handshake (websocket.close sent or websocket.disconnect
+    received) is the terminal event of an accepted socket. Returning without
+    them is an incomplete response; a WebSocket so abandoned is closed with
+    code 1011 and websocket.disconnect carries 1011 / server_error.
 
   [Documentation]
   - New PAGI::Upgrading with the 0.5 -> 0.6 guide for application authors,
     framework authors, and server implementers, and the known issue with
     mixed Accept headers.
+  - Tutorial SSE examples use the sub-spec's sse.start and sse.send event
+    names.
 
 0.002008 - 2026-09-01
 

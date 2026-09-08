@@ -383,22 +383,20 @@ you stop when the client closes:
 Using C<< Future::IO->sleep >> rather than C<sleep> keeps the handler
 non-blocking and loop-agnostic.
 
-=head2 Ending a stream: return vs C<sse.close>
+=head2 Ending a stream: C<sse.close>
 
-A stream ends in one of two ways, and they are B<identical on the wire> -- the
-server writes the end-of-stream marker and closes; the client cannot tell them
-apart. B<Return> after the final C<sse.send> and the server ends the stream when
-your handler's Future resolves:
+A started stream ends with C<sse.close>. It is the stream's terminal event,
+the SSE analog of the final C<http.response.body> with C<< more => 0 >>: the
+server flushes buffered events, writes the end-of-stream marker, and closes.
+It takes effect immediately -- before the handler returns -- so a helper deep
+in the call stack can stop the stream in place, and you can attach a
+server-side C<reason> for your logs and metrics. The C<reason> is never sent
+to the client (SSE has no close frame):
 
     for my $msg (@events) {
         await $send->({ type => 'sse.send', %$msg });
     }
-    return;   # server flushes buffered events and closes
-
-Or end it B<explicitly> with C<sse.close>. This ends the stream B<immediately --
-before the handler returns> -- so a helper deep in the call stack can stop the
-stream in place, and you can attach a server-side C<reason> for your logs and
-metrics. The C<reason> is never sent to the client (SSE has no close frame):
+    await $send->({ type => 'sse.close' });
 
     async sub stream_until_done {
         my ($send, $source) = @_;
@@ -409,6 +407,14 @@ metrics. The C<reason> is never sent to the client (SSE has no close frame):
         }
         await $send->({ type => 'sse.close', reason => 'source_drained' });
     }
+
+Returning after C<sse.start> without C<sse.close> is an B<incomplete
+response>: the server does not write the end-of-stream marker for you, it
+closes so the truncation is observable, C<on_disconnect> fires with
+C<server_error>, and the event is logged. An C<EventSource> client
+reconnects either way, so this is not for the client's benefit; it is so
+that a stream a helper abandoned early -- a swallowed exception, a C<last>
+that skipped the close -- is reported as what it is.
 
 After C<sse.close>, any further C<sse.send>/C<sse.comment>/C<sse.keepalive>
 raises, and a second C<sse.close> is a no-op. To tell the I<client> anything --

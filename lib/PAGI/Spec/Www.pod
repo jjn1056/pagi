@@ -28,7 +28,12 @@ response events before C<websocket.accept> or C<sse.start>; the
 C<websocket.http.response.*> and C<sse.http.response.*> events and the
 C<websocket.http.response> extension are removed; C<websocket.close> before
 accept fails. C<sse.disconnect> is delivered before C<sse.start> as well as
-after. See L<PAGI::Upgrading>.
+after. See L<PAGI::Upgrading>. C<sse.close> and the WebSocket closing
+handshake are the terminal events of their scopes: returning after
+C<sse.start> without C<sse.close>, or from an accepted WebSocket without
+sending C<websocket.close> or receiving C<websocket.disconnect>, is an
+incomplete response, and a WebSocket so abandoned is closed with code
+C<1011>.
 
 =item -
 
@@ -708,15 +713,19 @@ a valid C<http.response.start> refusing the handshake (see
 L</"Refusing the handshake">). Clean end: the server has finished its output
 of a refusal, or the accepted socket completed a closing handshake initiated
 by either side and its transport (its stream, on HTTP/2) closed without an
-abnormal end.
+abnormal end. The application's terminal act on an accepted socket is
+sending C<websocket.close> or receiving C<websocket.disconnect>; returning
+with neither is an incomplete response (see L</Application Left a Response
+Incomplete>).
 
 =item C<sse>
 
 C<response_started>: the server has accepted a valid C<sse.start>, or a
 valid C<http.response.start> refusing the stream (see L</"Refusing the
-stream">). Clean end: the server has finished its output of a refusal, or of
-a started stream that ended with C<sse.close> or with the application
-returning after C<sse.start>.
+stream">). Clean end: the server has finished its output of a refusal, or
+of a started stream that ended with C<sse.close>. C<sse.close> is the
+application's terminal act on a started stream; returning without it is an
+incomplete response (see L</Application Left a Response Incomplete>).
 
 =back
 
@@ -759,10 +768,12 @@ B<No response and incomplete.> Returning from a C<websocket> scope without
 C<websocket.accept> or a refusal, or from an C<sse> scope without
 C<sse.start> or a refusal, is governed by L</Application Produced No
 Response>, including its client-gone carve-out. Returning after a valid
-C<http.response.start> without the terminal body is an incomplete response
-under L</Application Left a Response Incomplete>, on every scope, refusals
-included. A started SSE stream that the application ends by returning after
-C<sse.start> is a clean end, as the C<sse> row above says.
+start without the scope's terminal event -- the terminal body or trailers
+after C<http.response.start> on any scope, refusals included; C<sse.close>
+after C<sse.start>; C<websocket.close> sent or C<websocket.disconnect>
+received after C<websocket.accept> -- is an incomplete response under
+L</Application Left a Response Incomplete>. Every scope has exactly one way
+to end cleanly from the application's side, and it is an explicit event.
 
 =head3 Example: Basic Connection Check
 
@@ -1344,11 +1355,33 @@ NOT log an error.
 =head3 Application Left a Response Incomplete
 
 A response is B<incomplete> when the application's Future becomes ready --
-resolves B<or fails with an exception> -- after C<http.response.start> was
-sent but before the response reached its terminal
-event: the final C<http.response.body> with C<< more => 0 >>, a C<file>/C<fh>
-body event, or -- when C<http.response.start> promised trailers with
-C<< trailers => 1 >> -- the C<http.response.trailers> event.
+resolves B<or fails with an exception> -- after a valid start was accepted
+but before the scope reached its terminal event. The start and the terminal
+event are per scope:
+
+=over
+
+=item -
+
+C<http> scope, and a refusal on any scope: after C<http.response.start>,
+the terminal event is the final C<http.response.body> with
+C<< more => 0 >>, a C<file>/C<fh> body event, or -- when
+C<http.response.start> promised trailers with C<< trailers => 1 >> -- the
+C<http.response.trailers> event.
+
+=item -
+
+C<sse> scope: after C<sse.start>, the terminal event is C<sse.close>.
+
+=item -
+
+C<websocket> scope: after C<websocket.accept>, the terminal event is
+C<websocket.close> sent by the application or C<websocket.disconnect>
+received by it. A closing handshake the peer initiated is completed by the
+server, so receiving the disconnect event is the application's whole
+obligation in that case.
+
+=back
 
 B<What the terminal event asserts.> The terminal event is the application's
 claim that the response is B<complete> in the sense of RFC 9110 Section 6.1 --
@@ -1357,6 +1390,13 @@ that claim on the wire as the zero-length chunk of the chunked coding
 (RFC 9112 Section 7.1) or as C<END_STREAM> (RFC 9113 Section 8.1). Everything
 below follows from that: the event is a statement about the representation,
 not a formality that ends a code path.
+
+The same holds on the other scopes. An SSE stream ends on the wire with the
+same chunked terminator or C<END_STREAM>, so a stream the application
+abandons has the same unfinished framing as an HTTP body. A WebSocket
+session ends with the closing handshake of RFC 6455 section 7.1, and a
+socket the application walks away from has no Close frame to tell the peer
+why it ended.
 
 The server MUST treat this as an B<abnormal end>, never a clean one. The
 governing principle: a truncated response must be B<observable as truncated>
@@ -1377,17 +1417,26 @@ as incomplete, and forbids answering a request with one).
 =item -
 
 MUST terminate the transport so the client observes truncation. Over
-HTTP/1.1 this means closing the connection without the chunk terminator (or,
-for a C<Content-Length>-framed response, before the declared length was
+HTTP/1.1, for an C<http> scope, a refusal, or an C<sse> stream, this means
+closing the connection without the chunk terminator (or, for a
+C<Content-Length>-framed response, before the declared length was
 delivered); the connection MUST NOT be kept alive or serve a pipelined
 request. Over HTTP/2 the server resets the stream (C<RST_STREAM>, e.g.
-C<INTERNAL_ERROR>); other streams on the connection are unaffected.
+C<INTERNAL_ERROR>); other streams on the connection are unaffected. On an
+accepted WebSocket the server sends a Close frame with code C<1011>
+("internal error"), waits no longer than its ordinary close timeout for
+the peer's Close, and then closes the transport (the stream, on HTTP/2).
+The C<1011> frame is the WebSocket analog of C<RST_STREAM>
+C<INTERNAL_ERROR>: an error signal, not the completion the application
+failed to assert.
 
 =item -
 
 MUST report the abnormal end on the C<pagi.connection> object: fire
 C<on_disconnect> with reason C<server_error>. C<on_complete> MUST NOT fire
--- the response was not fully delivered (see L</Connection State>).
+-- the response was not fully delivered (see L</Connection State>). The
+scope's disconnect event carries the same token; on an accepted WebSocket
+it is C<websocket.disconnect> with code C<1011> and reason C<server_error>.
 
 =item -
 
@@ -1948,6 +1997,14 @@ fault (C<1002> for a framing/protocol error, C<1007> for an invalid UTF-8
 payload) with C<reason> C<protocol_error>; a bounded-queue overflow closes with
 C<1008> and C<reason> C<queue_overflow>.
 
+=item *
+
+B<Application left the session incomplete> -- the application returned from
+an accepted socket without sending C<websocket.close> or receiving this
+event. C<code> is C<1011> ("internal error"), the code the server sent, and
+C<reason> is C<server_error> (see L</Application Left a Response
+Incomplete>).
+
 =back
 
 These pairings describe the reference server. The binding contract is only that
@@ -1994,6 +2051,12 @@ C<websocket.close> is valid only after C<websocket.accept>. Sent before
 accept it is an out-of-sequence event and the server MUST fail the
 C<$send> Future without mutating state; refusing a handshake is done with
 an HTTP response (see L</"Refusing the handshake">).
+
+After C<websocket.accept>, C<websocket.close> is the application's terminal
+event: send it, or receive C<websocket.disconnect>, before returning.
+Returning from an accepted socket with neither is an incomplete response
+(see L</Application Left a Response Incomplete>): the server closes with
+code C<1011>, not C<1000>.
 
 =head3 WebSocket Protocol Enforcement
 
@@ -2296,10 +2359,11 @@ C<data> is the one field that legitimately contains newlines: the server splits 
 on newlines and emits one C<data:> line per segment, preserving multi-line
 payloads.
 
-To end the SSE stream the application either returns after its final C<sse.send>,
-or sends C<sse.close> explicitly (see L</Close SSE - C<send> event>). On return the
-server flushes buffered events and closes the HTTP connection; C<sse.close> does
-the same immediately, decoupled from the application returning.
+To end the SSE stream the application sends C<sse.close> (see L</Close SSE -
+C<send> event>); the server then flushes buffered events, writes the
+end-of-stream marker, and closes the stream. Returning after C<sse.start>
+without C<sse.close> is an incomplete response (see L</Application Left a
+Response Incomplete>).
 
 =head3 SSE Comment - C<send> event
 
@@ -2376,13 +2440,17 @@ B<Example:>
 
 =head3 Close SSE - C<send> event
 
-C<sse.close> ends the SSE stream explicitly. It is the SSE analog of
-C<http.response.body> with C<<< more => 0 >>>: the server flushes any buffered
-events, writes the end-of-stream marker, and closes the stream. An application
-B<may> end a stream either by returning after its final C<sse.send> or by sending
-C<sse.close>; the latter is the explicit form and ends the stream B<immediately>,
-decoupled from the application returning -- which lets a helper deep in the call
-stack end the stream without unwinding to the top.
+C<sse.close> ends the SSE stream. It is the SSE analog of
+C<http.response.body> with C<<< more => 0 >>>, and like that event it is the
+stream's terminal event: the server flushes any buffered events, writes the
+end-of-stream marker, and closes the stream. It takes effect B<immediately>
+on receipt, before the application returns, which lets a helper deep in the
+call stack end the stream without unwinding to the top; a subsequent return
+is a no-op. An application that returns after C<sse.start> without having
+sent C<sse.close> has left the response incomplete (see L</Application Left
+a Response Incomplete>): the server MUST NOT write the end-of-stream marker
+on its behalf, terminates the stream so the client observes truncation,
+reports C<server_error> on the connection object, and logs the event.
 
 =over
 
@@ -2412,34 +2480,13 @@ Unlike C<websocket.close>, C<sse.close> carries B<no> code or client-visible
 reason: WebSocket has an RFC 6455 close frame to carry them, while SSE has no such
 frame on the wire.
 
-B<Return vs C<sse.close>.> Both terminate the stream and are B<identical on the
-wire>: the server writes the end-of-stream marker (the chunked terminator over
-HTTP/1.1, C<END_STREAM> over HTTP/2) and closes the stream. A client cannot tell
-which path was taken -- C<sse.close> adds nothing to the wire, since its C<reason>
-never leaves the server. They differ only in who signals the end, when, and with
-what server-side metadata:
-
-=over
-
-=item -
-
-B<Return> sends no end-event: the server infers completion from the application's
-returned Future resolving and tears the stream down then. The end is tied to the
-application returning.
-
-=item -
-
-B<C<sse.close>> is an explicit C<send> event: the server tears the stream down
-B<immediately> on receipt, B<before> the application returns. This lets a helper
-deep in the call stack end the stream in place (without unwinding to a return),
-frees the client's connection ahead of any slow post-close cleanup the application
-still has to perform, and records the C<reason> for the server's access log. After
-C<sse.close>, further sends raise (see above) and a subsequent return is a no-op.
-
-=back
-
-When the application's final act is its last C<sse.send> immediately followed by a
-return, the two paths are equivalent apart from the server-side C<reason>.
+B<Why return is not a close.> An C<EventSource> client reconnects after any
+end of stream, clean or truncated, so the difference between C<sse.close>
+and a bare return is invisible in a browser. It is visible where it matters:
+in the server's log, on the connection object, and to every intermediary
+that wraps C<$send>. A stream that ends because a helper returned early --
+an exception it swallowed, a C<last> that skipped the close -- is reported
+as what it is, an incomplete response, rather than as a completed one.
 
 =head3 SSE Disconnect - C<receive> event
 
@@ -2730,7 +2777,9 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 C<0.6> (Draft): Universal connection state (C<pagi.connection> on every
 scope, C<abort>, C<disconnect_detail>, C<app_abort>); refusals as ordinary
 HTTP responses; C<websocket.close> before accept fails; C<sse.disconnect>
-timing.
+timing; C<sse.close> and the WebSocket closing handshake required as terminal
+events (return without them is an incomplete response; WebSocket closed
+with C<1011>).
 
 =item -
 
