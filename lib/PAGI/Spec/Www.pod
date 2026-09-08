@@ -459,7 +459,7 @@ L</State Transition Order> cannot be performed on it.
 
 B<C<abort($detail)>> - Requests that the server end this scope's transport
 now: close the connection on HTTP/1.1, reset only this stream
-(C<RST_STREAM>) on HTTP/2. C<abort> returns immediately with no meaningful
+(C<RST_STREAM>, e.g. C<CANCEL>) on HTTP/2. C<abort> returns immediately with no meaningful
 value; it is not awaitable and MUST NOT wait for an in-flight write to
 drain, since that write may be blocked by the peer. The server MUST then
 follow L</State Transition Order> exactly as for a transport-detected
@@ -471,7 +471,11 @@ and treat later sends as post-close no-ops. C<on_complete> does not fire. The
 server MUST NOT log an incomplete-response or no-response error for an
 aborted scope. C<abort> after either terminal outcome is a no-op that
 preserves that outcome. It is valid on every scope, before or after
-C<websocket.accept> or C<sse.start>.
+C<websocket.accept> or C<sse.start>. Before accept or start it ends the
+handshake with no HTTP response: the client observes a failed connection,
+not a status, and a reconnecting client may retry. An application that
+wants the client to know why refuses instead (see L</"Refusing the
+handshake"> and L</"Refusing the stream">).
 
     $conn->abort("quota exceeded after $sent bytes");
 
@@ -1985,9 +1989,10 @@ The server does not substitute a PAGI token in this case.
 =item *
 
 B<Abnormal drop with no close handshake> -- a bare TCP FIN, a timeout, or a write
-failure. C<code> is C<1006> ("abnormal closure") and C<reason> is the token for
-the condition: C<client_closed>, C<keepalive_timeout>, C<write_timeout>,
-C<write_error>, or C<server_shutdown>.
+failure, before or after accept, or an C<abort>. C<code> is C<1006> ("abnormal
+closure") and C<reason> is the token for the condition: C<client_closed>,
+C<keepalive_timeout>, C<write_timeout>, C<write_error>, C<server_shutdown>,
+or C<app_abort>.
 
 =item *
 

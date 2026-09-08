@@ -55,7 +55,9 @@ C<< $conn->abort($detail) >> ends the scope's transport deliberately. The
 scope ends abnormally with token C<app_abort>, later sends are no-ops, and
 the server logs no error. Use it where you previously had no honest option:
 a middleware cutting off a stream that exceeded a quota, a handler giving
-up on a client.
+up on a client. Before C<websocket.accept> or C<sse.start> it ends the
+handshake with no HTTP response, so the client sees a failed connection and
+may retry; to tell the client why, refuse with an HTTP response instead.
 
 =head3 Refusing a WebSocket handshake or an SSE stream
 
