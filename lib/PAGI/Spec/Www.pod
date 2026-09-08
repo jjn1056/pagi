@@ -6,7 +6,7 @@ PAGI::Spec::Www - PAGI message formats for HTTP, WebSocket, and SSE
 
 =head1 HTTP, WebSocket & SSE PAGI Message Format
 
-B<Version>: 0.3 (Draft)
+B<Version>: 0.6 (Draft)
 
 The HTTP, WebSocket & SSE PAGI sub-specification defines how HTTP/1.1, HTTP/2, WebSocket, and Server-Sent Events (SSE) connections are transported within PAGI.
 
@@ -278,7 +278,7 @@ Check for key existence before assuming middleware ran
 
 =head2 Connection State
 
-The C<pagi.connection> scope key provides a mechanism for applications to detect client disconnection B<without consuming messages from the receive queue>. This addresses a fundamental limitation where checking for disconnect via C<receive()> may inadvertently consume request body data.
+The C<pagi.connection> scope key provides a mechanism for applications to detect client disconnection B<without consuming messages from the receive queue>. This addresses a fundamental limitation where checking for disconnect via C<receive()> consumes whatever the scope's queue holds next -- request body on an C<http> scope, C<websocket.connect> or a message on a C<websocket> scope, C<sse.request> on an C<sse> scope.
 
 =head3 The Problem
 
@@ -394,7 +394,8 @@ and eliminates the hazard class, while the synchronous facts stay immediate
 for polling code.
 
 B<C<response_started()>> - Returns true once B<this request's> response has started
--- that is, once C<http.response.start> has been emitted for this scope -- and false
+-- that is, once C<http.response.start> has been emitted for this scope (see
+L</Meaning per scope> for the C<websocket> and C<sse> equivalents) -- and false
 before. The server sets it when it processes the response-start event, so it is true no
 matter who produced the response: the application, a framework, a middleware that
 short-circuited the request, or a B<server-synthesized error/backstop response>
@@ -426,7 +427,8 @@ delivered.
 
 B<C<response_complete()>> - Returns true once B<this request's> response body has
 been fully sent -- the terminal C<http.response.body> with C<<< more => 0 >>>, a
-C<file>/C<fh> response, or the final trailers -- false while a response is still
+C<file>/C<fh> response, or the final trailers (see L</Meaning per scope> for the
+C<websocket> and C<sse> equivalents) -- false while a response is still
 streaming or has not started. It is a boolean: true only after a clean end,
 false while the scope is active and after an abnormal end. The synchronous
 counterpart to C<on_complete>, and read-only to the application.
@@ -502,11 +504,9 @@ per-request scoping is identical, so nothing here changes.
 
 =back
 
-The C<response_started> / C<response_complete> flags are defined for the C<http>
-scope only. B<SSE> is treated as its own scope type (C<< type => 'sse' >>) even
-though it is really a long-lived response over HTTP: it begins with C<sse.start>
-rather than C<http.response.start>, so these HTTP flags do not apply to it. An
-SSE-specific equivalent may be defined later if a need arises.
+The C<response_started> / C<response_complete> flags are defined on every
+C<http>, C<websocket>, and C<sse> scope; see L</Meaning per scope> for what a
+start and a clean end are on each.
 
 =head3 Standard Disconnect Reasons
 
@@ -596,21 +596,17 @@ MUST implement C<is_connected()>, C<disconnect_reason()>, C<disconnect_detail()>
 
 =item 3.
 
-MUST implement C<on_complete()> and C<disconnect_future()>
+MUST fire C<on_disconnect> callbacks B<only> on abnormal disconnect, and C<on_complete> callbacks B<only> on successful completion -- never both for the same request
 
 =item 4.
 
-MUST fire C<on_disconnect> callbacks B<only> on abnormal disconnect, and C<on_complete> callbacks B<only> on successful completion -- never both for the same request
+MUST update connection state as soon as disconnect is detected
 
 =item 5.
 
-MUST update connection state as soon as disconnect is detected
-
-=item 6.
-
 MUST use standard reason strings where applicable
 
-=item 7.
+=item 6.
 
 MUST NOT transition C<is_connected()> back to true once false (one-way transition)
 
@@ -632,7 +628,7 @@ Set C<disconnect_reason()> to return the reason string
 
 =item 3.
 
-Resolve C<disconnect_future()> with the reason (if provided)
+Resolve C<disconnect_future()> with the reason
 
 =item 4.
 
@@ -763,8 +759,10 @@ B<No response and incomplete.> Returning from a C<websocket> scope without
 C<websocket.accept> or a refusal, or from an C<sse> scope without
 C<sse.start> or a refusal, is governed by L</Application Produced No
 Response>, including its client-gone carve-out. Returning after a valid
-start without the terminal body is an incomplete response under
-L</Application Left a Response Incomplete>, on every scope.
+C<http.response.start> without the terminal body is an incomplete response
+under L</Application Left a Response Incomplete>, on every scope, refusals
+included. A started SSE stream that the application ends by returning after
+C<sse.start> is a clean end, as the C<sse> row above says.
 
 =head3 Example: Basic Connection Check
 
@@ -819,17 +817,14 @@ double-unlink.
         my ($scope, $receive, $send) = @_;
         my $conn = $scope->{'pagi.connection'};
 
-        my $disconnect_future = $conn->disconnect_future;
         my $event_future = wait_for_event();
 
-        if ($disconnect_future) {
-            # Race: wait for event OR disconnect
-            await Future->wait_any($disconnect_future, $event_future);
+        # Race: wait for event OR disconnect
+        await Future->wait_any($conn->disconnect_future, $event_future);
 
-            return unless $conn->is_connected;
-        }
+        return unless $conn->is_connected;
 
-        my $event = $event_future->get;
+        my $event = await $event_future;
         await send_response($send, $event);
     }
 
@@ -973,7 +968,7 @@ C<state> (HashRef, optional) -- A shallow copy of the lifespan C<state> namespac
 
 =item -
 
-C<pagi.connection> (Object) -- Per-request connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>). See L</Connection State> below.
+C<pagi.connection> (Object) -- Per-request connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>). See L</Connection State>.
 
 =item -
 
@@ -1722,6 +1717,10 @@ C<state> (HashRef, optional)
 
 =item -
 
+C<pagi.connection> (Object) -- Per-session connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>). See L</Connection State>.
+
+=item -
+
 C<pagi.transport> (Object, optional) -- Outbound flow-control introspection handle, when the server provides one. See L</Transport Flow Control>.
 
 =item -
@@ -1795,6 +1794,9 @@ C<subprotocol> (String, optional)
 C<headers> (ArrayRef[ArrayRef[Bytes]], optional)
 
 =back
+
+The alternative to accepting is to refuse the handshake with an ordinary HTTP
+response; see L</"Refusing the handshake">.
 
 =head4 Receive - C<receive> event
 
@@ -1909,6 +1911,14 @@ C<code> (Int) -- WebSocket close code per RFC 6455. When the peer sent a close f
 C<reason> (String, default empty) -- For a server-detected abnormal close, the matching standard token from L</Standard Disconnect Reasons>. When the peer sent the Close frame, this is the peer's own reason text, which MAY be empty.
 
 =back
+
+This event is delivered whenever the C<websocket> scope ends abnormally, before
+as well as after C<websocket.accept>: a client that drops during the handshake,
+or an C<abort> before accept, produces it with code C<1006> and the standard
+reason token for the condition. A normally completed refusal (see
+L</"Refusing the handshake">) delivers none. An C<abort> on an accepted socket
+sends no Close frame -- the server ends the transport -- and delivers this event
+with code C<1006> and reason C<app_abort>.
 
 The C<code> carries the RFC 6455 close code and C<reason> supplements it with a
 standard token (see L</Standard Disconnect Reasons>), so an application can branch
@@ -2062,10 +2072,11 @@ handshake by answering it with an ordinary HTTP response using the HTTP
 response events: C<http.response.start>, C<http.response.body>, and
 C<http.response.trailers> where the start declared them, with exactly the
 semantics those events have on an C<http> scope (see L</HTTP>). This is the
-single exception to the rule that a scope carries only its own namespace's
-events. On the wire the refusal is byte-identical to the same response on
-an C<http> scope. Every server offering C<websocket> scopes MUST support it;
-there is nothing to advertise or detect.
+one place where a scope carries events from another protocol's namespace,
+and it exists because the wire really is HTTP until the C<101>. On the wire
+the refusal is byte-identical to the same response on an C<http> scope. Every
+server offering C<websocket> scopes MUST support it; there is nothing to
+advertise or detect.
 
     await $send->({ type => 'http.response.start', status => 401,
                     headers => [['www-authenticate', 'Bearer realm="ws"'],
@@ -2091,7 +2102,12 @@ C<websocket.accept>, HTTP response events MUST fail the C<$send> Future
 without transmitting anything, the same fail-don't-mutate rule as every
 other out-of-sequence send. A normally completed refusal is a clean end
 (see L</Meaning per scope>): the WebSocket was never established, so no
-C<websocket.disconnect> is delivered.
+C<websocket.disconnect> is delivered. Because the refusal is an ordinary HTTP
+response, what happens to the connection after it is the transport's ordinary
+business: on HTTP/1.1 the server keeps the connection alive or closes it
+exactly as it would after the same response on an C<http> scope, honouring the
+response's own framing and C<Connection> header; on HTTP/2 only this stream
+ends.
 
 =head2 Server-Sent Events (SSE)
 
@@ -2151,7 +2167,7 @@ Routing based on URL or application logic is not used to infer SSE.
 
 =head3 SSE Connection Scope
 
-SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, C<pagi.transport> where provided, and C<extensions>) but set C<<< type => 'sse' >>>. Header casing rules follow the HTTP section.
+SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, C<pagi.connection>, C<pagi.transport> where provided, and C<extensions>) but set C<<< type => 'sse' >>>. C<pagi.connection> is the per-stream connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>); see L</Connection State>. Header casing rules follow the HTTP section.
 
 =head3 Request Body - C<receive> event
 
@@ -2222,9 +2238,11 @@ events C<http.response.start>, C<http.response.body>, and
 C<http.response.trailers>, with exactly the semantics those events have on
 an C<http> scope (see L</HTTP>): a C<404> for an unknown endpoint, a
 C<401>/C<403> for an unauthenticated request, a C<204> to tell an
-C<EventSource> client to stop reconnecting, a redirect. This is the same
-exception to namespace sealing as L</"Refusing the handshake">, and on the
-wire the refusal is byte-identical to the same response on an C<http> scope.
+C<EventSource> client to stop reconnecting, a redirect. This carries events
+from another protocol's namespace for the same reason as
+L</"Refusing the handshake">, and on the wire the refusal is byte-identical
+to the same response on an C<http> scope. Every server offering C<sse> scopes
+MUST support it; there is nothing to advertise or detect.
 
 Body semantics, including C<< more => 1 >> streaming, C<file>, C<fh>, and
 trailers, are inherited from L</HTTP> and not restated here; the note under
@@ -2234,7 +2252,9 @@ C<http.response.start> are mutually exclusive: after C<sse.start>, HTTP
 response events MUST fail; after a refusal has started, the stream events
 (C<sse.send>, C<sse.comment>, C<sse.keepalive>, C<sse.close>) MUST fail. A
 normally completed refusal is a clean end (see L</Meaning per scope>): no
-event stream was started and no C<sse.disconnect> is delivered.
+event stream was started and no C<sse.disconnect> is delivered, and what
+happens to the connection afterwards is the transport's ordinary business,
+as under L</"Refusing the handshake">.
 
 =head3 Send SSE - C<send> event
 
