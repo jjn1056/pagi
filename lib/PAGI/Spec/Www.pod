@@ -2122,8 +2122,8 @@ types (a client that accepts both C<text/event-stream> and C<text/html>,
 say) is the application's business, and fuller RFC 9110 content negotiation
 MAY be layered on as middleware. When the boolean signal classifies a
 request as C<sse> that the application would rather answer with an ordinary
-HTTP response, the decline mechanism (see L</Decline SSE - C<send> event>)
-is the correction path.
+HTTP response, an ordinary HTTP response (see L</"Refusing the stream">) is
+the correction path.
 
 B<Middleware note:> because C<http> and C<sse> are sibling scope types for
 what is on the wire an ordinary HTTP request, middleware that filters on
@@ -2199,65 +2199,28 @@ sends C<Connection: keep-alive> and frames the stream with chunked
 C<Transfer-Encoding>; HTTP/2 multiplexes and DATA-frames the stream, so those
 connection-specific headers do not apply. Applications need not set any of these.
 
-=head3 Decline SSE - C<send> event
+=head3 Refusing the stream
 
-An C<sse> request is an ordinary HTTP C<GET> with C<Accept: text/event-stream>;
-the server classifies it as an C<sse> scope before the application runs. Instead
-of starting an event stream, an application B<may> decline and return a normal
-HTTP response -- a C<404> for an unknown endpoint, a C<401>/C<403> for an
-unauthenticated request, a C<204> to tell an C<EventSource> client to stop
-reconnecting, a redirect, and so on. It sends two events B<in place of>
-C<sse.start>, valid only before the stream has started:
+An C<sse> request is an ordinary HTTP request until the application sends
+C<sse.start>. Instead of starting an event stream, the application MAY
+refuse by answering with an ordinary HTTP response using the HTTP response
+events C<http.response.start>, C<http.response.body>, and
+C<http.response.trailers>, with exactly the semantics those events have on
+an C<http> scope (see L</HTTP>): a C<404> for an unknown endpoint, a
+C<401>/C<403> for an unauthenticated request, a C<204> to tell an
+C<EventSource> client to stop reconnecting, a redirect. This is the same
+exception to namespace sealing as L</"Refusing the handshake">, and on the
+wire the refusal is byte-identical to the same response on an C<http> scope.
 
-=over
-
-=item -
-
-B<C<sse.http.response.start>> -- C<{ status (Int), headers (ArrayRef[ArrayRef[Bytes]]) }>,
-structured exactly like C<http.response.start>.
-
-=item -
-
-B<C<sse.http.response.body>> -- C<{ body (Bytes, default ""), more (Int, default 0) }>,
-structured exactly like C<http.response.body>; set C<<< more => 1 >>> to send the
-body in multiple events.
-
-=back
-
-These events are namespaced under C<sse.> -- mirroring the
-C<websocket.http.response> denial events -- so that an C<sse> scope only ever
-carries C<sse.*> events, keeping the server's per-scope dispatch and any
-event-type-aware middleware scope-separated.
-
-The server sends the resulting HTTP response and closes the connection; no event
-stream is started and no C<sse.disconnect> is delivered. This is a
-B<first-send-wins> choice: after C<sse.start>, C<sse.http.response.*> events are
-invalid and MUST raise; after C<sse.http.response.start>, the stream events
-(C<sse.send> / C<sse.comment> / C<sse.keepalive> / C<sse.close>) are invalid and
-MUST raise.
-
-Unlike the WebSocket denial response -- an optional extension with a
-C<websocket.close> fallback -- declining an SSE request is a B<core> capability:
-there is no event-stream fallback, so every conforming server MUST support it.
-
-    # Decline an unauthenticated SSE request with a 401 instead of streaming:
-    if (!authorized($scope)) {
-        await $send->({
-            type    => 'sse.http.response.start',
-            status  => 401,
-            headers => [
-                [ 'content-type',     'text/plain' ],
-                [ 'www-authenticate', 'Bearer' ],
-            ],
-        });
-        await $send->({ type => 'sse.http.response.body', body => 'Unauthorized' });
-        return;
-    }
-    await $send->({ type => 'sse.start', status => 200 });
-
-A C<204 No Content> (or any non-C<200>) response is the supported way to stop an
-C<EventSource> client's reconnection loop: the client treats it as a terminal
-failure and does not reconnect.
+Body semantics, including C<< more => 1 >> streaming, C<file>, C<fh>, and
+trailers, are inherited from L</HTTP> and not restated here; the note under
+L</"Refusing the handshake"> about committed status, abandoned refusals,
+and partial delivery applies equally. C<sse.start> and the refusal's
+C<http.response.start> are mutually exclusive: after C<sse.start>, HTTP
+response events MUST fail; after a refusal has started, the stream events
+(C<sse.send>, C<sse.comment>, C<sse.keepalive>, C<sse.close>) MUST fail. A
+normally completed refusal is a clean end (see L</Meaning per scope>): no
+event stream was started and no C<sse.disconnect> is delivered.
 
 =head3 Send SSE - C<send> event
 
@@ -2444,7 +2407,10 @@ return, the two paths are equivalent apart from the server-side C<reason>.
 
 =head3 SSE Disconnect - C<receive> event
 
-Sent to the application if the client disconnects or if the server shuts down the SSE stream after C<sse.start>.
+Sent to the application when the client disconnects at any point after the
+C<sse> scope was dispatched, whether or not C<sse.start> has been sent, and
+when the server shuts down a started event stream. A normally completed
+refusal (see L</"Refusing the stream">) delivers no C<sse.disconnect>.
 
 =over
 
