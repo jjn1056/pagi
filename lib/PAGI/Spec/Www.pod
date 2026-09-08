@@ -18,6 +18,20 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 =item -
 
+C<0.6>: C<pagi.connection> is provided on every C<http>, C<websocket>, and
+C<sse> scope, with every accessor required, plus C<abort($detail)>,
+C<disconnect_detail>, the C<app_abort> reason, a per-scope definition of
+started, clean end, and abnormal end, and the rule that the object's reason
+and a scope's disconnect event carry the same token. Refusing a WebSocket
+handshake or an SSE stream is an ordinary HTTP response sent with the HTTP
+response events before C<websocket.accept> or C<sse.start>; the
+C<websocket.http.response.*> and C<sse.http.response.*> events and the
+C<websocket.http.response> extension are removed; C<websocket.close> before
+accept fails. C<sse.disconnect> is delivered before C<sse.start> as well as
+after. See L<PAGI::Upgrading>.
+
+=item -
+
 C<0.5>: Constrained what a response body may contain and what an intermediary
 may do to one. A response's body is B<either> a sequence of inline C<body>
 events B<or> a single C<file>/C<fh> event, never both; an application MUST NOT
@@ -911,7 +925,7 @@ C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.5'>). Optional; if omitted, assume C<'0.1'>.
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this HTTP sub-specification (e.g. C<'0.6'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -2121,9 +2135,9 @@ representation does the client prefer?". Preference ranking among acceptable
 types (a client that accepts both C<text/event-stream> and C<text/html>,
 say) is the application's business, and fuller RFC 9110 content negotiation
 MAY be layered on as middleware. When the boolean signal classifies a
-request as C<sse> that the application would rather answer with an ordinary
-HTTP response, an ordinary HTTP response (see L</"Refusing the stream">) is
-the correction path.
+request as C<sse> that the application would rather answer as plain HTTP,
+an ordinary HTTP response (see L</"Refusing the stream">) is the correction
+path.
 
 B<Middleware note:> because C<http> and C<sse> are sibling scope types for
 what is on the wire an ordinary HTTP request, middleware that filters on
@@ -2688,6 +2702,13 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 =head2 Version History
 
 =over
+
+=item -
+
+C<0.6> (Draft): Universal connection state (C<pagi.connection> on every
+scope, C<abort>, C<disconnect_detail>, C<app_abort>); refusals as ordinary
+HTTP responses; C<websocket.close> before accept fails; C<sse.disconnect>
+timing.
 
 =item -
 
