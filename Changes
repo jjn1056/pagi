@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002009 - UNRELEASED
+0.002009 - 2026-09-08
 
   [Specification]
   - HTTP/WebSocket/SSE sub-spec 0.5 -> 0.6. New requirements, not
