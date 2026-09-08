@@ -1644,7 +1644,7 @@ C<type> -- C<"http.disconnect">
 
 =head2 WebSocket
 
-WebSocket servers handle fragmentation and PING/PONG messages. Servers MUST wait for a reply to C<websocket.connect> before completing the handshake. If C<websocket.close> is sent instead of C<websocket.accept>, the server MUST reject the connection with HTTP 403.
+WebSocket servers handle fragmentation and PING/PONG messages. Servers MUST wait for a reply to C<websocket.connect> before completing the handshake.
 
 =head3 WebSocket Connection Scope
 
@@ -1660,7 +1660,7 @@ C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0
 
 =item -
 
-C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.5'>). Optional; if omitted, assume C<'0.1'>.
+C<< $scope->{pagi}{spec_version} >> (String) -- The version of this WebSocket sub-specification (e.g. C<'0.6'>). Optional; if omitted, assume C<'0.1'>.
 
 =item -
 
@@ -1730,7 +1730,7 @@ sheds the session.
 
 =item -
 
-C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>, C<websocket.http.response>). See L<PAGI::Spec::Extensions>.
+C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>). See L<PAGI::Spec::Extensions>.
 
 =back
 
@@ -1966,6 +1966,11 @@ C<reason> (String, default empty)
 
 =back
 
+C<websocket.close> is valid only after C<websocket.accept>. Sent before
+accept it is an out-of-sequence event and the server MUST fail the
+C<$send> Future without mutating state; refusing a handshake is done with
+an HTTP response (see L</"Refusing the handshake">).
+
 =head3 WebSocket Protocol Enforcement
 
 A conforming server enforces the framing rules of RFC 6455 and fails the
@@ -2035,71 +2040,44 @@ WebSocket C<Close> frame carries its own code and reason as on HTTP/1.1.
 Servers that do not implement RFC 8441 simply never produce a C<websocket> scope
 over HTTP/2; applications need not distinguish the two cases.
 
-=head3 WebSocket Denial Response (extension)
+=head3 Refusing the handshake
 
-By default an application rejects a handshake by sending C<websocket.close>
-before C<websocket.accept>, and the server replies with a bare
-C<403 Forbidden>. The B<denial response> extension lets the application reject
-with a B<custom> HTTP response instead -- a C<401> with a C<WWW-Authenticate>
-header, a C<429> with C<Retry-After>, a redirect, a JSON error body, and so on.
-It mirrors ASGI's C<websocket.http.response> extension.
+Until the application sends C<websocket.accept>, a C<websocket> scope is an
+HTTP exchange (RFC 6455 section 4.2.2), and the application MAY refuse the
+handshake by answering it with an ordinary HTTP response using the HTTP
+response events: C<http.response.start>, C<http.response.body>, and
+C<http.response.trailers> where the start declared them, with exactly the
+semantics those events have on an C<http> scope (see L</HTTP>). This is the
+single exception to the rule that a scope carries only its own namespace's
+events. On the wire the refusal is byte-identical to the same response on
+an C<http> scope. Every server offering C<websocket> scopes MUST support it;
+there is nothing to advertise or detect.
 
-A server that supports it advertises C<<< extensions->{'websocket.http.response'} >>>
-as an empty hashref on the C<websocket> scope. To deny, the application sends two
-events B<in place of> C<websocket.accept>, only valid before the connection is
-accepted:
+    await $send->({ type => 'http.response.start', status => 401,
+                    headers => [['www-authenticate', 'Bearer realm="ws"'],
+                                ['content-type', 'application/problem+json']] });
+    await $send->({ type => 'http.response.body', body => '{"title":"sign in"}' });
 
-=over
+Body semantics are inherited, not restated. A first body event with
+C<< more => 0 >> is a complete body the server may frame with
+Content-Length; C<< more => 1 >> streams under the transport's ordinary
+body, flow-control, and framing rules; C<file>, C<fh>, and trailers are
+allowed because they are allowed on HTTP responses. Nothing is buffered
+specially. Prefer a complete body for a refusal: once the first body event
+is accepted the status and headers are committed; a refusal abandoned after
+its start without the terminal body is an incomplete response under
+L</Application Left a Response Incomplete>, with that section's client-gone
+carve-out; and, as with any streamed body, a client that disconnects
+mid-stream may have received part of it.
 
-=item -
-
-B<C<websocket.http.response.start>> -- C<{ status (Int), headers (ArrayRef[ArrayRef[Bytes]]) }>,
-structured exactly like C<http.response.start>.
-
-=item -
-
-B<C<websocket.http.response.body>> -- C<{ body (Bytes, default ""), more (Int, default 0) }>,
-structured exactly like C<http.response.body> (only the C<body> form applies;
-C<file>/C<fh> are not used for denial responses); set C<<< more => 1 >>> to send
-the body in multiple events.
-
-=back
-
-The server sends the resulting HTTP response and then closes the connection; the
-WebSocket is never established, so no C<websocket.disconnect> is delivered. After
-C<websocket.accept> these events are invalid and the server MUST fail the
-C<$send> Future without transmitting anything or disturbing the established
-WebSocket -- the same fail-don't-mutate rule as every other out-of-sequence
-send.
-
-    # Reject the handshake with a custom 401 instead of a bare 403:
-    my $connect = await $receive->();   # websocket.connect
-    if (!authorized($scope)) {
-        await $send->({
-            type    => 'websocket.http.response.start',
-            status  => 401,
-            headers => [
-                [ 'content-type',     'application/json' ],
-                [ 'www-authenticate', 'Bearer' ],
-            ],
-        });
-        await $send->({
-            type => 'websocket.http.response.body',
-            body => '{"error":"unauthorized"}',
-        });
-        return;
-    }
-    await $send->({ type => 'websocket.accept' });
-
-Applications SHOULD check for the extension and fall back to C<websocket.close>
-when it is absent:
-
-    if ($scope->{extensions}{'websocket.http.response'}) { ... deny with a response ... }
-    else                                                 { await $send->({ type => 'websocket.close' }) }
-
-The C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
-C<< $ws->deny(status => 401, headers => [...], body => ...) >>, falling back to a
-plain close when the server does not advertise the extension.
+C<websocket.accept> and the refusal's C<http.response.start> are the only
+handshake choices and are mutually exclusive. After a refusal has started,
+only HTTP response events are valid until its terminal event; after
+C<websocket.accept>, HTTP response events MUST fail the C<$send> Future
+without transmitting anything, the same fail-don't-mutate rule as every
+other out-of-sequence send. A normally completed refusal is a clean end
+(see L</Meaning per scope>): the WebSocket was never established, so no
+C<websocket.disconnect> is delivered.
 
 =head2 Server-Sent Events (SSE)
 
