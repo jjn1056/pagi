@@ -399,8 +399,6 @@ A streaming response counts as started for its whole lifetime: C<response_starte
 becomes true at C<http.response.start> and stays true while body chunks flow. Use
 C<response_complete> to learn when the body has actually finished.
 
-Servers SHOULD also provide:
-
 B<C<on_complete($callback)>> - Registers a callback invoked B<only when the request completes successfully> (the response was fully delivered without the client disconnecting). The counterpart to C<on_disconnect>.
 
     $conn->on_complete(sub {
@@ -415,26 +413,15 @@ delivered.
 B<C<response_complete()>> - Returns true once B<this request's> response body has
 been fully sent -- the terminal C<http.response.body> with C<<< more => 0 >>>, a
 C<file>/C<fh> response, or the final trailers -- false while a response is still
-streaming or has not started, and B<C<undef> if the server does not track
-completion>. The synchronous counterpart to C<on_complete>, and read-only to the
-application. As with C<disconnect_future>, test C<defined> to learn whether the
-feature is available before relying on it.
+streaming or has not started. It is a boolean: true only after a clean end,
+false while the scope is active and after an abnormal end. The synchronous
+counterpart to C<on_complete>, and read-only to the application.
 
-    my $done = $conn->response_complete;   # undef = unsupported, else 0 or 1
+    my $done = $conn->response_complete;   # Boolean, synchronous
 
-This accessor is B<SHOULD>, not MUST, on purpose. "The body has been fully sent"
-is not always a crisp instant: buffering, HTTP/2 flow-control windows, and
-intermediaries can blur exactly when the last byte reaches the client, so some
-servers cannot report completion precisely. The load-bearing fact -- whether a
-response B<started> -- is the MUST (C<response_started>); completion is a
-convenience layered on top, which is also why it shares the SHOULD level of its
-callback form C<on_complete>. A future revision may promote both to MUST if
-implementation experience shows the timing can be pinned down reliably across
-transports.
+B<C<disconnect_future()>> - Returns a Future that resolves, with the reason, on abnormal disconnect -- useful for racing against long-running work, e.g. C<< Future->wait_any($work, $conn->disconnect_future) >>.
 
-B<C<disconnect_future()>> - Returns a Future that resolves, with the reason, on abnormal disconnect -- useful for racing against long-running work, e.g. C<< Future->wait_any($work, $conn->disconnect_future) >>. Returns C<undef> if not supported.
-
-    my $future = $conn->disconnect_future;  # Future or undef
+    my $future = $conn->disconnect_future;  # Future, resolves on abnormal disconnect
     my $reason = await $future;
 
 Each returned Future MUST be B<cancellation-isolated>: cancelling it --
@@ -453,18 +440,24 @@ B<C<abort($detail)>> - Requests that the server end this scope's transport
 now: close the connection on HTTP/1.1, reset only this stream
 (C<RST_STREAM>) on HTTP/2. C<abort> returns immediately with no meaningful
 value; it is not awaitable and MUST NOT wait for an in-flight write to
-drain, since that write may be blocked by the peer. The server MUST then,
-in the order given by L</State Transition Order>: mark the scope abnormal
-with the standard token C<app_abort>; record C<$detail>, if given, as
-C<disconnect_detail>; settle pending sends successfully and pending receives
-with the scope's disconnect event; invoke C<on_disconnect> callbacks; and
-treat later sends as post-close no-ops. C<on_complete> does not fire. The
+drain, since that write may be blocked by the peer. The server MUST then
+follow L</State Transition Order> exactly as for a transport-detected
+abnormal end: mark the scope abnormal with the standard token C<app_abort>
+and record C<$detail>, if given, as C<disconnect_detail>; resolve
+C<disconnect_future>; invoke C<on_disconnect> callbacks; then settle pending
+receives with the scope's disconnect event and pending sends successfully;
+and treat later sends as post-close no-ops. C<on_complete> does not fire. The
 server MUST NOT log an incomplete-response or no-response error for an
 aborted scope. C<abort> after either terminal outcome is a no-op that
 preserves that outcome. It is valid on every scope, before or after
 C<websocket.accept> or C<sse.start>.
 
     $conn->abort("quota exceeded after $sent bytes");
+
+An exception raised by a registered C<on_disconnect>, C<on_complete>, or
+C<pagi.transport> callback MUST NOT prevent the remaining callbacks from
+running and MUST NOT disturb the server's own processing; servers SHOULD
+log such exceptions.
 
 =head3 What "connection" means here
 
@@ -585,7 +578,7 @@ MUST provide C<pagi.connection> on every C<http>, C<websocket>, and C<sse> scope
 
 =item 2.
 
-MUST implement C<is_connected()>, C<disconnect_reason()>, and C<on_disconnect()> methods
+MUST implement C<is_connected()>, C<disconnect_reason()>, C<disconnect_detail()>, C<on_disconnect()>, C<on_complete()>, C<disconnect_future()>, C<response_started()>, C<response_complete()>, and C<abort()> methods
 
 =item 3.
 
