@@ -71,9 +71,7 @@
   [Specification]
   - HTTP/WebSocket/SSE sub-spec 0.4 -> 0.5. These are new requirements, not
     clarifications, so $scope->{pagi}{spec_version} moves with them. The core
-    spec version is unchanged.
-  - Core spec wording: a disconnect resolves every pending receive Future,
-    not only one (the Www spec already said so in the plural).
+    spec is unchanged.
   - The terminal response event is defined as what it asserts: the
     application's claim that the response is complete (RFC 9110 S6.1), which
     the server renders as the chunked terminator or END_STREAM. The existing
