@@ -55,7 +55,7 @@ synthesized, C<disconnect_reason> governs only whether to raise or log.
 
 C<0.4>: Defined settlement of in-flight I/O at disconnect: a send Future
 still pending when the connection (or the scope's stream) ends settles by
-resolving successfully, a pending receive resolves with the disconnect
+resolving successfully, every pending receive resolves with the disconnect
 event, and both settlements are ordered after the connection-state
 transition so that await-then-check is race-free. C<on_disconnect> callbacks
 and C<disconnect_future> resolution are never delivered synchronously within
