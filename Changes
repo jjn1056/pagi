@@ -8,6 +8,9 @@
     spec version is unchanged.
   - Core spec wording: a disconnect resolves every pending receive Future,
     not only one (the Www spec already said so in the plural).
+  - Www spec: a receive() after websocket.disconnect or sse.disconnect
+    resolves with that event again, as http.disconnect already did; the
+    event reports the scope's terminal state, not a message.
   - pagi.connection is provided on every http, websocket, and sse scope; all
     accessors are required; abort($detail) and disconnect_detail added; new
     standard reason app_abort; started, clean end, and abnormal end defined

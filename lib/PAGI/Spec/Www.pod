@@ -1974,6 +1974,11 @@ L</"Refusing the handshake">) delivers none. An C<abort> on an accepted socket
 sends no Close frame -- the server ends the transport -- and delivers this event
 with code C<1006> and reason C<app_abort>.
 
+Once this event has been delivered the scope is over, and a further
+C<receive()> resolves with the same C<websocket.disconnect> again. The event
+reports the scope's terminal state rather than delivering a message, so it is
+never consumed by one reader and lost to another.
+
 The C<code> carries the RFC 6455 close code and C<reason> supplements it with a
 standard token (see L</Standard Disconnect Reasons>), so an application can branch
 on one reason vocabulary across HTTP, WebSocket, and SSE. How the two pair up
@@ -2521,6 +2526,11 @@ C<sse> scope was dispatched, whether or not C<sse.start> has been sent, and
 when the server shuts down a started event stream. A normally completed
 refusal (see L</"Refusing the stream">) delivers no C<sse.disconnect>.
 
+Once this event has been delivered the scope is over, and a further
+C<receive()> resolves with the same C<sse.disconnect> again. The event reports
+the scope's terminal state rather than delivering a message, so it is never
+consumed by one reader and lost to another.
+
 =over
 
 =item -
@@ -2805,7 +2815,8 @@ scope, C<abort>, C<disconnect_detail>, C<app_abort>); refusals as ordinary
 HTTP responses; C<websocket.close> before accept fails; C<sse.disconnect>
 timing; C<sse.close> and the WebSocket closing handshake required as terminal
 events (return without them is an incomplete response; WebSocket closed
-with C<1011>).
+with C<1011>). A C<receive()> after C<websocket.disconnect> or
+C<sse.disconnect> resolves with that event again.
 
 =item -
 
