@@ -755,8 +755,17 @@ event's C<reason> and the object's C<disconnect_reason> MUST be the same
 token. This does not apply to the free-text reason from a peer's Close
 frame, which is not a server lifetime reason and is never overwritten. A
 normally completed refusal is a clean end and delivers no disconnect event.
-What a C<$receive> call returns after a completed refusal is unspecified;
-frameworks observe C<on_complete>.
+
+B<Receiving after a clean end the application produced.> A C<$receive> call
+made after the application itself ended the scope with nothing left to
+deliver -- a completed refusal of a WebSocket handshake or an SSE stream, or
+C<sse.close> -- is a programming error: the server MUST fail the Future, and
+MUST fail any receive still pending at that moment. The application ended
+the scope, so it cannot race the outcome; this is the same rule as a send
+after the application's own C<websocket.close>. Frameworks observe
+C<on_complete>. (An accepted WebSocket is different: the application's own
+C<websocket.close> starts a closing handshake, and C<websocket.disconnect>
+arrives when it completes.)
 
 B<Observing the end of a scope.> The callbacks are how anything that is not
 the scope's own receive loop learns how the scope ended: audit, metrics,
@@ -2503,7 +2512,9 @@ client's next connection.
 =back
 
 After C<sse.close>, any further C<sse.send>, C<sse.comment>, or C<sse.keepalive>
-on the same connection B<MUST> raise -- the stream is closed. C<sse.close> is
+on the same connection B<MUST> raise -- the stream is closed -- and so MUST a
+C<$receive> call, pending or later: the application ended the scope itself
+(see L</"Meaning per scope">). C<sse.close> is
 B<idempotent>: a second C<sse.close> is ignored. C<sse.close> does not by itself
 stop the client reconnecting; that is governed by the response to the client's
 next connection, not by the close of the current stream.
@@ -2817,7 +2828,8 @@ HTTP responses; C<websocket.close> before accept fails; C<sse.disconnect>
 timing; C<sse.close> and the WebSocket closing handshake required as terminal
 events (return without them is an incomplete response; WebSocket closed
 with C<1011>). A C<receive()> after C<websocket.disconnect> or
-C<sse.disconnect> resolves with that event again.
+C<sse.disconnect> resolves with that event again; a C<receive()> after a
+completed refusal or after C<sse.close> fails.
 
 =item -
 
