@@ -390,7 +390,7 @@ under the application's control.
 
 No equivalent guarantee exists for C<on_complete> or for C<pagi.transport>
 callbacks: in particular, a completion callback may be invoked within the
-application's terminal send call.
+application's terminal send call. The same holds for a receive the application's own terminal send resolves (a receive pending when it sends C<sse.close> or a refusal's terminal event): the awaiting code may resume inside that send, after the object is marked, and before the send's own Future resolves.
 
 Rationale: a callback that can run inside an application's own half-finished
 call into C<$send> would force every framework to build re-entrancy defenses
