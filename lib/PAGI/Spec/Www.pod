@@ -1430,7 +1430,8 @@ request. Over HTTP/2 the server resets the stream (C<RST_STREAM>, e.g.
 C<INTERNAL_ERROR>); other streams on the connection are unaffected. On an
 accepted WebSocket the server sends a Close frame with code C<1011>
 ("internal error"), waits no longer than its ordinary close timeout for
-the peer's Close, and then closes the transport (the stream, on HTTP/2).
+the peer's Close, and then closes the transport (on HTTP/2, an orderly
+stream close per RFC 8441 section 5).
 The C<1011> frame is the WebSocket analog of C<RST_STREAM>
 C<INTERNAL_ERROR>: an error signal, not the completion the application
 failed to assert.
