@@ -754,7 +754,8 @@ no reason; C<websocket.disconnect> and C<sse.disconnect> carry one), the
 event's C<reason> and the object's C<disconnect_reason> MUST be the same
 token. This does not apply to the free-text reason from a peer's Close
 frame, which is not a server lifetime reason and is never overwritten. A
-normally completed refusal is a clean end and delivers no disconnect event.
+normally completed refusal is a clean end and delivers no disconnect event of
+its own; a receive after it reports the end, as the next paragraph says.
 
 B<Receiving after the scope's end.> A C<$receive> call made after the scope
 has ended reports the end; it never invents data and never invents a
@@ -1963,7 +1964,7 @@ B<Example:>
 
 =head4 Disconnect - C<receive> event
 
-Sent when the C<websocket> scope ends -- by a closing handshake from either side, a transport drop, a server-detected error, or an C<abort> -- before or after C<websocket.accept>. A normally completed refusal is the one ending that delivers none.
+Sent when the C<websocket> scope ends -- by a closing handshake from either side, a transport drop, a server-detected error, or an C<abort> -- before or after C<websocket.accept>. A normally completed refusal is the one ending that delivers none of its own; a receive after it resolves with C<http.disconnect> (see L</"Meaning per scope">).
 
 =over
 
@@ -1985,7 +1986,7 @@ This event is delivered whenever the C<websocket> scope ends abnormally, before
 as well as after C<websocket.accept>: a client that drops during the handshake,
 or an C<abort> before accept, produces it with code C<1006> and the standard
 reason token for the condition. A normally completed refusal (see
-L</"Refusing the handshake">) delivers none. An C<abort> on an accepted socket
+L</"Refusing the handshake">) delivers none of its own. An C<abort> on an accepted socket
 sends no Close frame -- the server ends the transport -- and delivers this event
 with code C<1006> and reason C<app_abort>.
 
@@ -2362,7 +2363,9 @@ C<http.response.start> are mutually exclusive: after C<sse.start>, HTTP
 response events MUST fail; after a refusal has started, the stream events
 (C<sse.send>, C<sse.comment>, C<sse.keepalive>, C<sse.close>) MUST fail. A
 normally completed refusal is a clean end (see L</Meaning per scope>): no
-event stream was started and no C<sse.disconnect> is delivered. As with a
+event stream was started and no C<sse.disconnect> is delivered of the
+server's own accord; a receive after the refusal resolves with C<sse.disconnect>
+carrying no reason (see L</"Meaning per scope">). As with a
 WebSocket refusal, on HTTP/1.1 the server closes the connection after the
 refusal and the response carries C<Connection: close>; on HTTP/2 the refusal
 ends the stream and the connection is unaffected.
@@ -2541,7 +2544,9 @@ as what it is, an incomplete response, rather than as a completed one.
 Sent to the application when the client disconnects at any point after the
 C<sse> scope was dispatched, whether or not C<sse.start> has been sent, and
 when the server shuts down a started event stream. A normally completed
-refusal (see L</"Refusing the stream">) delivers no C<sse.disconnect>.
+refusal (see L</"Refusing the stream">) delivers no C<sse.disconnect> of its
+own; a receive after it resolves with one carrying no C<reason> (see
+L</"Meaning per scope">).
 
 Once this event has been delivered the scope is over, and a further
 C<receive()> resolves with the same C<sse.disconnect> again. The event reports
