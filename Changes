@@ -11,10 +11,12 @@
   - Www spec: a receive() after websocket.disconnect or sse.disconnect
     resolves with that event again, as http.disconnect already did; the
     event reports the scope's terminal state, not a message.
-  - Www spec: a receive() after a clean end the application itself produced
-    (a completed refusal, or sse.close) is a programming error and MUST fail,
-    pending receives included, as a send after the application's own close
-    already did. Previously unspecified.
+  - Www spec: a receive() after the scope's end reports the end and never
+    invents data or a failure. After a clean end the application produced
+    (a completed refusal, or sse.close) it resolves with sse.disconnect
+    carrying no reason, or http.disconnect after a WebSocket refusal.
+    Previously unspecified. A server MAY bound how many receives it answers
+    this way on one scope.
   - pagi.connection is provided on every http, websocket, and sse scope; all
     accessors are required; abort($detail) and disconnect_detail added; new
     standard reason app_abort; started, clean end, and abnormal end defined

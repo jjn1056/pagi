@@ -756,16 +756,21 @@ token. This does not apply to the free-text reason from a peer's Close
 frame, which is not a server lifetime reason and is never overwritten. A
 normally completed refusal is a clean end and delivers no disconnect event.
 
-B<Receiving after a clean end the application produced.> A C<$receive> call
-made after the application itself ended the scope with nothing left to
+B<Receiving after the scope's end.> A C<$receive> call made after the scope
+has ended reports the end; it never invents data and never invents a
+failure. After an abnormal end, pending and later receives resolve with the
+scope's disconnect event (see L<PAGI::Spec/"Cancellation and Disconnects">).
+After a clean end the application itself produced with nothing left to
 deliver -- a completed refusal of a WebSocket handshake or an SSE stream, or
-C<sse.close> -- is a programming error: the server MUST fail the Future, and
-MUST fail any receive still pending at that moment. The application ended
-the scope, so it cannot race the outcome; this is the same rule as a send
-after the application's own C<websocket.close>. Frameworks observe
-C<on_complete>. (An accepted WebSocket is different: the application's own
-C<websocket.close> starts a closing handshake, and C<websocket.disconnect>
-arrives when it completes.)
+C<sse.close> -- they resolve with the scope's end as well: C<sse.disconnect>
+with no C<reason> on an C<sse> scope, and C<http.disconnect> after a WebSocket
+refusal, which was an HTTP exchange on that scope. (An accepted WebSocket's
+own C<websocket.close> starts a closing handshake, and C<websocket.disconnect>
+arrives when it completes.) A server MAY bound how many receives it answers
+this way on one scope, as a guard against a receive loop that never checks
+for the end, failing the receive once its documented bound is exceeded; the
+bound and its default are the server's to choose and document. Frameworks
+observe C<on_complete>.
 
 B<Observing the end of a scope.> The callbacks are how anything that is not
 the scope's own receive loop learns how the scope ended: audit, metrics,
@@ -2512,9 +2517,9 @@ client's next connection.
 =back
 
 After C<sse.close>, any further C<sse.send>, C<sse.comment>, or C<sse.keepalive>
-on the same connection B<MUST> raise -- the stream is closed -- and so MUST a
-C<$receive> call, pending or later: the application ended the scope itself
-(see L</"Meaning per scope">). C<sse.close> is
+on the same connection B<MUST> raise -- the stream is closed. A C<$receive>
+call, pending or later, resolves with C<sse.disconnect> carrying no C<reason>:
+the scope ended cleanly (see L</"Meaning per scope">). C<sse.close> is
 B<idempotent>: a second C<sse.close> is ignored. C<sse.close> does not by itself
 stop the client reconnecting; that is governed by the response to the client's
 next connection, not by the close of the current stream.
@@ -2551,7 +2556,10 @@ C<type> -- C<"sse.disconnect">
 
 =item -
 
-C<reason> (String) -- Standard reason string from L</Standard Disconnect Reasons>
+C<reason> (String) -- Standard reason string from L</Standard Disconnect Reasons>.
+Absent when the event reports a clean end the application produced (a
+receive after C<sse.close> or after a completed refusal; see
+L</"Meaning per scope">).
 
 =back
 
@@ -2829,7 +2837,9 @@ timing; C<sse.close> and the WebSocket closing handshake required as terminal
 events (return without them is an incomplete response; WebSocket closed
 with C<1011>). A C<receive()> after C<websocket.disconnect> or
 C<sse.disconnect> resolves with that event again; a C<receive()> after a
-completed refusal or after C<sse.close> fails.
+completed refusal or after C<sse.close> resolves with the scope's end
+(C<sse.disconnect> with no reason, or C<http.disconnect>); a server MAY bound
+such re-deliveries.
 
 =item -
 
