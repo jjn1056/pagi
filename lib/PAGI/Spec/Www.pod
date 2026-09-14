@@ -33,7 +33,13 @@ handshake are the terminal events of their scopes: returning after
 C<sse.start> without C<sse.close>, or from an accepted WebSocket without
 sending C<websocket.close> or receiving C<websocket.disconnect>, is an
 incomplete response, and a WebSocket so abandoned is closed with code
-C<1011>.
+C<1011>. The connection object additionally reports the WebSocket peer's
+Close code and reason through C<close_code> and C<close_reason>, adds a single
+terminal observer -- C<on_end> and C<end_future> -- that fires for a clean and
+an abnormal end alike, and adds the C<close_timeout> reason for a closing
+handshake the peer never completes. All terminal callbacks (C<on_disconnect>,
+C<on_complete>, C<on_end>) are delivered on the event loop, never synchronously
+inside an application's C<$send> or C<$receive>.
 
 =item -
 
@@ -362,6 +368,24 @@ C<app_abort>.
 
     my $detail = $conn->disconnect_detail;   # e.g. "no pong within 10s", or undef
 
+B<C<close_code()>> / B<C<close_reason()>> - On a C<websocket> scope, return the
+B<peer's> Close-frame code (an integer) and reason text (a string), or C<undef>
+before a Close has been observed. They report what the peer sent, never the
+code the server itself sent: a server-initiated protocol close (for example the
+C<1011> for an abandoned socket, or a C<1002> for a protocol error) leaves them
+reflecting the peer's response, not the server's request, and stays C<undef> if
+the peer never replied. Per RFC 6455 section 7.1.5, C<close_code> is C<1005>
+when the handshake completed but the peer's Close carried no code, and C<1006>
+(with C<close_reason> C<undef>) when the transport ended with no Close frame at
+all. On C<http> and C<sse> scopes both return C<undef>. Like every terminal
+fact they are populated before C<on_complete>/C<on_end> fire. The same code and
+reason are also delivered in the C<websocket.disconnect> receive event; these
+accessors let a component that does not own the receive queue read them without
+consuming it.
+
+    my $code   = $conn->close_code;    # peer's code: e.g. 1000, 1005, 1006, or undef
+    my $reason = $conn->close_reason;  # peer's reason text, or undef
+
 B<C<on_disconnect($callback)>> - Registers a callback invoked once when the
 scope ends abnormally. The callback receives C<($reason, $detail)>:
 C<$reason> is the token C<disconnect_reason> will return and C<$detail> is
@@ -388,9 +412,29 @@ unchanged: registering a callback after the transition has already happened
 invokes it immediately, within the registering call; that re-entrancy is
 under the application's control.
 
-No equivalent guarantee exists for C<on_complete> or for C<pagi.transport>
-callbacks: in particular, a completion callback may be invoked within the
-application's terminal send call. The same holds for a receive the application's own terminal send resolves (a receive pending when it sends C<sse.close> or a refusal's terminal event): the awaiting code may resume inside that send, after the object is marked, and before the send's own Future resolves.
+C<on_complete> and C<on_end> are delivered under the B<same> rule: no terminal
+callback -- C<on_disconnect>, C<on_complete>, or C<on_end> -- is invoked
+synchronously within an application's call into C<$send> or C<$receive>, and
+each is still delivered on the event loop even if the transport is torn down
+first. Emitting the terminal event -- C<http.response.body> with C<< more => 0 >>,
+a C<file>/C<fh> body, the final trailers, C<sse.close>, or the completed
+WebSocket closing handshake -- sets the synchronous fact C<response_complete()>
+to true at once, but does B<not> synchronously invoke C<on_complete> or
+C<on_end>; the server MAY deliver them after the handler has returned. An
+application MUST NOT sequence code on the assumption that a completion callback
+has already run when its terminal send resolves: it reads C<response_complete()>
+for the synchronous fact, and uses the callback only for work indifferent to
+whether it runs before or after the handler unwinds. C<pagi.transport>
+callbacks carry no such deferral guarantee.
+
+This governs callback delivery only. Separately, a receive that the
+application's own terminal send resolves (a receive pending when it sends
+C<sse.close> or a refusal's terminal event) MAY resume the awaiting code inside
+that send, after the object is marked and before the send's own Future
+resolves; that receive-resumption is a distinct mechanism and is unchanged. The
+resumed code observes the synchronous facts already settled
+(C<response_complete>, C<is_connected>), while the terminal callbacks are
+delivered afterward on the event loop.
 
 Rationale: a callback that can run inside an application's own half-finished
 call into C<$send> would force every framework to build re-entrancy defenses
@@ -456,6 +500,33 @@ above already promises: I<every> returned Future "resolves, with the
 reason, on abnormal disconnect" -- a Future one consumer can cancel out
 from under the others cannot keep that promise, and step 3 of
 L</State Transition Order> cannot be performed on it.
+
+B<C<on_end($callback)>> - Registers a callback invoked once when the scope
+reaches its terminal outcome, B<clean or abnormal>. Exactly one terminal
+outcome occurs for a scope, and C<on_end> observes whichever it was, so a
+consumer that must act on either ending -- subscription cleanup, a framework's
+close hook -- registers it instead of both C<on_complete> and C<on_disconnect>.
+The callback receives C<($reason, $detail)>: C<$reason> is the
+C<disconnect_reason> token on an abnormal end and C<undef> on a clean end;
+the full terminal record (including a WebSocket's C<close_code>/C<close_reason>)
+is read from the object, which is immutable once terminal. Registration,
+ordering, exception isolation, and reference release match C<on_disconnect> and
+C<on_complete>.
+
+    $conn->on_end(sub ($reason, $detail) {
+        release_subscription();   # ran on whichever ending occurred
+    });
+
+B<C<end_future()>> - Returns a Future that resolves when the scope ends, for
+B<either> outcome, with the reason token on an abnormal end and C<undef> on a
+clean end. Termination is the event being observed, not a failure of the
+observer: the Future B<resolves>, it never fails. It is the all-outcome
+sibling of C<disconnect_future> (which resolves only on an abnormal end), for a
+background producer or framework to observe a scope's end while any active
+receive loop keeps using C<receive()>. Each returned Future is
+cancellation-isolated on the same terms as C<disconnect_future>.
+
+    my $reason = await $conn->end_future;   # token, or undef on a clean end
 
 B<C<abort($detail)>> - Requests that the server end this scope's transport
 now: close the connection on HTTP/1.1, reset only this stream
@@ -550,6 +621,13 @@ Keep-alive connection idled out between requests, or a WebSocket
 keepalive ping received no pong within its timeout (see
 C<websocket.keepalive>)
 
+=item C<close_timeout>
+
+An accepted WebSocket's closing handshake did not complete within the server's
+bound: a Close frame was sent and the peer's Close never arrived, so the server
+closed the transport rather than wait indefinitely (RFC 6455 section 7.1.1).
+The bound and its default are the server's to choose and document.
+
 =item C<write_timeout>
 
 Response write timed out
@@ -602,11 +680,11 @@ MUST provide C<pagi.connection> on every C<http>, C<websocket>, and C<sse> scope
 
 =item 2.
 
-MUST implement C<is_connected()>, C<disconnect_reason()>, C<disconnect_detail()>, C<on_disconnect()>, C<on_complete()>, C<disconnect_future()>, C<response_started()>, C<response_complete()>, and C<abort()> methods
+MUST implement C<is_connected()>, C<disconnect_reason()>, C<disconnect_detail()>, C<close_code()>, C<close_reason()>, C<on_disconnect()>, C<on_complete()>, C<on_end()>, C<disconnect_future()>, C<end_future()>, C<response_started()>, C<response_complete()>, and C<abort()> methods
 
 =item 3.
 
-MUST fire C<on_disconnect> callbacks B<only> on abnormal disconnect, and C<on_complete> callbacks B<only> on successful completion -- never both for the same request
+MUST fire C<on_disconnect> callbacks B<only> on abnormal disconnect, and C<on_complete> callbacks B<only> on successful completion -- never both for the same request; MUST fire C<on_end> (and resolve C<end_future>) exactly once, for whichever of the two outcomes occurred; MUST deliver all three callback families on the event loop, never synchronously within an application's C<$send> or C<$receive>, with every terminal fact (C<close_code>/C<close_reason> included) populated before any of them is invoked
 
 =item 4.
 
@@ -669,18 +747,50 @@ C<on_disconnect> callbacks have been invoked or scheduled. Awaiting C<$send>
 or C<$receive> and then consulting the connection state is race-free by
 construction.
 
-This order applies to every scope type, and to an end initiated by
-C<abort> exactly as to one detected on the transport. Delivery of
-C<on_disconnect> callbacks and C<disconnect_future> resolution is never
-synchronous inside an application's own call into C<$send> or C<$receive>;
-a callback registered after the terminal transition is the one exception,
-and it runs immediately under the registering caller's control.
-C<on_complete> callbacks MAY run inside a terminal send.
+Alongside this order, C<end_future()> resolves at step 3 and C<on_end>
+callbacks are invoked at step 4, both carrying the same reason token as
+C<disconnect_future> and C<on_disconnect>. C<on_end> fires exactly once for the
+scope, here on the abnormal path and per the clean-end order below on the clean
+path.
 
-When a request B<completes successfully>, servers MUST invoke C<on_complete>
-callbacks in registration order and MUST leave C<disconnect_reason()> as
-C<undef>. C<on_disconnect> callbacks and C<disconnect_future()> MUST NOT fire on
-this path.
+This order applies to every scope type, and to an end initiated by
+C<abort> exactly as to one detected on the transport. Delivery of every
+terminal callback -- C<on_disconnect>, C<on_complete>, and C<on_end> -- and the
+resolution of C<disconnect_future> and C<end_future> is never synchronous
+inside an application's own call into C<$send> or C<$receive>; a callback
+registered after the terminal transition is the one exception, and it runs
+immediately under the registering caller's control.
+
+When a request B<completes successfully>, servers MUST update state in this
+order:
+
+=over
+
+=item 1.
+
+Set C<is_connected()> to return false and C<response_complete()> to return true.
+
+=item 2.
+
+Populate the scope's terminal facts before any observer is notified -- for a
+C<websocket> scope, C<close_code()> and C<close_reason()> from the peer's
+Close, if any -- so the first callback sees a complete, final record.
+
+=item 3.
+
+Leave C<disconnect_reason()> as C<undef>. C<on_disconnect> callbacks and
+C<disconnect_future()> MUST NOT fire on this path.
+
+=item 4.
+
+Invoke C<on_complete> callbacks in registration order, invoke C<on_end>
+callbacks with C<(undef, undef)>, and resolve C<end_future()> with C<undef>.
+
+=back
+
+Steps 1 and 2 update the synchronous facts immediately at the terminal event;
+step 4's callback delivery follows the deferral rule above and MAY run after the
+handler returns.
 
 B<Exceptions after the terminal event.> Delivery defines completion: an
 exception raised by the application B<after> its response reached the
@@ -742,11 +852,18 @@ clean end: the Send Completion Contract in L<PAGI::Spec> also covers an
 event discarded after the connection ended.
 
 Receiving a peer Close frame advances the closing handshake; it does not
-alone establish a clean end. A completed handshake is clean regardless of
+alone establish a clean end. Sending C<websocket.close> likewise initiates
+the handshake without completing it: a completed handshake requires the peer's
+Close (or the server's Close sent in response to the peer's) and the
+stream/transport then closing. A completed handshake is clean regardless of
 the peer's close code; that code and its reason text are protocol data
-delivered in C<websocket.disconnect> (RFC 6455 section 7.1.4). A
+delivered in C<websocket.disconnect> (RFC 6455 section 7.1.4) and, without
+consuming the receive queue, in C<close_code>/C<close_reason>. A
 server-detected protocol violation, timeout, or transport loss before a
-clean end is abnormal with the applicable standard token.
+clean end is abnormal with the applicable standard token. A server MUST bound
+the wait for a peer that never sends its Close after the server's, and when
+that bound elapses end the scope abnormally with C<close_timeout> rather than
+wait indefinitely.
 
 B<Agreement with disconnect events.> Where a scope delivers a disconnect
 receive event for a server-reported abnormal end (C<http.disconnect> carries
