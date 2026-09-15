@@ -866,7 +866,15 @@ server-detected protocol violation, timeout, or transport loss before a
 clean end is abnormal with the applicable standard token. A server MUST bound
 the wait for a peer that never sends its Close after the server's, and when
 that bound elapses end the scope abnormally with C<close_timeout> rather than
-wait indefinitely.
+wait indefinitely. C<close_timeout> names the deadline case specifically: a
+transport or stream loss during that wait is a distinct outcome, ending the
+scope abnormally with the applicable transport-loss token, and C<close_timeout>
+is never inferred from missing Close metadata alone. Both report C<close_code>
+1006 (RFC 6455 section 7.1.5) only when no valid peer Close was observed; a peer
+Close that did arrive keeps its own code and reason. Because a completed
+handshake requires the peer's Close, C<on_complete> does not fire on the
+application's own C<websocket.close> until the handshake completes: a cooperative
+peer completes it promptly, a silent peer yields C<close_timeout>.
 
 B<Agreement with disconnect events.> Where a scope delivers a disconnect
 receive event for a server-reported abnormal end (C<http.disconnect> carries
