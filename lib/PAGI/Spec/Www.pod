@@ -371,17 +371,20 @@ C<app_abort>.
 B<C<close_code()>> / B<C<close_reason()>> - On a C<websocket> scope, return the
 B<peer's> Close-frame code (an integer) and reason text (a string), or C<undef>
 before a Close has been observed. They report what the peer sent, never the
-code the server itself sent: a server-initiated protocol close (for example the
-C<1011> for an abandoned socket, or a C<1002> for a protocol error) leaves them
-reflecting the peer's response, not the server's request, and stays C<undef> if
-the peer never replied. Per RFC 6455 section 7.1.5, C<close_code> is C<1005>
-when the handshake completed but the peer's Close carried no code, and C<1006>
-(with C<close_reason> C<undef>) when the transport ended with no Close frame at
-all. On C<http> and C<sse> scopes both return C<undef>. Like every terminal
-fact they are populated before C<on_complete>/C<on_end> fire. The same code and
-reason are also delivered in the C<websocket.disconnect> receive event; these
-accessors let a component that does not own the receive queue read them without
-consuming it.
+code the server itself sent: on a server-initiated close (for example the
+C<1011> for an abandoned socket, or a C<1002> for a protocol error) they report
+the peer's own Close if the peer answers with one, and once the scope ends with
+no Close from the peer they are C<1006>, never the server's code. Per RFC 6455
+section 7.1.5, C<close_code> is C<1005> when the handshake completed but the
+peer's Close carried no code, and C<1006> (with C<close_reason> C<undef>) when
+the transport ended with no Close frame at all; C<undef> is the value only while
+the scope is still open. On C<http> and C<sse> scopes both return C<undef>. Like
+every terminal fact they are populated before C<on_complete>/C<on_end> fire.
+These values agree with the C<code> and reason in the C<websocket.disconnect>
+receive event on a peer-initiated Close; on a server-initiated close they
+differ -- the accessor reports C<1006> because the peer sent nothing, while the
+event carries the code the server sent. The accessors let a component that does
+not own the receive queue read the peer's Close without consuming it.
 
     my $code   = $conn->close_code;    # peer's code: e.g. 1000, 1005, 1006, or undef
     my $reason = $conn->close_reason;  # peer's reason text, or undef
