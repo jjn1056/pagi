@@ -637,9 +637,13 @@ An accepted WebSocket whose closing handshake completed -- or whose peer sent
 its Close -- but whose transport (its stream, on HTTP/2) did not finish closing
 within the server's bound, so the server force-closed rather than wait
 indefinitely. Distinct from C<close_timeout>, where a Close was sent and the
-peer's Close never arrived: here the peer did answer, but the transport-level
-close did not complete. C<close_code> is C<1006> (RFC 6455 section 7.1.5). The
-bound and its default are the server's to choose and document.
+peer's Close never arrived: here the peer B<did> answer, but the transport-level
+close did not complete. Because the peer sent a valid Close, C<close_code> and
+C<close_reason> report B<the peer's> values (per L</"Connection Object
+Interface"> -- the peer's code, or C<1005> when its Close carried none), B<not>
+C<1006>; the outcome is carried in C<disconnect_reason> alone, keeping protocol
+data separate from the lifetime reason. The bound and its default are the
+server's to choose and document.
 
 =item C<write_timeout>
 
