@@ -631,6 +631,20 @@ bound: a Close frame was sent and the peer's Close never arrived, so the server
 closed the transport rather than wait indefinitely (RFC 6455 section 7.1.1).
 The bound and its default are the server's to choose and document.
 
+=item C<close_incomplete>
+
+An accepted WebSocket whose closing handshake completed -- or whose peer sent
+its Close -- but whose transport (its stream, on HTTP/2) did not finish closing
+within the server's bound, so the server force-closed rather than wait
+indefinitely. Distinct from C<close_timeout>, where a Close was sent and the
+peer's Close never arrived: here the peer B<did> answer, but the transport-level
+close did not complete. Because the peer sent a valid Close, C<close_code> and
+C<close_reason> report B<the peer's> values (per L</"Connection Object
+Interface"> -- the peer's code, or C<1005> when its Close carried none), B<not>
+C<1006>; the outcome is carried in C<disconnect_reason> alone, keeping protocol
+data separate from the lifetime reason. The bound and its default are the
+server's to choose and document.
+
 =item C<write_timeout>
 
 Response write timed out
@@ -866,7 +880,15 @@ server-detected protocol violation, timeout, or transport loss before a
 clean end is abnormal with the applicable standard token. A server MUST bound
 the wait for a peer that never sends its Close after the server's, and when
 that bound elapses end the scope abnormally with C<close_timeout> rather than
-wait indefinitely.
+wait indefinitely. C<close_timeout> names the deadline case specifically: a
+transport or stream loss during that wait is a distinct outcome, ending the
+scope abnormally with the applicable transport-loss token, and C<close_timeout>
+is never inferred from missing Close metadata alone. Both report C<close_code>
+1006 (RFC 6455 section 7.1.5) only when no valid peer Close was observed; a peer
+Close that did arrive keeps its own code and reason. Because a completed
+handshake requires the peer's Close, C<on_complete> does not fire on the
+application's own C<websocket.close> until the handshake completes: a cooperative
+peer completes it promptly, a silent peer yields C<close_timeout>.
 
 B<Agreement with disconnect events.> Where a scope delivers a disconnect
 receive event for a server-reported abnormal end (C<http.disconnect> carries
@@ -2208,6 +2230,10 @@ event: send it, or receive C<websocket.disconnect>, before returning.
 Returning from an accepted socket with neither is an incomplete response
 (see L</Application Left a Response Incomplete>): the server closes with
 code C<1011>, not C<1000>.
+
+After acceptance, an otherwise valid first application C<websocket.close>
+racing peer-initiated closure MUST complete successfully, including when
+closure is already in progress.
 
 =head3 WebSocket Protocol Enforcement
 
