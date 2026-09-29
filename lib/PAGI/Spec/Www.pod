@@ -816,9 +816,7 @@ trailers) does not un-complete the request. The server MUST still treat
 the request as completed — C<on_complete> fires, C<disconnect_reason()>
 stays C<undef> — and SHOULD log the exception at error level as an
 operational event. The server MAY close the connection afterwards rather
-than reuse it; the delivered response is unaffected either way. (This
-matches ASGI-ecosystem practice, where a post-completion exception is
-logged and the already-granted keep-alive stands.)
+than reuse it; the delivered response is unaffected either way.
 
 =head3 Meaning per scope
 

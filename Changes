@@ -10,6 +10,9 @@
     backpressure is engaged, draining below the low mark MUST release waiting
     sends and invoke armed on_drain callbacks, whether the drain happens
     through immediate or deferred writes.
+  - Remove the incorrect note that ASGI servers keep a connection alive after
+    a post-completion exception; uvicorn closes it. The rule itself is
+    unchanged: the server MAY close the connection.
 
 0.002010 - 2026-09-22
 
