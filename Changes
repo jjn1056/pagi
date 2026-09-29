@@ -1,5 +1,16 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002011 - UNRELEASED
+
+  [Specification]
+  - Transport backpressure callbacks are flow-control signals, not an audit
+    log of buffer changes. Servers MAY evaluate watermarks after immediate,
+    non-blocking write attempts, so a transient high-water crossing that
+    leaves the buffer below the high mark need not fire a callback pair. Once
+    backpressure is engaged, draining below the low mark MUST release waiting
+    sends and invoke armed on_drain callbacks, whether the drain happens
+    through immediate or deferred writes.
+
 0.002010 - 2026-09-22
 
   [Specification]
