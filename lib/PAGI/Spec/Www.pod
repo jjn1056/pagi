@@ -816,9 +816,7 @@ trailers) does not un-complete the request. The server MUST still treat
 the request as completed — C<on_complete> fires, C<disconnect_reason()>
 stays C<undef> — and SHOULD log the exception at error level as an
 operational event. The server MAY close the connection afterwards rather
-than reuse it; the delivered response is unaffected either way. (This
-matches ASGI-ecosystem practice, where a post-completion exception is
-logged and the already-granted keep-alive stands.)
+than reuse it; the delivered response is unaffected either way.
 
 =head3 Meaning per scope
 
@@ -2800,6 +2798,17 @@ producer that B<cannot> self-pace with a blocking C<$send> -- an event-driven
 source that pushes a message per incoming event, say -- instead wants to be
 B<told> when to pause and resume. For that, the handle provides two
 edge-triggered callbacks.
+
+These callbacks are flow-control signals, not an audit log of every internal
+buffer-size change. Servers MAY evaluate watermarks for a send and its
+associated callbacks after immediate, non-blocking write attempts, using the
+output still buffered. A transient high-water crossing during such an attempt
+need not produce a callback pair if the remaining buffer is below the high
+mark and backpressure has not been engaged.
+
+Once backpressure is engaged, draining below the low mark MUST release sends
+waiting on that backpressure and invoke armed C<on_drain> callbacks, whether
+the drain occurs through immediate or deferred writes.
 
 B<C<on_high_water($callback)>> -- Registers a callback invoked when the outbound
 buffer reaches or exceeds C<high_water_mark> (backpressure engaged). If the

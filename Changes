@@ -1,5 +1,63 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002011 - UNRELEASED
+
+  [Specification]
+  - Transport backpressure callbacks are flow-control signals, not an audit
+    log of buffer changes. Servers MAY evaluate watermarks after immediate,
+    non-blocking write attempts, so a transient high-water crossing that
+    leaves the buffer below the high mark need not fire a callback pair. Once
+    backpressure is engaged, draining below the low mark MUST release waiting
+    sends and invoke armed on_drain callbacks, whether the drain happens
+    through immediate or deferred writes.
+  - Remove the incorrect note that ASGI servers keep a connection alive after
+    a post-completion exception; uvicorn closes it. The rule itself is
+    unchanged: the server MAY close the connection.
+
+0.002010 - 2026-09-22
+
+  [Specification]
+  - Connection terminal API: add on_end and cancellation-isolated end_future
+    observers for both clean and abnormal endings, plus WebSocket close_code
+    and close_reason accessors. The connection object is the authoritative
+    terminal record, available without consuming the receive queue.
+  - Deliver all terminal callbacks and terminal Future notifications outside
+    the application's send/receive call stack. Populate terminal facts first;
+    notifications may arrive after the application handler returns. A receive
+    resolved by the application's own terminal send may still resume inside
+    that send, after the synchronous connection facts have been updated.
+  - Resolve every pending receive when the scope ends. Subsequent WebSocket
+    and SSE receives report the end again. After a clean SSE close or refusal,
+    receive returns sse.disconnect without a reason; after a WebSocket HTTP
+    refusal it returns http.disconnect. Servers may document and enforce a
+    bound on repeated terminal receives.
+  - An accepted WebSocket reaches clean completion only after the closing
+    handshake and transport/stream closure. A missing peer Close at the
+    server's deadline reports close_timeout; transport loss before that
+    deadline remains a distinct outcome.
+  - Add close_incomplete for a peer Close followed by transport/stream closure
+    that does not finish within the server's bound. Preserve the peer's code
+    and reason even on an abnormal ending; report 1005 for a peer Close with
+    no code, and 1006/undef when the scope ends without a peer Close. HTTP and
+    SSE close accessors remain undef.
+  - An otherwise valid first application websocket.close racing peer closure
+    succeeds, including when closing is already in progress. Clarify orderly
+    HTTP/2 closure for an abandoned WebSocket stream with RFC 8441 section 5.
+
+  [What may break]
+  - Applications assuming on_complete has already run when a terminal send
+    returns. Read response_complete for the synchronous fact, or observe
+    on_end/end_future for terminal notification.
+  - Code treating an application's own websocket.close code as the observed
+    peer outcome, or assuming its send alone establishes clean completion.
+    Read close_code/close_reason and disconnect_reason from pagi.connection.
+  - Server implementations must provide the complete terminal API and apply
+    the documented notification ordering and bounded WebSocket closing rules.
+
+  [Packaging]
+  - Align PAGI.pm's reported version with the distribution version; it had
+    remained at 0.002008 while dist.ini advanced to 0.002009.
+
 0.002009 - 2026-09-08
 
   [Specification]
