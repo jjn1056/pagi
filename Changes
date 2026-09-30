@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002011 - UNRELEASED
+0.002011 - 2026-09-30
 
   [Specification]
   - Transport backpressure callbacks are flow-control signals, not an audit
