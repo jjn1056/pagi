@@ -1107,11 +1107,20 @@ C<scheme> (String, default C<"http">) -- URL scheme (C<"http"> or C<"https">)
 
 =item -
 
-C<path> (String) -- Decoded HTTP path
+C<path> (String) -- The decoded request path below C<root_path>
+(percent-decoded, then UTF-8 decoded; see L</PAGI Encoding Differences>).
+Equivalent to C<PATH_INFO> in PSGI. Begins with C</> (or is C<*> for an
+asterisk-form C<OPTIONS> request). See L</Paths, Mounts and Root Paths>.
 
 =item -
 
-C<raw_path> (Bytes, optional) -- Original HTTP path bytes
+C<raw_path> (Bytes, optional) -- The full path the client requested, without
+the query string, percent-encoded: C<root_path> followed by C<path>, as the
+client encoded it. Applications that mount another application leave it
+unchanged. A server configured with a root path that a proxy removed puts
+that root path, percent-encoded by the server, in front of the bytes it
+received; that prefix is the server's spelling, not necessarily the
+client's. Equivalent to the path part of C<REQUEST_URI> in PSGI.
 
 =item -
 
@@ -1119,7 +1128,9 @@ C<query_string> (Bytes) -- Percent-encoded query string
 
 =item -
 
-C<root_path> (String, default C<"">) -- Application mount path, equivalent to C<SCRIPT_NAME> in PSGI
+C<root_path> (String, default C<"">) -- The decoded path prefix this
+application is mounted at: C<""> at the root, otherwise one or more
+C</segment> parts with no trailing C</>. Equivalent to C<SCRIPT_NAME> in PSGI.
 
 =item -
 
@@ -1150,6 +1161,56 @@ C<pagi.transport> (Object, optional) -- Outbound flow-control introspection hand
 C<extensions> (HashRef, default C<{}>) -- Optional server capabilities advertised for this connection (e.g. C<tls>). Each present key names an extension mapping to a hashref of extension data; applications check for a key before relying on it. See L<PAGI::Spec::Extensions>.
 
 =back
+
+=head3 Paths, Mounts and Root Paths
+
+These rules apply to the C<path>, C<raw_path> and C<root_path> keys of
+C<http>, C<websocket> and C<sse> scopes.
+
+At every level, C<root_path> followed by C<path> is the path the client
+requested, and C<raw_path> is that same path as the client encoded it.
+
+Whatever sets or extends C<root_path> removes the same prefix from C<path>,
+and leaves C<raw_path> unchanged:
+
+=over
+
+=item -
+
+An application that mounts another at a prefix passes it a scope with the
+matched prefix moved from the start of C<path> to the end of C<root_path>.
+The prefix B<MUST> match whole path segments: a mount at C</admin> does not
+match C</administrator>.
+
+=item -
+
+A server configured with a root path (for a proxy that removes that prefix
+before forwarding) sets C<root_path> to it, sets C<path> to the decoded
+request path it received, and sets C<raw_path> to the percent-encoded root
+path followed by the bytes it received. A server B<MUST> apply one rule to
+every request; it B<MUST NOT> remove the root path only when a request
+happens to start with it, which lets C</app/app/admin> pass a proxy rule
+written for C</app/admin>.
+
+=back
+
+C<root_path> is never taken from a request header unless the server or
+middleware is explicitly configured to trust the proxy that sent it, and
+B<MUST> have the shape C<""> or C</segment>... (no empty, C<.> or C<..>
+segments, no trailing C</>), so that a URL built from it cannot begin with
+C<//>.
+
+C<path> and C<raw_path> B<MAY> begin with C<//> when the client sent that.
+Code that turns either into a URL for a C<Location> header B<MUST NOT> emit
+a leading C<//>, which a browser reads as another host.
+
+C<raw_path> is for rebuilding the requested URL, logging and signatures. It
+B<MUST NOT> be used for authorization or routing decisions: different
+encodings of one path (C</%61dmin>, C</admin%2Fx>) reach the same decoded
+C<path>, so a rule written against C<raw_path> can be bypassed.
+
+PAGI differs from ASGI here: in ASGI, C<path> includes C<root_path>. A PAGI
+C<path> never does.
 
 =head3 Request - C<receive> event
 
@@ -1891,11 +1952,20 @@ C<scheme> (String, default C<"ws">) -- URL scheme (C<"ws"> or C<"wss">)
 
 =item -
 
-C<path> (String) -- Decoded path string
+C<path> (String) -- The decoded request path below C<root_path>
+(percent-decoded, then UTF-8 decoded; see L</PAGI Encoding Differences>).
+Equivalent to C<PATH_INFO> in PSGI. Begins with C</> (or is C<*> for an
+asterisk-form C<OPTIONS> request). See L</Paths, Mounts and Root Paths>.
 
 =item -
 
-C<raw_path> (Bytes, optional) -- Original path bytes from request
+C<raw_path> (Bytes, optional) -- The full path the client requested, without
+the query string, percent-encoded: C<root_path> followed by C<path>, as the
+client encoded it. Applications that mount another application leave it
+unchanged. A server configured with a root path that a proxy removed puts
+that root path, percent-encoded by the server, in front of the bytes it
+received; that prefix is the server's spelling, not necessarily the
+client's. Equivalent to the path part of C<REQUEST_URI> in PSGI.
 
 =item -
 
@@ -1903,7 +1973,9 @@ C<query_string> (Bytes) -- Percent-encoded query string
 
 =item -
 
-C<root_path> (String, default C<"">) -- Mount point for application
+C<root_path> (String, default C<"">) -- The decoded path prefix this
+application is mounted at: C<""> at the root, otherwise one or more
+C</segment> parts with no trailing C</>. Equivalent to C<SCRIPT_NAME> in PSGI.
 
 =item -
 
@@ -2413,7 +2485,7 @@ Routing based on URL or application logic is not used to infer SSE.
 
 =head3 SSE Connection Scope
 
-SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, C<pagi.connection>, C<pagi.transport> where provided, and C<extensions>) but set C<<< type => 'sse' >>>. C<pagi.connection> is the per-stream connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>); see L</Connection State>. Header casing rules follow the HTTP section.
+SSE scopes reuse the HTTP scope structure. Servers MUST populate the same keys (C<http_version>, C<method>, C<scheme>, C<path>, C<raw_path>, C<query_string>, C<root_path>, C<headers>, C<client>, C<server>, C<state>, the C<pagi> dict, C<pagi.connection>, C<pagi.transport> where provided, and C<extensions>) but set C<<< type => 'sse' >>>. C<pagi.connection> is the per-stream connection-state object for disconnect detection and response progress (C<response_started> / C<response_complete>); see L</Connection State>. Header casing rules follow the HTTP section.
 
 =head3 Request Body - C<receive> event
 
@@ -2894,7 +2966,12 @@ C<SCRIPT_NAME> -> C<root_path>
 
 =item -
 
-C<PATH_INFO> -> C<path> minus C<root_path>
+C<PATH_INFO> -> C<path>
+
+=item -
+
+C<REQUEST_URI> -> C<raw_path>, followed by C<?> and C<query_string> when
+C<query_string> is not empty
 
 =item -
 
@@ -2962,8 +3039,9 @@ Body content from PSGI maps directly to C<http.response.body> messages.
 
 =item -
 
-C<path>: Decoded UTF-8 string from percent-encoded input. The server first
-percent-decodes C<raw_path>, then attempts UTF-8 decoding of the resulting
+C<path>: Decoded UTF-8 string from percent-encoded input. The server
+percent-decodes the path it received (the part of C<raw_path> below
+C<root_path>), then attempts UTF-8 decoding of the resulting
 bytes into Unicode characters. If the bytes are not valid UTF-8, the server
 B<should> fall back to the original percent-decoded bytes rather than
 replacing invalid sequences or rejecting the request (Mojolicious-style
@@ -2999,7 +3077,10 @@ with C<1011>). A C<receive()> after C<websocket.disconnect> or
 C<sse.disconnect> resolves with that event again; a C<receive()> after a
 completed refusal or after C<sse.close> resolves with the scope's end
 (C<sse.disconnect> with no reason, or C<http.disconnect>); a server MAY bound
-such re-deliveries.
+such re-deliveries. Clarified C<path>, C<raw_path> and C<root_path>:
+C<root_path> followed by C<path> is the requested path; C<raw_path> is the
+full requested path, percent-encoded; how mounts and a server root path set
+them; C<raw_path> is never used for authorization.
 
 =item -
 

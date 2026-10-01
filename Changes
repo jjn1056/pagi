@@ -1,5 +1,21 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002012  UNRELEASED
+
+  [Specification]
+  - Clarify path, raw_path and root_path (Www 0.6). root_path followed by
+    path is the path the client requested: whatever sets or extends
+    root_path removes that prefix from path (PSGI's SCRIPT_NAME/PATH_INFO
+    model; PAGI deliberately differs from ASGI, where path includes
+    root_path). raw_path is the full requested path, percent-encoded, at
+    every level: mounts leave it, a server root path is prepended. New
+    section "Paths, Mounts and Root Paths": whole-segment prefixes, never
+    strip a root path "only if present", root_path shape and trust,
+    leading "//", and never authorize on raw_path. SSE scopes list
+    raw_path, query_string and root_path among the keys they reuse. The
+    PSGI mapping said PATH_INFO is "path minus root_path"; it is path, and
+    REQUEST_URI is raw_path plus the query.
+
 0.002011 - 2026-09-30
 
   [Specification]
