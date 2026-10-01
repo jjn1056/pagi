@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002012  UNRELEASED
+0.002012 - 2026-10-01
 
   [Specification]
   - Clarify path, raw_path and root_path (Www 0.6). root_path followed by
