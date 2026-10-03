@@ -1,5 +1,20 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002013 - UNRELEASED
+
+  [Specification]
+  - A reminder in the Middleware section: a reference in a scope or an
+    event is shared by every layer that receives it, and one that outlives
+    the request (built at load time, closed over, a constant) by every
+    request too; change only your own copy. Writing into a handed reference
+    can leak one request's data into another's response.
+
+  [Documentation]
+  - The PSGI, Building and Tutorial middleware examples send a new event
+    instead of pushing onto the response's headers. The Cookbook gains a
+    MIDDLEWARE section: changing a response on its way out, and reporting
+    back to an outer layer through a reference seeded before calling inward.
+
 0.002012 - 2026-10-01
 
   [Specification]

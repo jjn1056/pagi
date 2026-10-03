@@ -563,6 +563,22 @@ are shared across all layers. This keeps each middleware's scope edits
 B<downward only>. See L<PAGI::Building/MIDDLEWARE> for the sharing model, why the
 clone is shallow rather than deep, and patterns for sharing state across layers.
 
+B<References are shared.> A value in a scope or an event that is a
+reference -- a header list, the pairs in it, a hash -- is the same data for
+every layer that receives it: nothing copies it on the way. A reference that
+outlives the request -- built at load time, closed over by a handler, held in
+a constant -- is the same data for every request as well. So change only your
+own copy of anything you were handed, and pass that on:
+
+    $event = {
+        %$event,
+        headers => [ @{ $event->{headers} // [] }, ['x-runtime', $elapsed] ],
+    };
+
+A write into a handed reference can leak one request's data into another's
+response -- all the more because a layer may suspend between changing data
+and sending it.
+
 =head3 Cancellation and Disconnects
 
 If the server detects client-driven cancellation (e.g., HTTP/2 resets or WebSocket disconnects), it B<must> deliver the appropriate disconnect event to the application:

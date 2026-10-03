@@ -86,7 +86,12 @@ inner handlers via the scope, and to the client via a response header:
             my $wrapped_send = async sub {
                 my ($event) = @_;
                 if ($event->{type} eq 'http.response.start') {
-                    push @{ $event->{headers} }, [ 'x-request-id', $id ];
+                    # A new event: the one given belongs to the app, which
+                    # may send the same header list for every response.
+                    $event = {
+                        %$event,
+                        headers => [ @{ $event->{headers} // [] }, [ 'x-request-id', $id ] ],
+                    };
                 }
                 return await $send->($event);
             };
