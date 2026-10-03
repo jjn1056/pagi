@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002013 - UNRELEASED
+0.002013 - 2026-10-04
 
   [Specification]
   - A reminder in the Middleware section: a reference in a scope or an
