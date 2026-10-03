@@ -710,7 +710,7 @@ Scope edits travel only inward: a key an inner layer adds never reaches the
 layers outside it. To hear back from inner layers, an outer layer seeds a
 reference before calling inward, and reads it after:
 
-  sub with_timing_log {
+  sub with_handler_log {
       my ($app) = @_;
       return async sub {
           my ($scope, $receive, $send) = @_;
