@@ -3,15 +3,11 @@
 0.002013 - UNRELEASED
 
   [Specification]
-  - Events belong to the layer that built them. Middleware must not modify
-    an event it receives -- from $send or $receive -- nor the data
-    structures it references (a headers list, its [name, value] pairs, any
-    nested hash or array); to change an event, send a new one. Servers
-    likewise must not modify events passed to $send. Applications may
-    therefore send the same header list for every response. This departs
-    from PSGI, whose middleware edit responses in place: a PAGI layer can
-    suspend between editing and sending, so a write into a shared structure
-    carries one request's data into another client's response.
+  - A reminder in the Middleware section: a reference in a scope or an
+    event is shared by every layer that receives it, and one that outlives
+    the request (built at load time, closed over, a constant) by every
+    request too; change only your own copy. Writing into a handed reference
+    can leak one request's data into another's response.
 
   [Documentation]
   - The PSGI, Building and Tutorial middleware examples send a new event

@@ -563,38 +563,21 @@ are shared across all layers. This keeps each middleware's scope edits
 B<downward only>. See L<PAGI::Building/MIDDLEWARE> for the sharing model, why the
 clone is shallow rather than deep, and patterns for sharing state across layers.
 
-Events follow a stricter rule than C<$scope>, because an event is not a
-channel between layers. Middleware B<must not> modify an event it receives --
-one the inner application passes to the C<$send> it was given, or one its own
-C<$receive> returns -- nor the data structures the event references: a
-C<headers> list (a response start, a trailers event, C<websocket.accept> and
-C<sse.start> all carry one), the C<[name, value]> pairs in it, and any other
-hash or array reached through it. Objects and handles an event carries are used under their
-own rules (see C<fh> in L<PAGI::Spec::Www>). An event and everything it
-references belong to the layer that built it, and that layer may send the same
-structures again: an application may, for example, build a header list once
-and use it for every response. To change an event, send a new one, copying
-what you change:
+B<References are shared.> A value in a scope or an event that is a
+reference -- a header list, the pairs in it, a hash -- is the same data for
+every layer that receives it: nothing copies it on the way. A reference that
+outlives the request -- built at load time, closed over by a handler, held in
+a constant -- is the same data for every request as well. So change only your
+own copy of anything you were handed, and pass that on:
 
-    my $wrapped_send = async sub {
-        my ($event) = @_;
-        if ($event->{type} eq 'http.response.start') {
-            $event = {
-                %$event,
-                headers => [ @{ $event->{headers} // [] }, ['x-runtime', $elapsed] ],
-            };
-        }
-        await $send->($event);
+    $event = {
+        %$event,
+        headers => [ @{ $event->{headers} // [] }, ['x-runtime', $elapsed] ],
     };
 
-A changed header is a new pair, never an assignment into an existing one.
-Servers likewise B<must not> modify an event passed to C<$send>.
-
-This departs from PSGI, whose middleware conventionally edit the response in
-place, and whose applications must therefore not reuse response arrays. A PAGI
-layer may suspend between changing an event and sending it, so a write into a
-structure two requests share would carry one request's data -- a cookie, an
-origin, a request ID -- into another client's response.
+A write into a handed reference can leak one request's data into another's
+response -- all the more because a layer may suspend between changing data
+and sending it.
 
 =head3 Cancellation and Disconnects
 
@@ -692,11 +675,7 @@ resolving successfully -- never failed with a disconnect-derived error, never
 cancelled, an already-settled send never rewritten; a receive Future pending
 at disconnect detection resolves with the protocol's disconnect event;
 applications should not cancel send Futures. See L<PAGI::Spec::Www> for the
-protocol-level 0.4 changes. Events belong to the layer that built them:
-middleware and servers must not modify an event they receive or the data
-structures it references (send a new event instead), so an application may
-send the same structures again; this departs from PSGI's in-place
-convention.
+protocol-level 0.4 changes.
 
 =item -
 
