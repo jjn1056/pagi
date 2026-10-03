@@ -1254,9 +1254,7 @@ C<status> (Int) -- HTTP status code
 
 =item -
 
-C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Response headers. The
-application may send the same array, and the same pairs, for more than one
-response: no server or middleware modifies them (see L<PAGI::Spec/Middleware>).
+C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Response headers
 
 =item -
 
@@ -3082,9 +3080,7 @@ completed refusal or after C<sse.close> resolves with the scope's end
 such re-deliveries. Clarified C<path>, C<raw_path> and C<root_path>:
 C<root_path> followed by C<path> is the requested path; C<raw_path> is the
 full requested path, percent-encoded; how mounts and a server root path set
-them; C<raw_path> is never used for authorization. A response start's
-C<headers> array and pairs may be sent again by the application: no server or
-middleware modifies them (see L<PAGI::Spec/Middleware>).
+them; C<raw_path> is never used for authorization.
 
 =item -
 
