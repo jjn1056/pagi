@@ -1254,7 +1254,9 @@ C<status> (Int) -- HTTP status code
 
 =item -
 
-C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Response headers
+C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Response headers. The
+application may send the same array, and the same pairs, for more than one
+response: no server or middleware modifies them (see L<PAGI::Spec/Middleware>).
 
 =item -
 

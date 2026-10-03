@@ -677,6 +677,57 @@ Note: it drives C<IO::Async> timers directly, so it runs only under an
 IO::Async-based server such as PAGI::Server -- see its F<README.md> for how it
 could be made loop-agnostic with L<Future::IO>.
 
+=head1 MIDDLEWARE
+
+=head2 Changing a response on its way out
+
+A middleware changes the response by wrapping C<$send>. It never writes into
+the event it is handed -- the application may send the same header list for
+every response -- so it sends a new event with what it changed (see
+L<PAGI::Spec/Middleware>):
+
+  sub with_powered_by {
+      my ($app) = @_;
+      return async sub {
+          my ($scope, $receive, $send) = @_;
+          my $wrapped_send = async sub {
+              my ($event) = @_;
+              if ($event->{type} eq 'http.response.start') {
+                  $event = {
+                      %$event,
+                      headers => [ @{ $event->{headers} // [] }, ['x-powered-by', 'PAGI'] ],
+                  };
+              }
+              await $send->($event);
+          };
+          await $app->($scope, $receive, $wrapped_send);
+      };
+  }
+
+=head2 Reporting back to an outer layer
+
+Scope edits travel only inward: a key an inner layer adds never reaches the
+layers outside it. To hear back from inner layers, an outer layer seeds a
+reference before calling inward, and reads it after:
+
+  sub with_timing_log {
+      my ($app) = @_;
+      return async sub {
+          my ($scope, $receive, $send) = @_;
+          my $report = {};                                    # seeded here
+          my $inner  = { %$scope, 'myapp.report' => $report };
+          await $app->($inner, $receive, $send);
+          warn sprintf "%s %s handled by %s\n", $scope->{method}, $scope->{path},
+              $report->{handler} // '-';
+      };
+  }
+
+  # Any layer or handler further in -- its scope is a clone, but the
+  # reference is the same hash:
+  $scope->{'myapp.report'}{handler} = 'list_users' if $scope->{'myapp.report'};
+
+See L<PAGI::Building/Sharing state across layers>.
+
 =head1 INTEROP
 
 =head2 Running a PSGI app under PAGI
