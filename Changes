@@ -1,5 +1,14 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.002014 - UNRELEASED
+
+  [Specification]
+  - Www 0.6: a server shutting down closes each accepted WebSocket with
+    Close 1012 ("Service Restart") and reports 1012 with reason
+    server_shutdown, on every transport, instead of dropping it as 1006.
+    Shutdown joins the other closes the server decides (1002, 1007, 1008,
+    1011), so a client can tell a planned restart from a crash.
+
 0.002013 - 2026-10-04
 
   [Specification]
