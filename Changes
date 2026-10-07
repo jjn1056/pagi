@@ -12,6 +12,10 @@
     shutdown bound, for the application calls serving its connections to
     return before lifespan.shutdown, so cleanup an application starts on its
     disconnect finishes before the process exits.
+  - Www 0.6: a server delivers terminal callbacks (on_disconnect,
+    on_complete, on_end) once the end has happened and MUST NOT hold one
+    until the application returns, since an application may await its own
+    scope's end (as PAGI-Tools' helpers do for their on_close cleanup).
 
   [Documentation]
   - Cookbook: "Cleaning up when the server shuts down", with the new

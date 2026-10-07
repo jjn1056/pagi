@@ -423,7 +423,10 @@ first. Emitting the terminal event -- C<http.response.body> with C<< more => 0 >
 a C<file>/C<fh> body, the final trailers, C<sse.close>, or the completed
 WebSocket closing handshake -- sets the synchronous fact C<response_complete()>
 to true at once, but does B<not> synchronously invoke C<on_complete> or
-C<on_end>; the server MAY deliver them after the handler has returned. An
+C<on_end>. They are delivered on the event loop once the end has happened,
+whether the handler is still running or has returned; a server MUST NOT hold
+a terminal callback until the application returns, since an application may
+await its own scope's end. An
 application MUST NOT sequence code on the assumption that a completion callback
 has already run when its terminal send resolves: it reads C<response_complete()>
 for the synchronous fact, and uses the callback only for work indifferent to
@@ -3097,7 +3100,8 @@ them; C<raw_path> is never used for authorization. A server shutting down
 closes each accepted WebSocket with C<1012> ("Service Restart") and reports
 C<1012> with reason C<server_shutdown>, rather than dropping it as C<1006>, and
 waits within its shutdown bound for each application to return before
-C<lifespan.shutdown>.
+C<lifespan.shutdown>. A terminal callback is never held until the application
+returns.
 
 =item -
 
