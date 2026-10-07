@@ -599,6 +599,39 @@ mutate it through that shared reference; never reassign a top-level C<state> key
 from a request, which changes only that request's copy. See
 L<PAGI::Spec::Lifespan/Lifespan State>.
 
+=head2 Cleaning up when the server shuts down
+
+I<Example: F<examples/19-shutdown-cleanup>>
+
+When the server shuts down it ends each open connection -- a WebSocket gets
+a Close with code C<1012> ("Service Restart") -- and the application's
+C<receive> resolves with the disconnect. The connection object then reports
+why: C<< $scope->{'pagi.connection'}->disconnect_reason >> is
+C<server_shutdown>, on every transport and every scope type (it is one of the
+standard reason tokens, so a peer cannot fake it, as it could the reason text
+of its own WebSocket Close). That is the application's cue to clean up: save what the
+connection was holding, tell another service. The server waits, within its
+shutdown timeout, for each application to return, and sends
+C<lifespan.shutdown> only after that, so cleanup that awaits I/O finishes
+before the process exits.
+
+    elsif ($event->{type} eq 'websocket.disconnect') {
+        # The connection object's standard token, not the event's reason
+        # (which is the peer's own text when the peer closed).
+        my $why = ($conn->disconnect_reason // '') eq 'server_shutdown'
+                ? 'server shutdown' : 'client left';
+        print STDERR "session $id: ended ($why, code $event->{code})\n";
+        await save_session($id, \@messages);    # asynchronous; it finishes
+        return;
+    }
+
+Do per-connection cleanup here, where the connection's state is, and
+process-wide cleanup (closing a database pool) in C<lifespan.shutdown>, which
+comes after every connection's application has returned. An application that
+does not return -- one that ignores its disconnect and keeps looping -- holds
+the shutdown until the server's timeout, after which the server stops waiting
+for it.
+
 =head1 SERVER EXTENSIONS
 
 =head2 Forcing a flush: the fullflush extension

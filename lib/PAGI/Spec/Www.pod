@@ -2236,7 +2236,10 @@ transport (on HTTP/2, the stream), on every transport. C<code> is C<1012> and
 C<reason> is C<server_shutdown>. The server need not wait for the peer's Close.
 A shut-down server is usually coming back, and the code tells a client so; an
 application that means a permanent shutdown may close with C<1001> itself
-first.
+first. After delivering this event the server waits, within its shutdown bound,
+for the application to return before C<lifespan.shutdown> (see
+L<PAGI::Spec::Lifespan>), so cleanup the disconnect starts can finish; the
+same holds for an C<sse> or C<http> scope ended by a shutdown.
 
 =item *
 
@@ -3092,7 +3095,9 @@ C<root_path> followed by C<path> is the requested path; C<raw_path> is the
 full requested path, percent-encoded; how mounts and a server root path set
 them; C<raw_path> is never used for authorization. A server shutting down
 closes each accepted WebSocket with C<1012> ("Service Restart") and reports
-C<1012> with reason C<server_shutdown>, rather than dropping it as C<1006>.
+C<1012> with reason C<server_shutdown>, rather than dropping it as C<1006>, and
+waits within its shutdown bound for each application to return before
+C<lifespan.shutdown>.
 
 =item -
 

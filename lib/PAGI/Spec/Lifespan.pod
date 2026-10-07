@@ -275,8 +275,11 @@ C<message> (String) - Optional; if missing defaults to C<"">.
 
 =head2 Shutdown - C<receive> event
 
-Sent to the application when the server has stopped accepting connections and closed
-all active connections.
+Sent to the application when the server has stopped accepting connections, closed
+all active connections, and waited -- within its shutdown bound -- for the
+application calls serving them to return, so that cleanup an application starts
+on its disconnect (saving state, telling another service) finishes first. An
+application call still running at the bound is not waited for further.
 
 B<Keys>:
 
@@ -330,7 +333,9 @@ C<message> (String) - Optional; if missing defaults to C<"">.
 
 0.3 (Draft): Documented deployment modes: decline tolerance is the required
 default, an explicit strict mode (decline is a fatal startup failure) is
-permitted, and skipping the lifespan protocol entirely is nonconforming
+permitted, and skipping the lifespan protocol entirely is nonconforming.
+C<lifespan.shutdown> comes after the server has waited, within its shutdown
+bound, for the application calls serving its connections to return
 
 =item -
 

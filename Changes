@@ -8,6 +8,15 @@
     server_shutdown, on every transport, instead of dropping it as 1006.
     Shutdown joins the other closes the server decides (1002, 1007, 1008,
     1011), so a client can tell a planned restart from a crash.
+  - Lifespan 0.3 and Www 0.6: a shutting-down server waits, within its
+    shutdown bound, for the application calls serving its connections to
+    return before lifespan.shutdown, so cleanup an application starts on its
+    disconnect finishes before the process exits.
+
+  [Documentation]
+  - Cookbook: "Cleaning up when the server shuts down", with the new
+    examples/19-shutdown-cleanup -- a WebSocket app that saves each session
+    asynchronously on its server_shutdown disconnect.
 
 0.002013 - 2026-10-04
 
