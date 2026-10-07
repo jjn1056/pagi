@@ -605,16 +605,20 @@ I<Example: F<examples/19-shutdown-cleanup>>
 
 When the server shuts down it ends each open connection -- a WebSocket gets
 a Close with code C<1012> ("Service Restart") -- and the application's
-C<receive> resolves with the disconnect, reason C<server_shutdown>, on every
-transport. That is the application's cue to clean up: save what the
+C<receive> resolves with the disconnect. The connection object then reports
+why: C<< $scope->{'pagi.connection'}->disconnect_reason >> is
+C<server_shutdown>, on every transport and every scope type (it is one of the
+standard reason tokens, so a peer cannot fake it, as it could the reason text
+of its own WebSocket Close). That is the application's cue to clean up: save what the
 connection was holding, tell another service. The server waits, within its
 shutdown timeout, for each application to return, and sends
 C<lifespan.shutdown> only after that, so cleanup that awaits I/O finishes
 before the process exits.
 
     elsif ($event->{type} eq 'websocket.disconnect') {
-        # code 1012 / reason server_shutdown: the server is restarting
-        my $why = ($event->{reason} // '') eq 'server_shutdown'
+        # The connection object's standard token, not the event's reason
+        # (which is the peer's own text when the peer closed).
+        my $why = ($conn->disconnect_reason // '') eq 'server_shutdown'
                 ? 'server shutdown' : 'client left';
         print STDERR "session $id: ended ($why, code $event->{code})\n";
         await save_session($id, \@messages);    # asynchronous; it finishes

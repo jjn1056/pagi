@@ -51,6 +51,7 @@ my $next_id = 0;
 async sub handle_websocket {
     my ($scope, $receive, $send) = @_;
     my $id = ++$next_id;
+    my $conn = $scope->{'pagi.connection'};
     my @messages;
 
     await $receive->();                                  # websocket.connect
@@ -63,8 +64,12 @@ async sub handle_websocket {
             await $send->({ type => 'websocket.send', text => "noted: " . scalar(@messages) });
         }
         elsif ($event->{type} eq 'websocket.disconnect') {
-            # code 1012 / reason server_shutdown: the server is restarting.
-            my $why = ($event->{reason} // '') eq 'server_shutdown' ? 'server shutdown' : 'client left';
+            # Why it ended is a standard token on the connection object (Www
+            # "Standard Disconnect Reasons"), the same on every scope type. The
+            # event's own reason is the peer's text when the peer closed, so
+            # a client could send "server_shutdown" there; it cannot set this.
+            my $why = ($conn->disconnect_reason // '') eq 'server_shutdown'
+                    ? 'server shutdown' : 'client left';
             print STDERR "session $id: ended ($why, code $event->{code})\n";
             await save_session($id, \@messages);
             return;
