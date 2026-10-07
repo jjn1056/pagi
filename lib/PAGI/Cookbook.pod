@@ -632,6 +632,14 @@ does not return -- one that ignores its disconnect and keeps looping -- holds
 the shutdown until the server's timeout, after which the server stops waiting
 for it.
 
+Keep both kinds of cleanup bounded. A server that runs several worker
+processes may stop a worker outright when its shutdown timeout passes, and
+then a C<lifespan.shutdown> that has not finished never does. Return promptly
+after the disconnect, give slow cleanup (a remote call that may hang) its own
+time limit, and keep C<lifespan.shutdown> short. See your server's
+documentation for its bound; for C<pagi-server> it is C<shutdown_timeout>,
+and with C<--workers> everything must fit within it.
+
 =head1 SERVER EXTENSIONS
 
 =head2 Forcing a flush: the fullflush extension
