@@ -2186,7 +2186,7 @@ C<type> -- C<"websocket.disconnect">
 
 =item -
 
-C<code> (Int) -- WebSocket close code per RFC 6455. When the peer sent a close frame, this is its code (or C<1005>, "no status received", if the frame carried none). When the connection dropped or was aborted with no close handshake -- timeout, write error, server shutdown -- servers MUST report C<1006> ("abnormal closure"). When the server itself closes after a protocol violation, C<code> is the close code it sent (e.g. C<1002> for a framing error or C<1007> for an invalid UTF-8 payload).
+C<code> (Int) -- WebSocket close code per RFC 6455. When the peer sent a close frame, this is its code (or C<1005>, "no status received", if the frame carried none). When the connection dropped or was aborted with no close handshake -- timeout, write error -- servers MUST report C<1006> ("abnormal closure"). When the server itself closes -- after a protocol violation, or when shutting down -- C<code> is the close code it sent (e.g. C<1002> for a framing error, C<1007> for an invalid UTF-8 payload, C<1012> for a shutdown).
 
 =item -
 
@@ -2225,8 +2225,18 @@ The server does not substitute a PAGI token in this case.
 B<Abnormal drop with no close handshake> -- a bare TCP FIN, a timeout, or a write
 failure, before or after accept, or an C<abort>. C<code> is C<1006> ("abnormal
 closure") and C<reason> is the token for the condition: C<client_closed>,
-C<keepalive_timeout>, C<write_timeout>, C<write_error>, C<server_shutdown>,
-or C<app_abort>.
+C<keepalive_timeout>, C<write_timeout>, C<write_error>, or C<app_abort>.
+
+=item *
+
+B<Server shutdown> -- a server shutting down MUST send a Close frame with code
+C<1012> ("Service Restart", IANA WebSocket close code registry) on each
+accepted WebSocket whose closing handshake has not begun, before it ends the
+transport (on HTTP/2, the stream), on every transport. C<code> is C<1012> and
+C<reason> is C<server_shutdown>. The server need not wait for the peer's Close.
+A shut-down server is usually coming back, and the code tells a client so; an
+application that means a permanent shutdown may close with C<1001> itself
+first.
 
 =item *
 
@@ -3080,7 +3090,9 @@ completed refusal or after C<sse.close> resolves with the scope's end
 such re-deliveries. Clarified C<path>, C<raw_path> and C<root_path>:
 C<root_path> followed by C<path> is the requested path; C<raw_path> is the
 full requested path, percent-encoded; how mounts and a server root path set
-them; C<raw_path> is never used for authorization.
+them; C<raw_path> is never used for authorization. A server shutting down
+closes each accepted WebSocket with C<1012> ("Service Restart") and reports
+C<1012> with reason C<server_shutdown>, rather than dropping it as C<1006>.
 
 =item -
 
