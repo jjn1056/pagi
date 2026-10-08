@@ -3,7 +3,7 @@ package PAGI;
 use strict;
 use warnings;
 
-our $VERSION = '0.002013';
+our $VERSION = '0.003000';
 
 1;
 
@@ -138,10 +138,8 @@ specification without pulling in a particular server or toolkit:
 The specification: this module plus the L<PAGI::Spec> documents
 (L<PAGI::Spec>, L<PAGI::Spec::Www>, L<PAGI::Spec::Lifespan>,
 L<PAGI::Spec::Extensions>, L<PAGI::Spec::Tls>, L<PAGI::Spec::Server>). The
-specification modules are pure documentation;
-during the transition from the combined distribution this distribution also
-pulls in C<PAGI-Server> and C<PAGI-Tools> (see
-L</INSTALLATION AND BACKWARD COMPATIBILITY>).
+specification modules are pure documentation, and installing this
+distribution installs no server or toolkit (see L</INSTALLATION>).
 
 =item C<PAGI-Server>
 
@@ -221,22 +219,22 @@ Release and specification announcements are posted to the C<pagi-announce>
 mailing list at L<https://groups.google.com/g/pagi-announce>, and to the
 project repository at L<https://github.com/jjn1056/pagi>.
 
-=head1 INSTALLATION AND BACKWARD COMPATIBILITY
+=head1 INSTALLATION
 
 Before the split, the C<PAGI> distribution bundled the reference server, the
 application toolkit, and the specification together, so C<cpanm PAGI> (or a
-C<< requires 'PAGI' >> line in a F<cpanfile>) installed all of them.
+C<< requires 'PAGI' >> line in a F<cpanfile>) installed all of them. Through
+the 0.002 releases it kept installing L<PAGI::Server> (from the
+C<PAGI-Server> distribution) and L<PAGI::Tools> (from the C<PAGI-Tools>
+distribution) for those dependents.
 
-To avoid breaking existing dependents, the C<PAGI> distribution B<continues to
-pull in> L<PAGI::Server> (from the C<PAGI-Server> distribution) and
-L<PAGI::Tools> (from the C<PAGI-Tools> distribution) as runtime dependencies
-during the transition. Installing C<PAGI> therefore still gives you the server
-and the toolkit, exactly as before the split.
+B<Since 0.003000 it no longer does:> installing C<PAGI> installs the
+specification only. If your code uses the reference server or the toolkit,
+require L<PAGI::Server> and/or L<PAGI::Tools> directly:
 
-B<This is temporary.> These convenience dependencies will be removed in a
-future release. If your code uses the reference server or the toolkit, please
-update your dependencies to require L<PAGI::Server> and/or L<PAGI::Tools>
-directly, and depend on C<PAGI> only when you want the specification itself.
+    cpanm PAGI::Server PAGI::Tools
+
+and depend on C<PAGI> only when you want the specification itself.
 
 =head1 PAGI APPLICATION INTERFACE
 
@@ -412,10 +410,9 @@ L<PAGI::Spec> for the full specification.
 =head1 REQUIREMENTS
 
 The specification modules (C<PAGI.pm> and the C<PAGI::Spec::*> POD)
-are pure documentation and need only B<Perl 5.18+>. During the transition the
-distribution additionally pulls in C<PAGI-Server> and C<PAGI-Tools> for
-backward compatibility (see L</INSTALLATION AND BACKWARD COMPATIBILITY>); those
-distributions declare their own dependencies (the C<PAGI-Server> distribution
+are pure documentation and need only B<Perl 5.18+>. The C<PAGI-Server> and
+C<PAGI-Tools> distributions, installed separately (see L</INSTALLATION>),
+declare their own dependencies (the C<PAGI-Server> distribution
 requires L<IO::Async> and L<Future::AsyncAwait>; the C<PAGI-Tools> distribution
 requires L<Future::AsyncAwait>).
 

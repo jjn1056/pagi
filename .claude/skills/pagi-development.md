@@ -64,8 +64,8 @@ If dependencies are missing, ask the user:
 
 | Option | Action |
 |--------|--------|
-| **Install now** | Run `cpanm PAGI` (installs PAGI::Server and dependencies) |
-| **Add to cpanfile** | Add `requires 'PAGI';` to project cpanfile for later installation |
+| **Install now** | Run `cpanm PAGI::Server PAGI::Tools` (the server, the toolkit and their dependencies) |
+| **Add to cpanfile** | Add `requires 'PAGI::Server';` (and `requires 'PAGI::Tools';` if the app uses the toolkit) to the project cpanfile |
 | **Skip** | Continue without installing (code will be generated but won't run) |
 
 If user has a cpanfile, offer to add missing deps there. If not, offer to create one.

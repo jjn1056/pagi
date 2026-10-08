@@ -1,6 +1,19 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.002014 - UNRELEASED
+0.003000 - 2026-10-08
+
+  A major release. The specifications it describes, Www 0.6 (since
+  0.002009) and Lifespan 0.3, add requirements that servers and
+  applications written against earlier versions may not meet. It is
+  released alongside PAGI-Server and PAGI-Tools 0.003000, which implement
+  them; PAGI::Upgrading covers moving an application from Www 0.5 to 0.6.
+
+  [Packaging]
+  - Installing PAGI no longer installs PAGI-Server and PAGI-Tools. Through
+    the 0.002 releases the distribution kept them as runtime dependencies
+    for code that relied on `requires 'PAGI'` from before the split; it is
+    now the specification only. Require PAGI::Server and/or PAGI::Tools
+    directly (cpanm PAGI::Server PAGI::Tools).
 
   [Specification]
   - Www 0.6: a server shutting down closes each accepted WebSocket with
