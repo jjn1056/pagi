@@ -1,19 +1,12 @@
 # PAGI specification distribution.
 #
 # The spec modules (PAGI.pm + the generated PAGI::Spec::* POD) are pure
-# documentation. The only runtime requirements are the transitional
-# backward-compatibility dependencies below.
+# documentation, so the only runtime requirement is Perl. Through the 0.002
+# releases, installing PAGI also installed PAGI-Server and PAGI-Tools, for
+# code that relied on `requires 'PAGI'` from before the split; since 0.003000
+# it does not. Require PAGI::Server and/or PAGI::Tools directly.
 
 requires 'perl', '5.018';
-
-# Transitional backward compatibility -- will be removed in a future release.
-# Before the split, the PAGI distribution bundled the reference server and the
-# application toolkit, so anything with `requires 'PAGI'` in its cpanfile got
-# them. To avoid breaking those dependents, installing PAGI continues to pull
-# in PAGI-Server and PAGI-Tools, exactly as before. If you use the server or
-# the toolkit, please depend on PAGI::Server and/or PAGI::Tools directly.
-requires 'PAGI::Server', '0.002005';
-requires 'PAGI::Tools', '0.002001';
 
 on 'test' => sub {
     requires 'Test2::V0',          '0.000159';

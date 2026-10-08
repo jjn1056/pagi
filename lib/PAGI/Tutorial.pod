@@ -151,27 +151,20 @@ minimum version you need is the floor of whatever you build on.
 
 =head2 1.2 Installation
 
-Installing PAGI from CPAN:
+Install the reference server, and the C<PAGI-Tools> toolkit this tutorial
+points at along the way, from CPAN:
 
-  cpanm PAGI
-
-Or from source:
-
-  git clone https://github.com/jjn1056/pagi.git
-  cd PAGI
-  cpanm --installdeps .
-
-To include development dependencies (for testing):
-
-  cpanm --installdeps . --with-develop
+  cpanm PAGI::Server PAGI::Tools
 
 Verify the installation:
 
   pagi-server --version
 
-Installing C<PAGI> currently also pulls in the C<PAGI-Server> reference server
-and the C<PAGI-Tools> helpers for backward compatibility during the transition;
-see L<PAGI/INSTALLATION AND BACKWARD COMPATIBILITY>.
+The C<PAGI> distribution itself is the specification and these guides;
+installing it installs no server (see L<PAGI/INSTALLATION>). Its example
+applications are in the project repository:
+
+  git clone https://github.com/jjn1056/pagi.git
 
 =head3 About pagi-server
 
