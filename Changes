@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.003000 - UNRELEASED
+0.003000 - 2026-10-08
 
   A major release. The specifications it describes, Www 0.6 (since
   0.002009) and Lifespan 0.3, add requirements that servers and
