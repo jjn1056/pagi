@@ -79,8 +79,8 @@ specification without pulling in a particular server or toolkit:
   multi-worker, and the `pagi-server` CLI. `PAGI::Spec::Server` documents
   application-loading and runtime integration; server plugin compatibility is
   defined by each runner.
-- **PAGI-Tools** — the application toolkit: middleware, ready-made apps, the
-  endpoint/router framework, request/response helpers, and `PAGI::App::WrapPSGI`.
+- **PAGI-Tools** — the application toolkit: conveniences built on the
+  specification, documented in that distribution.
 
 ## Status
 

@@ -76,15 +76,12 @@ Scale that thought up:
 Kept tiny to stay readable. A real framework — or your assembly of `PAGI-Tools`
 parts — would add:
 
-- **Request/response objects** instead of raw hashes and strings — see
-  `PAGI::Request` and `PAGI::Response` in `PAGI-Tools`.
+- **Request/response objects** instead of raw hashes and strings.
 - **`405 Method Not Allowed`** (Nano returns `404` when only the method
   differs) and **`HEAD`** handling.
-- **Content negotiation, JSON encoding, body parsing, cookies, sessions** —
-  the `PAGI::Middleware::*` and `PAGI::App::*` suites cover these.
+- **Content negotiation, JSON encoding, body parsing, cookies, sessions.**
 - **Middleware** (a wrapping layer around the app) and **error handling**.
-- A faster matcher than a linear scan once you have many routes — see
-  `PAGI::App::Router`.
+- A faster matcher than a linear scan once you have many routes.
 
 None of these are magic; each is another small layer over the same protocol.
 
