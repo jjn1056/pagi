@@ -37,8 +37,7 @@ ones from the C<PAGI-Tools> distribution, or mix the two:
 
 Map an incoming request (method and path, the scope type) to a handler.
 F<examples/mini-framework> is a complete worked example -- routing with path
-parameters and async dispatch in about fifty lines. The production version is
-L<PAGI::App::Router>.
+parameters and async dispatch in about fifty lines.
 
 =item B<Request and response ergonomics>
 

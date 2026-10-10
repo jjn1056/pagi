@@ -115,11 +115,9 @@ C<PAGI-Server> distribution.
 
 =item B<Beta: PAGI-Tools distribution>
 
-The application toolkit (L<PAGI::Request>, L<PAGI::Response>,
-L<PAGI::WebSocket>, L<PAGI::SSE>, L<PAGI::Endpoint::Router>,
-L<PAGI::App::Router>, middleware, and bundled apps) is convenience built on top
-of the spec. These APIs may change between releases as the helpers evolve.
-Ships in the C<PAGI-Tools> distribution.
+The application toolkit is convenience built on top of the spec. Its APIs may
+change between releases as the helpers evolve. Ships in the C<PAGI-Tools>
+distribution; see L<PAGI::Tools>.
 
 =back
 
@@ -152,10 +150,8 @@ and plugin compatibility are runner-specific APIs.
 
 =item C<PAGI-Tools>
 
-The application toolkit: the C<PAGI::Middleware::*> suite, C<PAGI::App::*>
-ready-made apps, the C<PAGI::Endpoint::*> framework,
-L<PAGI::Request>/L<PAGI::Response>/L<PAGI::Context> ergonomics, and
-L<PAGI::Test::Client> and friends for in-process testing.
+The application toolkit: conveniences built on the specification, documented
+in that distribution (see L<PAGI::Tools>).
 
 =back
 
@@ -291,12 +287,9 @@ Process startup/shutdown lifecycle events
 
 =head1 UTF-8 HANDLING OVERVIEW
 
-Applications built on the C<PAGI-Tools> toolkit rarely touch encoding at
-all: L<PAGI::Request> decodes on the way in and L<PAGI::Response> encodes on
-the way out, so handler code works purely in Perl character strings. The
-rules below govern the B<raw interface> underneath -- the contract that
-toolkits, frameworks, and servers implement so that applications never have
-to.
+Toolkits and frameworks usually handle encoding for the applications built on
+them. The rules below govern the B<raw interface> underneath -- the contract
+that toolkits, frameworks, and servers implement.
 
 PAGI scopes provide decoded text where mandated by the spec and preserve raw
 bytes where the application must decide. Broad guidance:
@@ -323,34 +316,8 @@ C<Content-Length> based on byte length.
 
 =back
 
-Here is the same application written both ways. This is how it looks with
-the toolkit, which is how most application code should look -- no C<Encode>
-in sight:
-
-    use PAGI::Request;
-    use PAGI::Response;
-    use Future::AsyncAwait;
-
-    async sub app {
-        my ($scope, $receive, $send) = @_;
-        my $req  = PAGI::Request->new($scope, $receive);
-        my $text = $req->query_param('text') // '';
-
-        await PAGI::Response->new($scope)
-            ->status(200)
-            ->text("You sent: $text")
-            ->respond($send);
-    }
-
-C<query_param> URL-decodes (including C<+> as space) and UTF-8-decodes with
-replacement characters for invalid bytes (pass C<< strict => 1 >> to raise
-instead); C<text> encodes the body as UTF-8, sets
-C<text/plain; charset=utf-8>, and computes an authoritative
-C<Content-Length> from the encoded bytes.
-
-And here is the raw-interface equivalent -- what a toolkit like the one
-above is doing on the application's behalf. It is shown so the underlying
-contract is explicit, not as a recommended application style:
+Here is what that means for an application that decodes a query parameter
+and answers in UTF-8 text:
 
     use Future::AsyncAwait;
     use Encode qw(encode decode);

@@ -652,7 +652,7 @@ Understanding raw PAGI is important because:
 
 =item * You can build custom middleware and utilities
 
-=item * You'll appreciate what frameworks like L<PAGI::Endpoint::Router> do for you
+=item * You'll appreciate what frameworks do for you
 
 =item * You can handle edge cases that frameworks might not cover
 
@@ -821,8 +821,6 @@ Check for it:
   if ($scope->{type} eq 'lifespan') {
       # Handle startup/shutdown
   }
-
-Note: L<PAGI::Endpoint::Router> handles this via C<on_startup> and C<on_shutdown> callbacks.
 
 =head2 2.3 HTTP Request/Response Cycle (Raw)
 
@@ -1240,32 +1238,7 @@ Key points:
 
 =item * Must respond with C<complete> or C<failed> for each event
 
-=item * L<PAGI::Endpoint::Router> provides C<on_startup> and C<on_shutdown> callbacks to make this easier
-
 =back
-
-Example using L<PAGI::Endpoint::Router>:
-
-  use PAGI::Endpoint::Router;
-
-  my $db;
-
-  my $router = PAGI::Endpoint::Router->new(
-      on_startup => async sub {
-          my ($scope) = @_;
-          $db = MyDB->connect('dbi:Pg:dbname=myapp');
-          warn "Database connected\n";
-      },
-      on_shutdown => async sub {
-          my ($scope) = @_;
-          $db->disconnect;
-          warn "Database disconnected\n";
-      },
-  );
-
-  # ... define routes ...
-
-  $router->to_app;
 
 =head2 2.8 Middleware: Wrapping an Application
 
@@ -1550,36 +1523,6 @@ Response bodies must be encoded to bytes:
 
   \&app;
 
-=head3 Using High-Level Helpers
-
-L<PAGI::Request> and L<PAGI::Response> handle UTF-8 encoding/decoding automatically:
-
-  use PAGI::Request;
-  use PAGI::Response;
-
-  async sub app {
-      my ($scope, $receive, $send) = @_;
-
-      die "Expected http scope" unless $scope->{type} eq 'http';
-
-      my $req = PAGI::Request->new($scope, $receive);
-      my $res = PAGI::Response->new($scope, $send);
-
-      # Path is already decoded
-      my $path = $req->path;
-
-      # Query params are automatically decoded
-      my $name = $req->query_parameters->get('name') // 'World';
-
-      # Body is automatically decoded (if content-type indicates UTF-8)
-      my $body = await $req->body;
-
-      # Response automatically encodes to UTF-8 bytes
-      await $res->text("Hello, $name!");
-  }
-
-  \&app;
-
 Key points:
 
 =over 4
@@ -1591,8 +1534,6 @@ Key points:
 =item * Response bodies must be encoded to bytes before sending
 
 =item * Use L<Encode> for explicit encoding/decoding
-
-=item * L<PAGI::Request> and L<PAGI::Response> handle this automatically
 
 =back
 
@@ -1684,23 +1625,10 @@ Always await all response-affecting work:
 
 =head3 Detecting This Problem
 
-B<PAGI::Test::Client> will die with a clear error:
-
-  App returned without sending response. Did you forget to 'await' your $send calls?
-
-B<PAGI::Middleware::Lint> will warn (or die in strict mode):
-
-  HTTP app completed without sending http.response.start. This usually means
-  you forgot to 'await' your $send calls, or used ->retain for response-affecting work.
-
-B<Enable Lint during development:>
-
-  use PAGI::Middleware::Builder;
-
-  my $app = builder {
-      enable 'Lint', strict => 1;  # Die on violations
-      $my_app;
-  };
+An application whose Future resolves before it has started a response leaves
+the client waiting. As a last-resort backstop the server answers with a C<500>
+and logs that the application produced no response; see
+L<PAGI::Spec::Www/"Application Produced No Response">.
 
 =head3 The Future Tree Mental Model
 
