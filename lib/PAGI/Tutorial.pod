@@ -25,12 +25,6 @@ The only hard requirement for a PAGI application is L<Future::AsyncAwait> for
 async/await syntax. The event loop (L<IO::Async>, in PAGI::Server's case) is an
 implementation detail of the server, not of your application.
 
-Along the way we occasionally point at the C<PAGI-Tools> distribution, which
-provides convenience helpers (middleware, routers, request/response sugar,
-ready-made apps). Those are B<entirely optional>: ordinary PAGI applications
-and helpers built I<on top of> the protocol, never required to write a complete
-PAGI application. For a guide to them, see L<PAGI::Tools::Tutorial>.
-
 =head1 PART 1: GETTING STARTED
 
 =head2 1.1 Introduction
@@ -151,10 +145,9 @@ minimum version you need is the floor of whatever you build on.
 
 =head2 1.2 Installation
 
-Install the reference server, and the C<PAGI-Tools> toolkit this tutorial
-points at along the way, from CPAN:
+Install the reference server from CPAN:
 
-  cpanm PAGI::Server PAGI::Tools
+  cpanm PAGI::Server
 
 Verify the installation:
 
@@ -257,11 +250,8 @@ pagi-server supports environment modes that control middleware behavior:
 
 =item B<development> (default when running interactively)
 
-Auto-enables L<PAGI::Middleware::Lint> with strict mode, which catches PAGI
-specification violations early and provides helpful error messages. Note that
-Lint lives in the C<PAGI-Tools> distribution: pagi-server applies it only when
-PAGI-Tools is installed, and otherwise prints a reminder that you can install
-PAGI-Tools to enable it and runs without it.
+Wraps the application in development-time checks that catch PAGI
+specification violations early; see L<PAGI::Server::Runner>.
 
 =item B<production> (default when running non-interactively)
 
@@ -751,7 +741,6 @@ can use both on the same connection - e.g., text for JSON commands, binary for
 audio streams; (2) type safety - you know exactly what you received without
 ambiguity; (3) you can't accidentally mishandle encoding. If you don't care
 about the distinction: C<my $data = $event-E<gt>{text} // $event-E<gt>{bytes}>.
-The L<PAGI::WebSocket> helper class abstracts this for most use cases.
 
   # Connection closed
   {
@@ -798,8 +787,6 @@ Check for it:
       # Handle WebSocket connection
   }
 
-See L<PAGI::WebSocket> for WebSocket utilities.
-
 =head3 sse - Server-Sent Events
 
 A PAGI extension for server-to-client streaming. SSE allows the server to push updates to the client over a long-lived HTTP connection.
@@ -809,8 +796,6 @@ Check for it:
   if ($scope->{type} eq 'sse') {
       # Handle SSE connection
   }
-
-See L<PAGI::SSE> for SSE utilities.
 
 =head3 lifespan - Application Lifecycle Events
 
@@ -970,8 +955,6 @@ Key points:
 
 =back
 
-See L<PAGI::WebSocket> for higher-level utilities that make WebSocket handling easier.
-
 To reject a handshake, send an ordinary HTTP response (C<http.response.start>/C<.body> before
 C<websocket.accept>) such as a C<401>. See the cookbook's
 "Rejecting a handshake with an HTTP response" and
@@ -1060,8 +1043,6 @@ Key points:
 =item * SSE is unidirectional (server to client only)
 
 =back
-
-See L<PAGI::SSE> for higher-level SSE utilities.
 
 =head2 2.6 Streaming Responses
 
@@ -1242,7 +1223,7 @@ Key points:
 
 =head2 2.8 Middleware: Wrapping an Application
 
-Middleware is not a PAGI-Tools feature -- it is pure protocol. A middleware is
+Middleware is pure protocol. A middleware is
 just a function that takes an application and returns a new application with the
 same C<($scope, $receive, $send)> signature. Because the wrapper I<is> an
 application, you can stack middleware as deeply as you like, and the server
@@ -1376,10 +1357,7 @@ The outermost wrapper runs first on the way in and last on the way out. Order
 matters: put logging outside auth if you want to log rejected requests, inside
 if you do not.
 
-Everything above is plain protocol -- no toolkit required. PAGI-Tools ships
-ready-made middleware (logging, sessions, CORS, compression, and more) and
-ergonomic helpers for writing your own; each is built exactly like the wrappers
-here. See L<PAGI::Tools::Tutorial>.
+Everything above is plain protocol -- no toolkit required.
 
 =head2 2.9 UTF-8 Handling
 
@@ -1667,28 +1645,9 @@ L<PAGI::Building/"Scope is cloned per layer, not shared">.
 
 =item * B<Never use C<-E<gt>retain>> for response-affecting work
 
-=item * B<Use Lint middleware> to catch mistakes early
-
 =item * C<-E<gt>retain> is only safe B<after> the response is completely sent
 
 =back
-
-=head1 BEYOND THE PROTOCOL: OPTIONAL CONVENIENCES
-
-Everything above is the PAGI protocol: the complete contract between an async
-application and an async server. You can build any PAGI application with
-nothing more than what you have seen here: an C<async sub>, C<$scope>,
-C<$receive>, C<$send>, and L<Future::AsyncAwait>.
-
-The C<PAGI-Tools> distribution provides B<optional> convenience helpers on top
-of the protocol: middleware (logging, sessions, CORS, compression, and more),
-request and response sugar (L<PAGI::Request>, L<PAGI::Response>), WebSocket and
-SSE helpers, routers, and ready-made applications. None of it is required; it
-exists to save boilerplate when you want it. Every piece is an ordinary PAGI
-application or a plain wrapper around the C<$scope>/C<$receive>/C<$send>
-protocol, so you can read, replace, or ignore any of it.
-
-For a guide to those helpers, see L<PAGI::Tools::Tutorial>.
 
 =head1 PART 3: REFERENCE
 
@@ -1816,8 +1775,6 @@ You've covered the PAGI protocol! For more information:
 =item * Browse F<examples/> for complete working applications, including a small web framework built on PAGI
 
 =item * Read the specification: L<PAGI::Spec> and the protocol documents L<PAGI::Spec::Www>, L<PAGI::Spec::Lifespan>, L<PAGI::Spec::Server>.
-
-=item * L<PAGI::Tools::Tutorial> - Guide to the optional convenience helpers (middleware, routers, request/response sugar, ready-made apps)
 
 =back
 

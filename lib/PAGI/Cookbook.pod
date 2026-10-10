@@ -270,8 +270,7 @@ or when a refusal is fully written, and C<on_disconnect> fires on every
 abnormal ending. Awaiting the C<websocket.disconnect> / C<sse.disconnect> event
 remains the natural way for the receive loop itself to notice -- as the
 WebSocket and SSE recipes do -- but anything that does not own the queue uses
-the object. (The C<PAGI::WebSocket> and C<PAGI::SSE> helper objects in
-C<PAGI-Tools> wrap this for you.)
+the object.
 
 The full connection-state interface (C<is_connected>, C<disconnect_reason>,
 C<disconnect_detail>, C<on_disconnect>, C<on_complete>, C<disconnect_future>,
@@ -341,9 +340,7 @@ pair instead of C<websocket.accept> (sub-spec 0.6):
 
 These events are valid only before C<websocket.accept>: the server writes the
 HTTP response and, on HTTP/1.1, closes the connection (on HTTP/2 the stream
-ends and the connection is unaffected), so the WebSocket never opens. The
-C<PAGI::WebSocket> helper in C<PAGI-Tools> wraps this as
-C<< $ws->deny($response) >>, where C<$response> is any C<PAGI::Response>. See
+ends and the connection is unaffected), so the WebSocket never opens. See
 L<PAGI::Spec::Www/"Refusing the handshake">.
 
 =head1 SERVER-SENT EVENTS
@@ -491,8 +488,7 @@ next, fresher one. A sparse-but-current feed beats a dense-but-lagging one:
 
 C<buffered_amount> is a synchronous, non-blocking read; C<high_water_mark> and
 C<low_water_mark> report the band at which the server engages and releases
-backpressure. (The C<PAGI-Tools> helpers wrap the same handle as
-C<< $ws->buffered_amount >> and C<< $ws->is_writable >>.)
+backpressure.
 
 =head2 Pausing a producer you do not control
 
@@ -766,11 +762,10 @@ See L<PAGI::Building/Sharing state across layers>.
 =head2 Running a PSGI app under PAGI
 
 You do not have to rewrite a PSGI application to use PAGI. Wrap it once with
-L<PAGI::App::WrapPSGI> (from the C<PAGI-Tools> distribution) --
-C<< PAGI::App::WrapPSGI->new( psgi_app => $app )->to_app >> -- and it runs on
-any conforming PAGI server, with native async, WebSocket, or SSE handlers
-dispatched beside it. A runnable demo ships with C<PAGI-Tools> at
-F<examples/09-psgi-bridge>. See L<PAGI::PSGI> for the full migration guide.
+a PSGI adapter, such as L<PAGI::App::WrapPSGI> (from the C<PAGI-Tools>
+distribution), and it runs on any conforming PAGI server, with native async,
+WebSocket, or SSE handlers dispatched beside it. See L<PAGI::PSGI> for the full
+migration guide.
 
 =head1 SEE ALSO
 

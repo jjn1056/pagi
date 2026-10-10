@@ -29,7 +29,7 @@ server.
 A framework is not a different kind of thing from a raw PAGI application; it is a
 stack of conveniences over the same C<$scope>/C<$receive>/C<$send>. It helps to
 see the layers as separable, because you can write your own, borrow ready-made
-ones from the C<PAGI-Tools> distribution, or mix the two:
+ones, or mix the two:
 
 =over 4
 
@@ -43,13 +43,11 @@ parameters and async dispatch in about fifty lines.
 
 Hand the user a request object instead of a raw C<$scope>, and a response
 builder instead of hand-written C<http.response.start>/C<http.response.body>
-events. See L<PAGI::Request> and L<PAGI::Response>.
+events.
 
 =item B<Middleware>
 
-A wrapping layer around the application -- see L</MIDDLEWARE> below. The
-C<PAGI::Middleware::*> suite ships ready-made ones (CORS, sessions, gzip, auth,
-rate limiting, and more).
+A wrapping layer around the application -- see L</MIDDLEWARE> below.
 
 =item B<Everything else>
 
@@ -185,10 +183,10 @@ B<new> top-level key created deep in the stack cannot bubble up, by design.
 
 =back
 
-L<PAGI::Stash> packages this pattern: it wraps a single C<pagi.stash> hashref, so
-any layer holding the scope reads and writes shared per-request state through the
-one reference. Seed it high -- in the server or an outer middleware -- and it
-propagates in both directions.
+A single shared hashref (for example under a C<pagi.stash> key) packages this
+pattern: any layer holding the scope reads and writes shared per-request state
+through the one reference. Seed it high -- in the server or an outer middleware
+-- and it propagates in both directions.
 
 Rule of thumb: B<top-level scope keys describe your layer's view of the request;
 shared mutable state lives behind a reference.>
