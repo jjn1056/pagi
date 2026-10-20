@@ -34,8 +34,9 @@ package TickHub {
 # The middleware: owns the source (rooted in lifespan) and folds its events into
 # the inner app's $receive.
 # Resolve as soon as ANY of the given futures is ready, cancelling none of them.
-# (Future->wait_any cancels the losers; cancelling the long-lived $receive would
-# end the connection, so we watch each with on_ready instead.)
+# (Future->wait_any cancels the losers. Cancelling a receive is harmless, but
+# keeping one protocol receive across calls is simpler, so we watch each with
+# on_ready instead.)
 async sub await_either {
     my @futures = @_;
     my $first = Future->new;
@@ -76,8 +77,8 @@ sub with_ticks {
         # Every other scope: wrap $receive so a tick arrives as an event alongside
         # the protocol events, then hand off to the inner app unchanged. Keep ONE
         # outstanding protocol future across calls and race it with await_either,
-        # which never cancels the long-lived $receive (cancelling it would end the
-        # stream). When a protocol event fires, consume it and fetch a fresh one.
+        # which never cancels it, so one receive serves every call. When a protocol
+        # event fires, consume it and fetch a fresh one.
         my $protocol_f;
         my $wrapped_receive = async sub {
             $protocol_f //= $receive->();    # one outstanding receive, kept alive

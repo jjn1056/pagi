@@ -48,9 +48,8 @@ async sub app {
     # Run both directions at once. wait_any cancels the loser -- which is exactly
     # what we want here: a disconnect ends `incoming`, and the idle `outgoing`
     # tick-loop is then cancelled cleanly. (Contrast the receive-multiplex in
-    # examples 14/17: there the raced future is the live $receive, which must NOT
-    # be cancelled -- cancelling it ends the connection -- so they use an on_ready
-    # race instead. Here the losers are our own branches, so cancelling is the goal.)
+    # examples 14/17, which keep one live $receive across ticks with an on_ready
+    # race. Here the losers are our own branches, so cancelling is the goal.)
     await Future->wait_any($incoming, $outgoing);
 }
 
