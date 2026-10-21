@@ -117,8 +117,9 @@ async sub handle_lifespan {
 }
 
 # Resolve as soon as ANY of the given futures is ready, leaving them all intact.
-# (Future->wait_any cancels the losers; here we must not cancel the long-lived
-# $receive future, so we just watch each with on_ready.)
+# (Future->wait_any cancels the losers. Cancelling a receive is harmless, but
+# the one below watches for the client leaving for the whole stream, so we
+# just watch each with on_ready.)
 async sub await_either {
     my @futures = @_;
     my $first = Future->new;
@@ -152,8 +153,9 @@ async sub handle_http {
 
         # The in-handler multiplex (the "level 2" idiom): await the next tick OR a
         # client disconnect, whichever comes first, so a disconnect stops the
-        # stream promptly. We race with await_either rather than Future->wait_any,
-        # which would cancel the disconnect future and end $receive.
+        # stream promptly. We race with await_either rather than Future->wait_any
+        # so that one receive watches for the disconnect the whole time;
+        # wait_any would cancel it on every tick and need a new one each time.
         my $disconnect = $receive->();
         while (1) {
             my $tick_f = $hub->next_tick;

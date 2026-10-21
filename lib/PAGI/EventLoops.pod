@@ -447,10 +447,12 @@ above is exactly what such a layer implements for the single-process case.
 The hub above is the easy way, and it works -- but look at how a handler gets a
 tick. It reaches into C<< $scope->{state} >> for the hub and calls
 C<< $hub->next_tick >>. You can multiplex your source against the protocol stream
-right in the handler instead. The one rule: B<never let the race cancel the live
-C<$receive>> -- cancelling it ends the connection (the next C<$receive-E<gt>()>
-yields a cancelled future). So race with a small helper that watches both sides
-and cancels neither:
+right in the handler instead. C<< Future->wait_any >> races them correctly: a
+server must let an application cancel a pending receive without affecting the
+scope (L<PAGI::Spec::Www/"Meaning per scope">), so the receive that loses is
+simply made again next time. When one receive should last the whole loop -- here
+it watches for the client leaving -- race with a small helper that watches both
+sides and cancels neither:
 
     # resolve as soon as either future is ready -- cancelling neither
     async sub await_either {
@@ -477,7 +479,8 @@ That is F<examples/14-periodic-events>'s C</stream> exactly.
 But the B<right> shape is to stop reaching for the source at all, and let your own
 events arrive the way protocol events already do: through C<$receive>. A small
 middleware owns the source and wraps the C<$receive> it hands to the app -- racing
-with the same C<await_either>, so the long-lived receive is never cancelled:
+with the same C<await_either>, so one protocol receive serves every call
+(C<< Future->wait_any >> would be correct too, making a new receive each time):
 
     # in a middleware that started the ticker on lifespan startup
     my $protocol_f;
@@ -545,8 +548,8 @@ none of that bookkeeping.
 =back
 
 This is not hypothetical: it is precisely what L<PAGI::Middleware::Channels> does.
-Its C<$receive> wrapper is the C<wait_any($protocol_f, $channel_f)> shape shown
-above, with the source being a channel backend -- in-memory, or the Redis backend
+Its C<$receive> wrapper is the shape shown above, racing the protocol receive
+against the channel's next message, with the source being a channel backend -- in-memory, or the Redis backend
 from the scaling note when the events must cross processes. So writing your event
 source to B<deliver through C<$receive>> is what lets it drop into that ecosystem:
 the very middleware that fans events across workers can itself be wrapped, in turn,
