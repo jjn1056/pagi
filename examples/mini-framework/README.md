@@ -64,27 +64,20 @@ Scale that thought up:
 
 - A real framework adds *more* of the same kind of layering — it is not a
   different category of thing.
-- You don't have to build all of it from scratch. The `PAGI-Tools`
-  distribution already ships a production router, middleware, and
-  request/response objects you can assemble.
 - Perl's async web world is missing the frameworks that ASGI gave Python
   (FastAPI, Starlette, Django-async). The foundation for them is done. This
   example is the invitation to go build one.
 
 ## What `Nano` leaves out (on purpose)
 
-Kept tiny to stay readable. A real framework — or your assembly of `PAGI-Tools`
-parts — would add:
+Kept tiny to stay readable. A real framework would add:
 
-- **Request/response objects** instead of raw hashes and strings — see
-  `PAGI::Request` and `PAGI::Response` in `PAGI-Tools`.
+- **Request/response objects** instead of raw hashes and strings.
 - **`405 Method Not Allowed`** (Nano returns `404` when only the method
   differs) and **`HEAD`** handling.
-- **Content negotiation, JSON encoding, body parsing, cookies, sessions** —
-  the `PAGI::Middleware::*` and `PAGI::App::*` suites cover these.
+- **Content negotiation, JSON encoding, body parsing, cookies, sessions.**
 - **Middleware** (a wrapping layer around the app) and **error handling**.
-- A faster matcher than a linear scan once you have many routes — see
-  `PAGI::App::Router`.
+- A faster matcher than a linear scan once you have many routes.
 
 None of these are magic; each is another small layer over the same protocol.
 
@@ -92,4 +85,3 @@ None of these are magic; each is another small layer over the same protocol.
 
 - [`PAGI::Tutorial`](../../lib/PAGI/Tutorial.pod) — learn the protocol this is built on
 - `PAGI::Spec` — the formal specification
-- `PAGI-Tools` — routers, middleware, and request/response helpers to build with

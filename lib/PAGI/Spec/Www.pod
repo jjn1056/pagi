@@ -2962,10 +2962,6 @@ rather than B<stale> (dense but lagging):
         await $send->({ type => 'websocket.send', text => $update });
     }
 
-The high-level helpers in L<PAGI::WebSocket>, L<PAGI::SSE>, and L<PAGI::Request>
-expose these as C<< $obj->buffered_amount >>, C<< $obj->high_water_mark >>, and
-C<< $obj->low_water_mark >>.
-
 =head2 PAGI to PSGI Compatibility
 
 PAGI translates keys explicitly to maintain compatibility with PSGI:

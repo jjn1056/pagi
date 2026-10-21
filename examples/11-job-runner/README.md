@@ -21,8 +21,7 @@ A real-time job queue dashboard demonstrating PAGI's async capabilities with HTT
 >     })->();
 >
 > Stopping is a flag plus a `cancel`, so shutdown does not wait out the
-> interval. See `PAGI-Tools/examples/process-streaming` for the same principle
-> applied to reading a subprocess.
+> interval.
 
 ## Running
 

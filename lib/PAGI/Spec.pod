@@ -459,8 +459,6 @@ whether a response is "complete". An application that does not handle a scope at
 all should decline by raising (see L</Applications>), which the server surfaces
 the same way. (For the lifespan scope, see L<PAGI::Spec::Lifespan>.)
 
-B<Use C<PAGI::Middleware::Lint>> during development to detect incomplete responses.
-
 =head3 Legacy Applications
 
 Legacy (PSGI) applications are not async and follow a synchronous interface. Support for these can be implemented via a compatibility adapter.
