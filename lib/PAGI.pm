@@ -376,12 +376,50 @@ L<PAGI::Spec> for the full specification.
 
 =head1 REQUIREMENTS
 
-The specification modules (C<PAGI.pm> and the C<PAGI::Spec::*> POD)
-are pure documentation and need only B<Perl 5.18+>. The C<PAGI-Server> and
-C<PAGI-Tools> distributions, installed separately (see L</INSTALLATION>),
-declare their own dependencies (the C<PAGI-Server> distribution
-requires L<IO::Async> and L<Future::AsyncAwait>; the C<PAGI-Tools> distribution
-requires L<Future::AsyncAwait>).
+PAGI requires B<Perl 5.24 or later>: the specification, the reference server
+(the C<PAGI-Server> distribution) and the toolkit (the C<PAGI-Tools>
+distribution) alike. The releases up to 0.003000 declared Perl 5.18.
+
+The specification modules (C<PAGI.pm> and the C<PAGI::Spec::*> POD) are pure
+documentation. The C<PAGI-Server> and C<PAGI-Tools> distributions, installed
+separately (see L</INSTALLATION>), declare their own dependencies (the
+C<PAGI-Server> distribution requires L<IO::Async> and L<Future::AsyncAwait>;
+the C<PAGI-Tools> distribution requires L<Future::AsyncAwait>).
+
+=head2 Perl version support
+
+The specification is defined in terms of L<Future>: C<$receive>, C<$send> and
+the application itself all return Futures. Future is the one hard dependency
+of a PAGI application, and so Future's minimum Perl is PAGI's: when Future
+raises its floor, PAGI has no choice but to follow. L<Future::AsyncAwait> is
+not required, but it is how PAGI applications are meant to be written (the
+examples, the guides and the toolkit all use it), so its behaviour on a given
+Perl matters as much.
+
+The floor is Perl 5.24, rather than the 5.20 that Future itself needs,
+because 5.24 is the first Perl on which the async stack behaves the same
+everywhere: Future::AsyncAwait passes a cancel on to what an C<async sub>
+awaits (below 5.24 a cancelled C<async sub> stays suspended), and
+L<Future::XS> is available.
+
+The horizon PAGI works to is Future's maintainer's: Future supports Perl
+versions at least ten years old.
+
+=over 4
+
+=item * PAGI does not raise its floor automatically when a Perl turns ten.
+
+=item * A Perl more than ten years old is in B<grace time>: it still works,
+and it will not be broken casually, but it is the next floor that can go.
+Perl 5.24 (released 2016) is in grace time now.
+
+=item * PAGI's floor follows its upstream dependencies, which PAGI does not
+own, so advance notice of every change cannot be promised. What PAGI does
+promise is to work with those projects and pass on what it learns as early
+and as openly as it can, on the C<pagi-announce> list (see
+L</Announcements>).
+
+=back
 
 =head1 SEE ALSO
 

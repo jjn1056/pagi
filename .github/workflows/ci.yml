@@ -16,11 +16,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         perl: ['5.42','5.38', '5.32']
         include:
-          # Add older Perls only on Linux where they're reliably available
+          # PAGI's minimum Perl, on Linux where it is reliably available
           - os: ubuntu-latest
-            perl: '5.18'
-          - os: ubuntu-latest
-            perl: '5.20'
+            perl: '5.24'
 
     steps:
       - uses: actions/checkout@v4

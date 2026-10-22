@@ -14,7 +14,7 @@ of why PAGI is a foundation worth building on. If you read one example, read
 this one.
 
 ## Requirements
-- Perl 5.18+ with `Future::AsyncAwait`
+- Perl 5.24+ with `Future::AsyncAwait`
 - For timers/sleeps: `Future::IO` (loop-agnostic)
 - A PAGI server to run them. We use the reference server from the `PAGI-Server`
   distribution: `pagi-server examples/01-hello-http/app.pl --port 5000`

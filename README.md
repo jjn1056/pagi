@@ -87,7 +87,8 @@ specification without pulling in a particular server or toolkit:
 **Beta.** The PAGI *specification* is stable — breaking changes will not be made
 except for critical security issues, so raw PAGI applications you write today
 will keep working. The reference server and toolkit are beta. Requires **Perl
-5.18+**.
+5.24+**; see "Perl version support" in the PAGI documentation for the
+support horizon.
 
 This is a labor of love for the future of async web programming in Perl.
 Feedback, bug reports, and contributions are welcome.
