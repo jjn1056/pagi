@@ -1,5 +1,33 @@
 # This file documents the revision history for Perl extension PAGI
 
+0.003001
+
+  [Packaging]
+  - Requires Perl 5.24 (was 5.18). Future 0.54 requires Perl 5.20, and
+    Future is the one hard dependency of a PAGI application, so the floor
+    had to move; it moves to 5.24 because that is where Future::AsyncAwait
+    passes a cancel on to what an async sub awaits, and where Future::XS is
+    available. "Perl version support" in PAGI.pm describes the support
+    horizon: Future supports Perls at least ten years old, and an older Perl
+    is in grace time.
+
+  [Specification]
+  - Www: an application MAY cancel a pending $receive Future (as
+    Future->wait_any cancels the loser of a race), and that MUST NOT affect
+    the scope: the cancelled receive consumes no event, a later receive
+    returns the next event, and another pending receive is unaffected. No
+    new specification version.
+
+  [Documentation]
+  - The specification and its guides no longer teach PAGI-Tools' API; they
+    keep only pointers to it (install lines, the ecosystem description, the
+    PSGI adapter, a see-also link).
+  - PAGI::EventLoops no longer tells applications never to let a race cancel
+    the live $receive; examples 14, 17 and 18 drop the same claim from their
+    comments.
+  - The Tutorial names Future as a PAGI application's only hard dependency,
+    with Future::AsyncAwait as the recommended way to write one.
+
 0.003000 - 2026-10-08
 
   A major release. The specifications it describes, Www 0.6 (since

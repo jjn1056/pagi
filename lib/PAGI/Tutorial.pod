@@ -21,9 +21,12 @@ server, and we use L<PAGI::Server> (the reference implementation, from the
 C<PAGI-Server> distribution) because it is a complete, fully-featured PAGI
 server. Nothing in the protocol depends on it; any conforming server would do.
 
-The only hard requirement for a PAGI application is L<Future::AsyncAwait> for
-async/await syntax. The event loop (L<IO::Async>, in PAGI::Server's case) is an
-implementation detail of the server, not of your application.
+The only hard requirement for a PAGI application is L<Future>;
+L<Future::AsyncAwait> is how this tutorial, like the rest of PAGI, writes one.
+PAGI requires no event loop. L<IO::Async> is what the reference server,
+PAGI::Server, runs on internally: an implementation detail of that server, not
+a requirement of PAGI or of your application. Another server can use another
+loop.
 
 =head1 PART 1: GETTING STARTED
 
@@ -126,7 +129,7 @@ To use PAGI, you'll need:
 
 =over 4
 
-=item * B<Perl 5.18 or later> - the floor for the PAGI distributions (the specification, the reference server, and the toolkit)
+=item * B<Perl 5.24 or later> - the floor for the PAGI distributions (the specification, the reference server, and the toolkit)
 
 =item * L<Future::AsyncAwait> - Provides async/await syntax
 
@@ -134,12 +137,16 @@ To use PAGI, you'll need:
 
 =back
 
-B<Note:> A bare PAGI application's only hard dependency is C<Future::AsyncAwait>
-(for async/await syntax), which supports Perl back to 5.16; the event loop
-(L<IO::Async>) is an implementation detail of the server, and using C<Future::IO>
-for timers and I/O keeps your code portable across servers. In practice, though,
-you run on something: the specification, the reference server L<PAGI::Server>,
-and the L<PAGI-Tools|PAGI::Tools> toolkit all require B<Perl 5.18 or later>, and
+B<Note:> A bare PAGI application's only hard dependency is L<Future>; the
+specification is defined in Futures. C<Future::AsyncAwait> is not required,
+but writing PAGI code without it means chaining callbacks, so this tutorial,
+like the rest of PAGI, uses it. PAGI requires no event loop: L<IO::Async> is
+an implementation detail of the reference server, L<PAGI::Server>, and not a
+requirement of PAGI. Using C<Future::IO> for timers and I/O keeps your code
+portable across servers. In practice you run on something:
+the specification, the reference server L<PAGI::Server>, and the
+L<PAGI-Tools|PAGI::Tools> toolkit all require B<Perl 5.24 or later> (see
+L<PAGI/"Perl version support"> for why, and for the support horizon), and
 another server or a higher-level framework may require a newer Perl still. The
 minimum version you need is the floor of whatever you build on.
 

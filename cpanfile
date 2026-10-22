@@ -6,7 +6,7 @@
 # code that relied on `requires 'PAGI'` from before the split; since 0.003000
 # it does not. Require PAGI::Server and/or PAGI::Tools directly.
 
-requires 'perl', '5.018';
+requires 'perl', '5.024';  # see "Perl version support" in PAGI.pm
 
 on 'test' => sub {
     requires 'Test2::V0',          '0.000159';
