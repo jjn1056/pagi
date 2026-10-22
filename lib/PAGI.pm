@@ -384,7 +384,11 @@ The specification modules (C<PAGI.pm> and the C<PAGI::Spec::*> POD) are pure
 documentation. The C<PAGI-Server> and C<PAGI-Tools> distributions, installed
 separately (see L</INSTALLATION>), declare their own dependencies (the
 C<PAGI-Server> distribution requires L<IO::Async> and L<Future::AsyncAwait>;
-the C<PAGI-Tools> distribution requires L<Future::AsyncAwait>).
+the C<PAGI-Tools> distribution requires L<Future::AsyncAwait>). PAGI itself
+requires no event loop: L<IO::Async> is the event loop the reference server
+runs on, an implementation detail of that server, and an application written
+to the specification (using L<Future::IO> for timers and I/O) runs on any
+conforming server.
 
 =head2 Perl version support
 
