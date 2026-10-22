@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-0.003001
+0.003001 - 2026-10-22
 
   [Packaging]
   - Requires Perl 5.24 (was 5.18). Future 0.54 requires Perl 5.20, and
