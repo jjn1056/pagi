@@ -350,9 +350,10 @@ L<PAGI::Spec::Www/"Refusing the handshake">.
 I<Example: F<examples/05-sse-broadcaster>> (needs C<use Future::IO;>)
 
 Open the stream with C<sse.start>, then push C<sse.send> events, each a
-C<< { event => ..., data => ... } >>. Hold a C<$receive> Future and check it so
-you stop when the client closes, and end a finite stream with C<sse.close>
-unless the client already left:
+C<< { event => ..., data => ... } >>. Watch for the client leaving in the
+background -- a receive returns C<sse.request> first (with the request body,
+empty for a GET), so the watcher reads until C<sse.disconnect> -- and stop when
+it does. End a finite stream with C<sse.close> unless the client already left:
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
@@ -364,7 +365,12 @@ unless the client already left:
             headers => [ [ 'content-type', 'text/event-stream' ] ],
         });
 
-        my $disconnect = $receive->();   # completes on sse.disconnect
+        my $disconnect = (async sub {
+            while (1) {
+                my $event = await $receive->();
+                return $event if $event->{type} eq 'sse.disconnect';
+            }
+        })->();
 
         my @events = (
             { event => 'tick', data => '1' },
@@ -378,7 +384,9 @@ unless the client already left:
             await $send->({ type => 'sse.send', %$msg });
         }
 
-        await $send->({ type => 'sse.close' }) unless $disconnect->is_ready;
+        if ($disconnect->is_ready) { return }    # the client left: no sse.close
+        $disconnect->cancel;
+        await $send->({ type => 'sse.close' });
     };
 
 Using C<< Future::IO->sleep >> rather than C<sleep> keeps the handler
