@@ -6,7 +6,7 @@ PAGI::Spec::Extensions - The PAGI server extension mechanism
 
 =head1 Extensions
 
-B<Version>: 0.3 (Draft)
+B<Version>: 0.4 (Draft)
 
 The PAGI specification provides for server-specific extensions to be used
 outside of the core PAGI specification. This document records the extension
@@ -148,7 +148,7 @@ See L<PAGI::Building> for using this to build event-driven layers on PAGI.
 
 =item -
 
-0.6 (Draft): Removed C<websocket.http.response> from the registry; refusing
+0.4 (Draft), with Www 0.6: Removed C<websocket.http.response> from the registry; refusing
 a handshake is an ordinary HTTP response in the core WebSocket contract
 (L<PAGI::Spec::Www/"Refusing the handshake">).
 

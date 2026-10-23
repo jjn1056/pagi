@@ -1,5 +1,13 @@
 # This file documents the revision history for Perl extension PAGI
 
+Unreleased
+
+  [Specification]
+  - PAGI::Spec::Extensions is version 0.4: the entry that removed
+    websocket.http.response from the registry (with Www 0.6) was labelled
+    0.6 in its history while the document still said 0.3. The content is
+    unchanged.
+
 0.003001 - 2026-10-22
 
   [Packaging]
