@@ -1,110 +1,35 @@
 ---
 name: pagi-development
-description: Use when writing raw PAGI applications, understanding PAGI spec, or debugging PAGI code. Covers HTTP, WebSocket, SSE, and Lifespan protocols.
+description: Use when writing raw PAGI applications, understanding the PAGI spec, or debugging PAGI code. Covers HTTP, WebSocket, SSE and Lifespan.
 ---
 
 # PAGI Development Skill
 
-This skill teaches how to write raw PAGI (Perl Asynchronous Gateway Interface) applications. PAGI is an async-native successor to PSGI supporting HTTP, WebSocket, SSE, and lifecycle management.
+PAGI (Perl Asynchronous Gateway Interface) is an async successor to PSGI. A
+PAGI application is one async coderef that serves HTTP, WebSocket, SSE and
+lifespan scopes. This skill covers **raw** PAGI: the protocol itself. The
+toolkit built on it (requests, responses, routing, middleware) is PAGI-Tools;
+point people to `PAGI::Tools` for that, don't teach it from here.
 
-## When to Use This Skill
+**The authorities**, which win over anything below: `PAGI::Spec` and
+`PAGI::Spec::Www` / `::Lifespan` / `::Extensions` / `::Tls` (the rules),
+`PAGI::Tutorial`, `PAGI::Cookbook` (recipes), `PAGI::EventLoops`
+(Futures, Future::IO, loops), `PAGI::Upgrading` (spec changes), and the
+runnable apps in the PAGI distribution's `examples/`. When in doubt, read the
+spec section and say which one.
 
-- Writing a new raw PAGI application
-- Understanding PAGI scope types and events
-- Debugging PAGI protocol issues
-- Converting PSGI apps to PAGI
+## Setup
 
-## Environment Setup (Run on Skill Activation)
+- **Perl 5.24 or later** is required for PAGI, PAGI-Server and PAGI-Tools
+  (see "Perl version support" in `PAGI`).
+- A raw app needs `Future::AsyncAwait`, and `Future::IO` for timers and I/O.
+  To run it: `cpanm PAGI::Server` (add `PAGI::Tools` for the toolkit and for
+  `-E development`, which turns on its Lint middleware).
+- Syntax: on 5.36+ use `use v5.36;` (not `use 5.36;`, which means 5.360 and
+  dies) and signatures. On 5.24-5.35 use `use strict; use warnings;` and
+  `my ($scope, $receive, $send) = @_;` (the spec's examples do this).
 
-**When this skill activates, perform these checks:**
-
-### 1. Check Perl Version
-
-```bash
-perl -v
-```
-
-Extract the version number. PAGI requires Perl 5.18+ (for Future::AsyncAwait stability).
-
-### 2. Ask User Target Perl Version
-
-Ask the user which Perl version they're targeting:
-
-**Question:** "Which Perl version are you targeting for this PAGI application?"
-
-| Option | When to Choose |
-|--------|----------------|
-| **5.36+** (Recommended) | Modern systems, new projects. Cleanest syntax with built-in signatures. |
-| **5.20 - 5.35** | Older systems with experimental signatures support. |
-| **5.18 - 5.19** | Minimum supported. No signatures, use traditional `my (...) = @_;` syntax. |
-
-**Impact on generated code:**
-
-- **5.36+**: Uses `use 5.36;` which enables strict, warnings, and stable signatures
-- **5.20-5.35**: Uses `use strict; use warnings; use experimental 'signatures';`
-- **5.18-5.19**: Uses `use strict; use warnings;` with `my ($scope, $receive, $send) = @_;`
-
-Store the user's choice and apply to ALL generated code examples.
-
-### 3. Check Dependencies
-
-Check if PAGI and required modules are installed:
-
-```bash
-perl -MPAGI::Server -e 'print "PAGI::Server $PAGI::Server::VERSION\n"' 2>/dev/null || echo "NOT INSTALLED"
-perl -MFuture::AsyncAwait -e 'print "Future::AsyncAwait $Future::AsyncAwait::VERSION\n"' 2>/dev/null || echo "NOT INSTALLED"
-perl -MIO::Async -e 'print "IO::Async $IO::Async::VERSION\n"' 2>/dev/null || echo "NOT INSTALLED"
-```
-
-### 4. Offer Installation if Missing
-
-If dependencies are missing, ask the user:
-
-**"PAGI::Server is not installed. Without it, PAGI applications cannot run locally. Would you like to:"**
-
-| Option | Action |
-|--------|--------|
-| **Install now** | Run `cpanm PAGI::Server PAGI::Tools` (the server, the toolkit and their dependencies) |
-| **Add to cpanfile** | Add `requires 'PAGI::Server';` (and `requires 'PAGI::Tools';` if the app uses the toolkit) to the project cpanfile |
-| **Skip** | Continue without installing (code will be generated but won't run) |
-
-If user has a cpanfile, offer to add missing deps there. If not, offer to create one.
-
----
-
-## Perl Version Syntax Reference
-
-All examples in this skill use **5.36+ syntax** as the canonical form. Adapt based on user's target version:
-
-### 5.36+ (Recommended)
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-
-my $app = async sub ($scope, $receive, $send) {
-    die "Unsupported" if $scope->{type} ne 'http';
-    # ...
-};
-
-$app;
-```
-
-### 5.20 - 5.35 (Experimental Signatures)
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-
-my $app = async sub ($scope, $receive, $send) {
-    die "Unsupported" if $scope->{type} ne 'http';
-    # ...
-};
-
-$app;
-```
-
-### 5.18 - 5.19 (No Signatures)
+## The interface
 
 ```perl
 use strict;
@@ -113,1691 +38,300 @@ use Future::AsyncAwait;
 
 my $app = async sub {
     my ($scope, $receive, $send) = @_;
-    die "Unsupported" if $scope->{type} ne 'http';
-    # ...
+    die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
+
+    await $send->({
+        type    => 'http.response.start',
+        status  => 200,
+        headers => [ [ 'content-type', 'text/plain' ] ],
+    });
+    await $send->({ type => 'http.response.body', body => "Hello, world!\n", more => 0 });
 };
 
-$app;
+$app;   # the file's last value: a coderef (or an object with to_app)
 ```
 
----
+Run it: `pagi-server --app app.pl --port 5000` (or `pagi-server app.pl`).
 
-## Core Application Interface
+- **`$scope`** describes the connection: `type` (`http`, `websocket`, `sse`,
+  `lifespan`), `pagi` (`version`, `spec_version`), `extensions`, and for
+  http/websocket/sse `pagi.connection` (required) and often `pagi.transport`.
+  Don't mutate the scope you were handed; pass a copy (`{ %$scope, ... }`)
+  down. Your own keys are namespaced (`'myapp.user'`); undotted keys are the
+  spec's.
+- **`$receive->()`** returns a Future of the next event (`{ type => ... }`).
+- **`$send->(\%event)`** returns a Future. **Await every send**: it resolves
+  when the server is done with the event (not when the client has it); sends
+  are sequential; a send after the client left succeeds as a no-op. Don't
+  cancel sends.
+- **Unsupported scope types**: die (the server treats a lifespan that dies as
+  "lifespan not supported" and carries on).
+- **Every response ends with a terminal event**: the last body (`more => 0`),
+  a `file`/`fh` body, trailers, `sse.close`, or `websocket.close`/a received
+  `websocket.disconnect`. Returning without it is an incomplete response: the
+  client sees a truncation, and the server logs it. But if you stop because
+  the client left, don't send it.
+- If the app returns before `http.response.start` while the client is still
+  there, the server sends a 500.
 
-Every PAGI application is an async coderef with this signature:
+## Receiving, disconnects, cancelling
 
-```perl
-use 5.36;
-use Future::AsyncAwait;
+- Every pending receive resolves with the scope's disconnect event when the
+  client goes (`http.disconnect`, `websocket.disconnect`, `sse.disconnect`).
+  After the scope ends, receives keep returning that end (bounded by the
+  server's `--max-disconnect-receives`).
+- **An application may cancel a pending receive**: `Future->wait_any` cancels
+  the loser, and that consumes no event; the next receive gets the next one.
+  So racing the client against your own events is fine:
 
-async sub app ($scope, $receive, $send) {
-    # $scope   - HashRef with connection metadata
-    # $receive - Async coderef returning event HashRefs
-    # $send    - Async coderef accepting event HashRefs
-}
-```
+  ```perl
+  my $first = await Future->wait_any($receive->(), $my_event->());
+  ```
 
-### The Three Parameters
+- To know about a disconnect without receiving, use `pagi.connection`:
+  `$scope->{'pagi.connection'}->is_connected`, `->disconnect_future`,
+  `->disconnect_reason`, `->on_disconnect(sub { ... })`. See
+  `PAGI::Spec::Www` "Connection State" and Cookbook "Detecting client
+  disconnect".
 
-**$scope** - Connection metadata (read-only):
-- `type` - Protocol: `"http"`, `"websocket"`, `"sse"`, `"lifespan"`
-- `pagi` - HashRef with `version` and `spec_version`
-- Protocol-specific keys (path, method, headers, etc.)
+## HTTP
 
-**$receive** - Get events from client/server:
-```perl
-my $event = await $receive->();
-# Returns HashRef with 'type' key
-```
+Scope keys you'll use: `method`, `path` (decoded, below `root_path`),
+`raw_path` (bytes, percent-encoded; never route on it), `query_string`
+(bytes), `headers` (ArrayRef of [name, value], names lower-case),
+`root_path`, `scheme`, `http_version`, `client`, `server`, `state`.
 
-**$send** - Send events to client:
-```perl
-await $send->({ type => 'http.response.start', status => 200, ... });
-```
-
-### Required Error Handling
-
-Apps MUST reject unsupported scope types:
-
-```perl
-async sub app ($scope, $receive, $send) {
-    die "Unsupported scope type: $scope->{type}"
-        unless $scope->{type} eq 'http';
-    # ... handle request
-}
-```
-
-### File Structure
-
-PAGI apps are typically loaded via `do`:
-
-```perl
-# app.pl
-use 5.36;
-use Future::AsyncAwait;
-
-my $app = async sub ($scope, $receive, $send) {
-    # ... implementation
-};
-
-$app;  # Return coderef when loaded
-```
-
-Run with: `pagi-server ./app.pl --port 5000`
-
-## HTTP Protocol
-
-### HTTP Scope
-
-When `$scope->{type}` is `"http"`:
+Read the body:
 
 ```perl
-{
-    type         => 'http',
-    http_version => '1.1',           # '1.0', '1.1', or '2'
-    method       => 'GET',           # Uppercase
-    scheme       => 'http',          # or 'https'
-    path         => '/users/123',    # Decoded UTF-8
-    raw_path     => '/users/123',    # Original bytes (optional)
-    query_string => 'foo=bar',       # Raw bytes after ?
-    root_path    => '',              # Mount point (like SCRIPT_NAME)
-    headers      => [                # ArrayRef of [name, value] pairs
-        ['host', 'example.com'],
-        ['content-type', 'application/json'],
-    ],
-    client       => ['192.168.1.1', 54321],  # [host, port] (optional)
-    server       => ['0.0.0.0', 5000],       # [host, port] (optional)
-    state        => {},                       # From lifespan (optional)
-}
-```
-
-### Reading Request Body
-
-```perl
-async sub app ($scope, $receive, $send) {
-    die "Unsupported" if $scope->{type} ne 'http';
-
-    # Collect full body
+async sub read_body {
+    my ($receive) = @_;
     my $body = '';
     while (1) {
         my $event = await $receive->();
-        if ($event->{type} eq 'http.request') {
-            $body .= $event->{body} // '';
-            last unless $event->{more};
-        }
-        elsif ($event->{type} eq 'http.disconnect') {
-            return;  # Client disconnected
-        }
-    }
-
-    # Now $body contains full request body
-}
-```
-
-### Sending Response
-
-**Simple response:**
-
-```perl
-await $send->({
-    type    => 'http.response.start',
-    status  => 200,
-    headers => [
-        ['content-type', 'text/plain'],
-        ['content-length', '13'],
-    ],
-});
-
-await $send->({
-    type => 'http.response.body',
-    body => 'Hello, World!',
-});
-```
-
-**Streaming response:**
-
-```perl
-await $send->({
-    type    => 'http.response.start',
-    status  => 200,
-    headers => [['content-type', 'text/plain']],
-});
-
-for my $chunk (@chunks) {
-    await $send->({
-        type => 'http.response.body',
-        body => $chunk,
-        more => 1,  # More chunks coming
-    });
-}
-
-# Final chunk
-await $send->({
-    type => 'http.response.body',
-    body => '',
-    more => 0,  # Done
-});
-```
-
-**File response (path):**
-
-```perl
-await $send->({
-    type    => 'http.response.start',
-    status  => 200,
-    headers => [['content-type', 'application/octet-stream']],
-});
-
-await $send->({
-    type   => 'http.response.body',
-    file   => '/path/to/file.bin',  # Server opens, streams, closes
-    # offset => 0,                   # Optional: start offset for range requests
-    # length => 1000,                # Optional: byte count
-});
-# Note: 'more' is ignored for file - response is implicitly complete
-```
-
-**Filehandle response (already open):**
-
-```perl
-open my $fh, '<:raw', '/tmp/generated.csv' or die $!;
-
-await $send->({
-    type    => 'http.response.start',
-    status  => 200,
-    headers => [['content-type', 'text/csv']],
-});
-
-await $send->({
-    type => 'http.response.body',
-    fh   => $fh,  # Application-owned filehandle
-});
-
-close $fh;  # Application MUST close after send completes
-```
-
-**File/Filehandle Notes:**
-- `body`, `file`, and `fh` are mutually exclusive - use exactly one
-- `file`: Server opens, streams, and closes the file
-- `fh`: Application owns the handle and MUST close it after `$send` completes
-- `more` is ignored for both - response is implicitly complete
-- Use `offset` and `length` for HTTP range requests (206 Partial Content)
-- Servers should use `sendfile()` or equivalent for efficiency
-
-**Response with Trailers:**
-
-HTTP trailers are headers sent after the response body. Useful for checksums, signatures, or metadata computed during streaming.
-
-```perl
-# Signal trailers will be sent
-await $send->({
-    type     => 'http.response.start',
-    status   => 200,
-    headers  => [
-        ['content-type', 'application/octet-stream'],
-        ['trailer', 'x-checksum'],  # Announce trailer
-    ],
-    trailers => 1,  # Enable trailers
-});
-
-# Send body
-await $send->({
-    type => 'http.response.body',
-    body => $data,
-    more => 0,
-});
-
-# Send trailers after body is complete
-await $send->({
-    type    => 'http.response.trailers',
-    headers => [
-        ['x-checksum', $computed_checksum],
-    ],
-});
-```
-
-**Trailer Requirements:**
-- Set `trailers => 1` in `http.response.start`
-- Announce trailer names in `Trailer` header (recommended)
-- Send `http.response.trailers` after body is complete
-- Check `$scope->{pagi}{features}{supports_trailers}` for compatibility
-
-### Complete HTTP Example
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-use JSON::PP;
-
-my $app = async sub ($scope, $receive, $send) {
-    die "Unsupported scope type: $scope->{type}"
-        if $scope->{type} ne 'http';
-
-    my $method = $scope->{method};
-    my $path   = $scope->{path};
-
-    if ($path eq '/' && $method eq 'GET') {
-        my $json = encode_json({ message => 'Hello!' });
-
-        await $send->({
-            type    => 'http.response.start',
-            status  => 200,
-            headers => [
-                ['content-type', 'application/json'],
-                ['content-length', length($json)],
-            ],
-        });
-
-        await $send->({
-            type => 'http.response.body',
-            body => $json,
-        });
-    }
-    else {
-        await $send->({
-            type    => 'http.response.start',
-            status  => 404,
-            headers => [['content-type', 'text/plain']],
-        });
-        await $send->({
-            type => 'http.response.body',
-            body => 'Not Found',
-        });
-    }
-};
-
-$app;
-```
-
-## WebSocket Protocol
-
-### WebSocket Scope
-
-When `$scope->{type}` is `"websocket"`:
-
-```perl
-{
-    type         => 'websocket',
-    http_version => '1.1',
-    scheme       => 'ws',              # or 'wss'
-    path         => '/ws/chat',
-    query_string => 'room=general',
-    headers      => [...],             # Handshake headers
-    subprotocols => ['chat', 'json'],  # From Sec-WebSocket-Protocol
-    client       => ['192.168.1.1', 54321],
-    server       => ['0.0.0.0', 5000],
-}
-```
-
-### WebSocket Event Flow
-
-1. Receive `websocket.connect`
-2. Send `websocket.accept` (or `websocket.close` to reject)
-3. Loop: receive messages, send responses
-4. Handle `websocket.disconnect` to clean up
-
-### WebSocket Events
-
-**Receive events:**
-- `websocket.connect` - Client wants to connect
-- `websocket.receive` - Message from client (`text` or `bytes`)
-- `websocket.disconnect` - Client disconnected (`code`, `reason`)
-
-**Send events:**
-- `websocket.accept` - Accept connection (optional: `subprotocol`, `headers`)
-- `websocket.send` - Send message (`text` or `bytes`)
-- `websocket.close` - Close connection (`code`, `reason`)
-
-### Complete WebSocket Echo Example
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-
-async sub app ($scope, $receive, $send) {
-    die "Unsupported scope type: $scope->{type}"
-        if $scope->{type} ne 'websocket';
-
-    # Wait for connection request
-    my $event = await $receive->();
-    die "Expected websocket.connect"
-        if $event->{type} ne 'websocket.connect';
-
-    # Accept the connection
-    await $send->({ type => 'websocket.accept' });
-
-    # Message loop
-    while (1) {
-        my $msg = await $receive->();
-
-        if ($msg->{type} eq 'websocket.receive') {
-            # Echo back
-            if (defined $msg->{text}) {
-                await $send->({
-                    type => 'websocket.send',
-                    text => "Echo: $msg->{text}",
-                });
-            }
-            elsif (defined $msg->{bytes}) {
-                await $send->({
-                    type  => 'websocket.send',
-                    bytes => $msg->{bytes},
-                });
-            }
-        }
-        elsif ($msg->{type} eq 'websocket.disconnect') {
-            last;  # Client disconnected
-        }
-    }
-}
-
-$app;
-```
-
-### Rejecting WebSocket Connections
-
-```perl
-# Check auth before accepting
-my $event = await $receive->();  # websocket.connect
-
-my $token = _get_header($scope, 'authorization');
-unless (valid_token($token)) {
-    await $send->({
-        type   => 'websocket.close',
-        code   => 4001,
-        reason => 'Unauthorized',
-    });
-    return;
-}
-
-await $send->({ type => 'websocket.accept' });
-```
-
-### Common Close Codes
-
-- `1000` - Normal closure
-- `1001` - Going away (server shutdown)
-- `1008` - Policy violation
-- `1011` - Server error
-- `4000-4999` - Application-specific codes
-
-## Server-Sent Events (SSE) Protocol
-
-SSE enables server-to-client streaming over HTTP. The server detects SSE requests when `Accept: text/event-stream` header is present.
-
-### SSE Scope
-
-When `$scope->{type}` is `"sse"`:
-
-```perl
-{
-    type         => 'sse',
-    http_version => '1.1',
-    method       => 'GET',
-    scheme       => 'http',
-    path         => '/events',
-    headers      => [...],
-    # ... same structure as HTTP
-}
-```
-
-### SSE Events
-
-**Send events:**
-- `sse.start` - Begin SSE stream (`status`, `headers`)
-- `sse.send` - Send event (`data`, `event`, `id`, `retry`)
-
-**Receive events:**
-- `sse.disconnect` - Client disconnected
-
-### SSE Message Format
-
-`sse.send` fields:
-- `data` (required) - Event payload (string, auto-encoded if hashref)
-- `event` (optional) - Event type name
-- `id` (optional) - Event ID for reconnection
-- `retry` (optional) - Reconnect delay in milliseconds
-
-### Complete SSE Example
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-
-async sub app ($scope, $receive, $send) {
-    die "Unsupported scope type: $scope->{type}"
-        if $scope->{type} ne 'sse';
-
-    # Start SSE stream
-    await $send->({
-        type    => 'sse.start',
-        status  => 200,
-        headers => [['cache-control', 'no-cache']],
-    });
-
-    # Watch for disconnection in background
-    my $disconnected = 0;
-    my $watch = async sub {
-        while (1) {
-            my $event = await $receive->();
-            if ($event->{type} eq 'sse.disconnect') {
-                $disconnected = 1;
-                return;
-            }
-        }
-    };
-    my $watch_future = $watch->();
-
-    # Send events
-    my $count = 0;
-    while (!$disconnected && $count < 10) {
-        await $send->({
-            type  => 'sse.send',
-            event => 'tick',
-            data  => "Count: $count",
-            id    => $count,
-        });
-        $count++;
-
-        # Wait 1 second - get loop from your app context in production
-        # await $loop->delay_future(after => 1);
-        sleep(1);  # Blocking - for demo only!
-    }
-
-    $watch_future->cancel if $watch_future->can('cancel');
-}
-
-$app;
-```
-
-### SSE with JSON Data
-
-```perl
-use JSON::PP;
-
-await $send->({
-    type  => 'sse.send',
-    event => 'update',
-    data  => encode_json({ users => \@users, count => scalar @users }),
-    id    => $event_id++,
-});
-```
-
-### Rejecting Non-SSE Requests
-
-If you want an endpoint that's HTTP-only (not SSE), reject SSE scope:
-
-```perl
-if ($scope->{type} eq 'sse') {
-    await $send->({ type => 'sse.start', status => 406 });
-    return;
-}
-```
-
-## Lifespan Protocol
-
-Lifespan events handle application startup and shutdown. Use for initializing database pools, loading configuration, or cleanup.
-
-### Lifespan Scope
-
-When `$scope->{type}` is `"lifespan"`:
-
-```perl
-{
-    type  => 'lifespan',
-    pagi  => { version => '0.1', spec_version => '0.1' },
-    state => {},  # Shared with request scopes
-}
-```
-
-### Lifespan Events
-
-**Receive events:**
-- `lifespan.startup` - Server is starting
-- `lifespan.shutdown` - Server is stopping
-
-**Send events:**
-- `lifespan.startup.complete` - App ready to accept connections
-- `lifespan.startup.failed` - Startup failed (`message`)
-- `lifespan.shutdown.complete` - Cleanup finished
-- `lifespan.shutdown.failed` - Cleanup failed (`message`)
-
-### Complete Lifespan Example
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-
-async sub app ($scope, $receive, $send) {
-    if ($scope->{type} eq 'lifespan') {
-        await handle_lifespan($scope, $receive, $send);
-    }
-    elsif ($scope->{type} eq 'http') {
-        await handle_http($scope, $receive, $send);
-    }
-    else {
-        die "Unsupported scope type: $scope->{type}";
-    }
-}
-
-async sub handle_lifespan ($scope, $receive, $send) {
-    while (1) {
-        my $event = await $receive->();
-
-        if ($event->{type} eq 'lifespan.startup') {
-            eval {
-                # Initialize resources
-                $scope->{state}{db} = DBI->connect(...);
-                $scope->{state}{started} = time();
-            };
-
-            if ($@) {
-                await $send->({
-                    type    => 'lifespan.startup.failed',
-                    message => "Startup error: $@",
-                });
-                return;
-            }
-
-            await $send->({ type => 'lifespan.startup.complete' });
-        }
-        elsif ($event->{type} eq 'lifespan.shutdown') {
-            eval {
-                # Cleanup resources
-                $scope->{state}{db}->disconnect if $scope->{state}{db};
-            };
-
-            await $send->({ type => 'lifespan.shutdown.complete' });
-            return;
-        }
-    }
-}
-
-async sub handle_http ($scope, $receive, $send) {
-    # Access shared state from lifespan
-    my $db = $scope->{state}{db};
-    my $uptime = time() - $scope->{state}{started};
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => 200,
-        headers => [['content-type', 'text/plain']],
-    });
-    await $send->({
-        type => 'http.response.body',
-        body => "Server uptime: ${uptime}s",
-    });
-}
-
-$app;
-```
-
-### State Sharing
-
-The `$scope->{state}` hashref is:
-- Created during lifespan scope
-- Shallow-copied to each request scope
-- Use for sharing database pools, config, caches
-
-## Multi-Protocol Applications
-
-Real applications often handle multiple protocols in one app.
-
-### Dispatcher Pattern
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-
-async sub app ($scope, $receive, $send) {
-    my $type = $scope->{type};
-
-    if ($type eq 'lifespan') {
-        await handle_lifespan($scope, $receive, $send);
-    }
-    elsif ($type eq 'http') {
-        await handle_http($scope, $receive, $send);
-    }
-    elsif ($type eq 'websocket') {
-        await handle_websocket($scope, $receive, $send);
-    }
-    elsif ($type eq 'sse') {
-        await handle_sse($scope, $receive, $send);
-    }
-    else {
-        die "Unsupported scope type: $type";
-    }
-}
-
-# Implement each handler...
-
-$app;
-```
-
-### Routing by Path
-
-```perl
-async sub handle_http ($scope, $receive, $send) {
-    my $method = $scope->{method};
-    my $path   = $scope->{path};
-
-    if ($path eq '/' && $method eq 'GET') {
-        await send_home($scope, $receive, $send);
-    }
-    elsif ($path =~ m{^/api/} && $method eq 'POST') {
-        await handle_api($scope, $receive, $send);
-    }
-    else {
-        await send_404($send);
-    }
-}
-
-async sub handle_websocket ($scope, $receive, $send) {
-    my $path = $scope->{path};
-
-    if ($path eq '/ws/chat') {
-        await chat_handler($scope, $receive, $send);
-    }
-    elsif ($path eq '/ws/notifications') {
-        await notification_handler($scope, $receive, $send);
-    }
-    else {
-        # Reject unknown WebSocket paths
-        my $event = await $receive->();  # websocket.connect
-        await $send->({
-            type   => 'websocket.close',
-            code   => 4004,
-            reason => 'Not Found',
-        });
-    }
-}
-```
-
-## Running PAGI Applications
-
-### pagi-server CLI
-
-```bash
-# Basic usage
-pagi-server ./app.pl --port 5000
-
-# With options
-pagi-server ./app.pl \
-    --host 0.0.0.0 \
-    --port 8080 \
-    --workers 4 \
-    --access-log /var/log/access.log
-
-# TLS
-pagi-server ./app.pl \
-    --port 443 \
-    --ssl-cert /path/to/cert.pem \
-    --ssl-key /path/to/key.pem
-
-# Production (daemonize)
-pagi-server ./app.pl \
-    --port 8080 \
-    --workers 8 \
-    --daemonize \
-    --pid /var/run/myapp.pid \
-    --user www-data \
-    --group www-data
-```
-
-### Common Options
-
-| Option | Description |
-|--------|-------------|
-| `-p, --port` | Port to listen on (default: 5000) |
-| `-h, --host` | Host to bind (default: 127.0.0.1) |
-| `-w, --workers` | Number of worker processes |
-| `-a, --app` | Path to app file |
-| `-I, --lib` | Add to @INC |
-| `-q, --quiet` | Suppress startup messages |
-| `--access-log` | Access log file path |
-| `--log-level` | debug, info, warn, error |
-| `--timeout` | Request timeout in seconds |
-| `--max-requests` | Restart worker after N requests |
-| `-D, --daemonize` | Run in background |
-| `--pid` | PID file path |
-| `--user` | Drop privileges to user |
-| `--group` | Drop privileges to group |
-| `-v, --version` | Show version |
-
-### Signal Handling
-
-- `SIGTERM` / `SIGINT` - Graceful shutdown
-- `SIGHUP` - Graceful restart (reload app)
-- `SIGTTIN` - Increase workers by 1
-- `SIGTTOU` - Decrease workers by 1
-
-## TLS Extension
-
-When running over HTTPS/WSS, the server provides TLS connection details via `$scope->{extensions}{tls}`. This extension is **only present for TLS connections** - check for its existence to determine if the connection is encrypted.
-
-### Checking for TLS
-
-```perl
-if (exists $scope->{extensions}{tls}) {
-    # Connection is over TLS
-    my $tls = $scope->{extensions}{tls};
-    # Access TLS details...
-}
-else {
-    # Cleartext connection
-}
-```
-
-### TLS Extension Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `server_cert` | String/undef | PEM-encoded server certificate |
-| `client_cert_chain` | ArrayRef | Client certificates (leaf to root), empty if none |
-| `client_cert_name` | String/undef | Client certificate Distinguished Name (RFC4514) |
-| `client_cert_error` | String/undef | Verification error message, undef if valid |
-| `tls_version` | Int/undef | TLS version (0x0303 = TLS 1.2, 0x0304 = TLS 1.3) |
-| `cipher_suite` | Int/undef | Negotiated cipher as 16-bit integer |
-
-### TLS Introspection Example
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-use JSON::PP;
-
-my $app = async sub ($scope, $receive, $send) {
-    die "Unsupported" if $scope->{type} ne 'http';
-
-    my $tls = $scope->{extensions}{tls};
-    my $body;
-
-    if ($tls) {
-        $body = encode_json({
-            encrypted    => \1,
-            tls_version  => $tls->{tls_version}
-                ? sprintf('0x%04x', $tls->{tls_version})
-                : undef,
-            cipher_suite => $tls->{cipher_suite}
-                ? sprintf('0x%04x', $tls->{cipher_suite})
-                : undef,
-            client_cert  => $tls->{client_cert_name},
-        });
-    }
-    else {
-        $body = encode_json({ encrypted => \0 });
-    }
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => 200,
-        headers => [['content-type', 'application/json']],
-    });
-    await $send->({ type => 'http.response.body', body => $body });
-};
-
-$app;
-```
-
-### Common TLS Version Values
-
-| Value | Version |
-|-------|---------|
-| `0x0301` | TLS 1.0 |
-| `0x0302` | TLS 1.1 |
-| `0x0303` | TLS 1.2 |
-| `0x0304` | TLS 1.3 |
-
-## Server Extensions
-
-Servers may advertise optional capabilities via `$scope->{extensions}`. Always check for extension support before using extension-specific events.
-
-### Checking for Extensions
-
-```perl
-# Check if server supports an extension
-if (exists $scope->{extensions}{fullflush}) {
-    # Extension is available
-}
-```
-
-### The fullflush Extension
-
-The `fullflush` extension forces immediate TCP buffer flush during streaming responses. Useful for SSE or real-time streaming where latency matters.
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-
-my $app = async sub ($scope, $receive, $send) {
-    die "Unsupported" if $scope->{type} ne 'http';
-
-    my $supports_flush = exists $scope->{extensions}{fullflush};
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => 200,
-        headers => [['content-type', 'text/plain']],
-    });
-
-    for my $i (1..5) {
-        await $send->({
-            type => 'http.response.body',
-            body => "Line $i\n",
-            more => ($i < 5) ? 1 : 0,
-        });
-
-        # Flush after each chunk if supported (except last)
-        if ($supports_flush && $i < 5) {
-            await $send->({ type => 'http.fullflush' });
-        }
-    }
-};
-
-$app;
-```
-
-### Extension Guidelines
-
-- Extensions are server-specific features, not part of core PAGI spec
-- Always check `exists $scope->{extensions}{name}` before use
-- Gracefully degrade when extensions are unavailable
-- Custom extensions should use namespaced names to avoid conflicts
-
-## Server Features
-
-Servers may report their capabilities via `$scope->{pagi}{features}`. This hashref contains server-specific limits and supported features.
-
-### Available Features
-
-| Feature | Type | Description |
-|---------|------|-------------|
-| `supports_streaming` | Int (0/1) | Whether streaming responses are supported |
-| `max_request_body_size` | Int | Maximum request body size in bytes |
-| `max_concurrent_streams` | Int | Maximum HTTP/2 streams per connection |
-| `supports_trailers` | Int (0/1) | Whether HTTP trailers are supported |
-
-### Checking Features
-
-```perl
-my $features = $scope->{pagi}{features} // {};
-
-# Check streaming support
-if ($features->{supports_streaming}) {
-    # Can use chunked streaming
-}
-
-# Check body size limit
-my $max_body = $features->{max_request_body_size} // 10_000_000;
-if ($content_length > $max_body) {
-    # Reject with 413 Payload Too Large
-}
-
-# Check trailer support before using
-if ($features->{supports_trailers}) {
-    # Can use http.response.trailers
-}
-```
-
-### Graceful Degradation
-
-Always provide fallbacks when features are unavailable:
-
-```perl
-my $features = $scope->{pagi}{features} // {};
-
-if ($features->{supports_streaming}) {
-    # Stream response in chunks
-    for my $chunk (@chunks) {
-        await $send->({ type => 'http.response.body', body => $chunk, more => 1 });
-    }
-    await $send->({ type => 'http.response.body', body => '', more => 0 });
-}
-else {
-    # Buffer and send complete response
-    my $body = join('', @chunks);
-    await $send->({ type => 'http.response.body', body => $body });
-}
-```
-
-## UTF-8 and Encoding
-
-PAGI follows Perl's bytes-vs-characters distinction strictly. Getting this wrong causes mojibake (garbled text) or "Wide character" warnings.
-
-### The Golden Rule
-
-**All data crossing the wire MUST be bytes, not Unicode characters.**
-
-- Response bodies → encode to bytes before sending
-- Request bodies → decode from bytes if you want characters
-- Headers → always bytes (ASCII)
-
-### Response Bodies
-
-**Wrong** - sending Unicode characters:
-```perl
-await $send->({
-    type => 'http.response.body',
-    body => "Привет мир",  # Raw Unicode - WILL CORRUPT
-});
-```
-
-**Right** - encode to bytes:
-```perl
-use Encode qw(encode_utf8);
-
-await $send->({
-    type => 'http.response.body',
-    body => encode_utf8("Привет мир"),  # Bytes - correct
-});
-```
-
-### Request Bodies
-
-Request bodies arrive as bytes. Decode if you need Unicode characters:
-
-```perl
-use Encode qw(decode_utf8);
-
-my $body_bytes = await read_body($receive);
-my $body_text = decode_utf8($body_bytes);  # Now safe for Unicode operations
-```
-
-### The `use utf8;` Pragma
-
-If your source code contains non-ASCII characters (like `"Привет"`), you MUST use the `utf8` pragma:
-
-```perl
-use 5.36;
-use utf8;  # Source code contains UTF-8 literals
-use Future::AsyncAwait;
-use Encode qw(encode_utf8);
-
-my $app = async sub ($scope, $receive, $send) {
-    my $greeting = "Привет мир! 🎉";  # Unicode in source
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => 200,
-        headers => [
-            ['content-type', 'text/plain; charset=utf-8'],
-        ],
-    });
-    await $send->({
-        type => 'http.response.body',
-        body => encode_utf8($greeting),  # Encode before sending
-    });
-};
-
-$app;
-```
-
-**Without `use utf8;`**, Perl treats your source as Latin-1 bytes and the string will be wrong.
-
-### Path Decoding
-
-PAGI servers decode the request path for convenience:
-
-| Field | Encoding |
-|-------|----------|
-| `$scope->{path}` | Decoded UTF-8 characters (use for routing) |
-| `$scope->{raw_path}` | Original bytes (use if you need exact bytes) |
-| `$scope->{query_string}` | Raw bytes (decode yourself) |
-
-```perl
-# /users/José arrives as:
-$scope->{path}      # "José" (characters, ready to use)
-$scope->{raw_path}  # "Jos%C3%A9" (URL-encoded bytes)
-```
-
-### WebSocket: text vs bytes
-
-WebSocket messages have two distinct fields:
-
-| Field | Type | When to Use |
-|-------|------|-------------|
-| `text` | Unicode characters | Text messages (chat, JSON). Server handles UTF-8 encoding. |
-| `bytes` | Raw bytes | Binary data (images, files). No encoding. |
-
-**Receiving messages:**
-```perl
-my $msg = await $receive->();
-if ($msg->{type} eq 'websocket.receive') {
-    if (defined $msg->{text}) {
-        # $msg->{text} is decoded Unicode characters
-        my $chat_message = $msg->{text};  # Ready to use
-    }
-    elsif (defined $msg->{bytes}) {
-        # $msg->{bytes} is raw binary data
-        my $file_chunk = $msg->{bytes};
-    }
-}
-```
-
-**Sending messages:**
-```perl
-use utf8;  # If using Unicode literals in source
-
-# Text message - use 'text' field (server encodes to UTF-8)
-await $send->({
-    type => 'websocket.send',
-    text => "Привет! 🎉",  # Unicode OK here - server handles encoding
-});
-
-# Binary message - use 'bytes' field
-await $send->({
-    type  => 'websocket.send',
-    bytes => $binary_data,  # Raw bytes
-});
-```
-
-**Important:** For WebSocket `text`, the server handles UTF-8 encoding. You pass Unicode characters, not bytes. This is different from HTTP response bodies.
-
-### JSON Responses
-
-`JSON::PP::encode_json()` returns bytes (UTF-8 encoded), so no additional encoding needed:
-
-```perl
-use JSON::PP;
-
-my $data = { message => "Привет", emoji => "🎉" };
-my $json = encode_json($data);  # Already bytes
-
-await $send->({
-    type => 'http.response.body',
-    body => $json,  # Safe - already encoded
-});
-```
-
-### Quick Reference
-
-| Context | Input/Output | Encoding |
-|---------|--------------|----------|
-| HTTP response body | Bytes | `encode_utf8($text)` before sending |
-| HTTP request body | Bytes | `decode_utf8($bytes)` to get characters |
-| `$scope->{path}` | Characters | Already decoded |
-| `$scope->{query_string}` | Bytes | Decode yourself |
-| WebSocket `text` | Characters | Server handles encoding |
-| WebSocket `bytes` | Bytes | No encoding |
-| JSON (`encode_json`) | Bytes | Already UTF-8 encoded |
-| Source code literals | N/A | Add `use utf8;` if non-ASCII |
-
-## Common Patterns
-
-### Helper: Get Header Value
-
-```perl
-sub get_header ($scope, $name) {
-    $name = lc($name);
-    for my $h (@{$scope->{headers} // []}) {
-        return $h->[1] if lc($h->[0]) eq $name;
-    }
-    return;
-}
-
-# Usage
-my $content_type = get_header($scope, 'Content-Type');
-my $auth = get_header($scope, 'Authorization');
-```
-
-### Helper: Parse Query String
-
-```perl
-sub parse_query ($query_string) {
-    my %params;
-    for my $pair (split /&/, $query_string // '') {
-        my ($key, $value) = split /=/, $pair, 2;
-        $key   = URI::Escape::uri_unescape($key   // '');
-        $value = URI::Escape::uri_unescape($value // '');
-        $params{$key} = $value;
-    }
-    return \%params;
-}
-
-# Usage
-my $params = parse_query($scope->{query_string});
-```
-
-### JSON Response Helper
-
-```perl
-use JSON::PP;
-
-async sub json_response ($send, $data, $status = 200) {
-    my $json = encode_json($data);
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => $status,
-        headers => [
-            ['content-type', 'application/json'],
-            ['content-length', length($json)],
-        ],
-    });
-
-    await $send->({
-        type => 'http.response.body',
-        body => $json,
-    });
-}
-```
-
-### Middleware Pattern
-
-Middleware wraps an application to add cross-cutting functionality. PAGI middleware follows a simple pattern:
-
-```perl
-sub middleware ($app) {
-    return async sub ($scope, $receive, $send) {
-        # MUST shallow clone scope - never mutate original
-        my $modified_scope = { %$scope };
-        $modified_scope->{custom_data} = 'value';
-
-        # Call wrapped app
-        my $result = eval { await $app->($modified_scope, $receive, $send) };
-
-        # Handle errors - MUST propagate, not swallow
-        if (my $error = $@) {
-            warn "Middleware error: $error";
-            die $error;
-        }
-
-        return $result;
-    };
-}
-
-# Usage
-my $app = middleware(\&my_app);
-```
-
-#### Logging Middleware
-
-```perl
-sub with_logging ($app) {
-    return async sub ($scope, $receive, $send) {
-        my $start = time();
-        my $type = $scope->{type};
-        my $path = $scope->{path} // '-';
-        my $method = $scope->{method} // '-';
-
-        # Wrap send to capture response status
-        my $status = '-';
-        my $wrapped_send = async sub ($event) {
-            if ($event->{type} =~ /\.start$/ && defined $event->{status}) {
-                $status = $event->{status};
-            }
-            await $send->($event);
-        };
-
-        eval { await $app->($scope, $receive, $wrapped_send) };
-        my $error = $@;
-
-        my $duration = sprintf("%.3f", time() - $start);
-        say STDERR "[$type] $method $path $status ${duration}s";
-
-        die $error if $error;
-    };
-}
-```
-
-#### Middleware Rules
-
-1. **Clone scope** - Never mutate `$scope` in place; always `{ %$scope }`
-2. **Propagate errors** - Don't silently swallow exceptions
-3. **Wrap send/receive** - Intercept events by wrapping the coderefs
-4. **Compose cleanly** - Middleware should be stackable
-
-## PSGI Compatibility
-
-PAGI supports running legacy PSGI applications through an adapter wrapper.
-
-### Wrapping PSGI Apps
-
-```perl
-use 5.36;
-use PAGI::App::WrapPSGI;
-
-# Your existing PSGI app
-my $psgi_app = sub {
-    my ($env) = @_;
-    my $body = do { local $/; readline $env->{'psgi.input'} } // '';
-    return [
-        200,
-        ['Content-Type' => 'text/plain'],
-        ["Hello from PSGI\n", "Body: $body"]
-    ];
-};
-
-# Wrap for PAGI
-my $wrapper = PAGI::App::WrapPSGI->new(psgi_app => $psgi_app);
-$wrapper->to_app;
-```
-
-### Environment Mapping
-
-PAGI translates scope keys to PSGI environment:
-
-| PSGI Key | PAGI Source |
-|----------|-------------|
-| `REQUEST_METHOD` | `$scope->{method}` |
-| `SCRIPT_NAME` | `$scope->{root_path}` |
-| `PATH_INFO` | `$scope->{path}` minus root |
-| `QUERY_STRING` | `$scope->{query_string}` |
-| `SERVER_NAME/PORT` | `$scope->{server}` |
-| `REMOTE_ADDR/PORT` | `$scope->{client}` |
-| `SERVER_PROTOCOL` | `$scope->{http_version}` |
-| `psgi.url_scheme` | `$scope->{scheme}` |
-| `psgi.input` | Constructed from `http.request` events |
-
-### Limitations
-
-- WebSocket and SSE are not available through PSGI bridge
-- Streaming responses depend on server's PSGI adapter capabilities
-- For new applications, prefer native PAGI interface
-
-## Common Pitfalls
-
-### 1. Forgetting to Check Scope Type
-
-**Wrong:**
-```perl
-async sub app ($scope, $receive, $send) {
-    await $send->({ type => 'http.response.start', ... });  # Crash on WebSocket!
-}
-```
-
-**Right:**
-```perl
-async sub app ($scope, $receive, $send) {
-    die "Unsupported" if $scope->{type} ne 'http';
-    await $send->({ type => 'http.response.start', ... });
-}
-```
-
-### 2. Not Handling http.disconnect
-
-**Wrong:**
-```perl
-my $body = '';
-while (1) {
-    my $event = await $receive->();
-    $body .= $event->{body};
-    last unless $event->{more};  # Never handles disconnect
-}
-```
-
-**Right:**
-```perl
-my $body = '';
-while (1) {
-    my $event = await $receive->();
-    if ($event->{type} eq 'http.disconnect') {
-        return;  # Client gone
-    }
-    $body .= $event->{body} // '';
-    last unless $event->{more};
-}
-```
-
-### 3. Blocking the Event Loop
-
-**Wrong:**
-```perl
-my $result = `curl http://slow-api.com`;  # Blocks everything!
-```
-
-**Right:**
-```perl
-# For blocking I/O, use a worker pool or run_blocking:
-my $result = await $loop->run_child(
-    command => ['curl', '-s', 'http://slow-api.com'],
-)->get;
-
-# Or with IO::Async::HTTP (if available):
-# my $result = await $http->do_request(uri => 'http://slow-api.com');
-```
-
-### 4. Forgetting UTF-8 Encoding
-
-**Wrong:**
-```perl
-body => "Привет"  # Raw Unicode - will corrupt
-```
-
-**Right:**
-```perl
-use Encode;
-
-body => encode_utf8("Привет")  # Properly encoded bytes
-```
-
-### 5. WebSocket: Not Waiting for connect Event
-
-**Wrong:**
-```perl
-await $send->({ type => 'websocket.accept' });  # No connect received!
-```
-
-**Right:**
-```perl
-my $event = await $receive->();
-die "Expected connect" if $event->{type} ne 'websocket.connect';
-await $send->({ type => 'websocket.accept' });
-```
-
-## Practical Examples
-
-### Static File Serving
-
-```perl
-use 5.36;
-use Future::AsyncAwait;
-use File::Spec;
-use Cwd 'abs_path';
-
-my $DOCUMENT_ROOT = '/var/www/static';
-
-my $app = async sub ($scope, $receive, $send) {
-    die "Unsupported" if $scope->{type} ne 'http';
-
-    my $path = $scope->{path};
-
-    # Security: prevent path traversal
-    $path =~ s/\.\.//g;
-    $path =~ s{^/}{};
-    $path ||= 'index.html';
-
-    my $file = File::Spec->catfile($DOCUMENT_ROOT, $path);
-    my $real = eval { abs_path($file) };
-
-    # Ensure file is within document root
-    unless ($real && $real =~ /^\Q$DOCUMENT_ROOT\E/ && -f $real) {
-        await send_404($send);
-        return;
-    }
-
-    # Determine MIME type
-    my %mime = (
-        html => 'text/html',
-        css  => 'text/css',
-        js   => 'application/javascript',
-        json => 'application/json',
-        png  => 'image/png',
-        jpg  => 'image/jpeg',
-    );
-    my ($ext) = $real =~ /\.(\w+)$/;
-    my $content_type = $mime{lc($ext // '')} // 'application/octet-stream';
-
-    my $size = -s $real;
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => 200,
-        headers => [
-            ['content-type', $content_type],
-            ['content-length', $size],
-        ],
-    });
-
-    await $send->({
-        type => 'http.response.body',
-        file => $real,
-    });
-};
-
-async sub send_404 ($send) {
-    await $send->({
-        type    => 'http.response.start',
-        status  => 404,
-        headers => [['content-type', 'text/plain']],
-    });
-    await $send->({
-        type => 'http.response.body',
-        body => 'Not Found',
-    });
-}
-
-$app;
-```
-
-### Form Handling (URL-encoded POST)
-
-```perl
-use URI::Escape qw(uri_unescape);
-
-async sub handle_form ($scope, $receive, $send) {
-    my $body = await read_body($receive);
-
-    # Parse application/x-www-form-urlencoded
-    my %form;
-    for my $pair (split /&/, $body) {
-        my ($key, $value) = split /=/, $pair, 2;
-        $key   //= '';
-        $key   =~ s/\+/ /g;  # + means space in form data
-        $key   = uri_unescape($key);
-        $value //= '';
-        $value =~ s/\+/ /g;  # + means space in form data
-        $value = uri_unescape($value);
-        $form{$key} = $value;
-    }
-
-    # Use form data
-    my $name = $form{name} // 'Anonymous';
-    # ...
-}
-
-async sub read_body ($receive) {
-    my $body = '';
-    while (1) {
-        my $event = await $receive->();
-        return $body if $event->{type} eq 'http.disconnect';
-        if ($event->{type} eq 'http.request') {
-            $body .= $event->{body} // '';
-            last unless $event->{more};
-        }
+        last if $event->{type} ne 'http.request';   # http.disconnect
+        $body .= $event->{body} // '';
+        last unless $event->{more};
     }
     return $body;
 }
 ```
 
-### Redirects
+Respond:
+
+- `http.response.start`: `status`, `headers`, `trailers => 1` if you'll send
+  trailers.
+- `http.response.body`: `body` (bytes), `more => 1` to stream more chunks,
+  `more => 0` for the last. Or one terminal `file` (absolute path) or `fh`
+  body, with optional `offset` and `length`; not after `more => 1` chunks.
+- `http.response.trailers`: `headers`. Over HTTP/1.1, don't set a
+  `content-length` on a response with trailers (the trailers send fails).
+- `content-length` is the byte length. Answer HEAD as you would GET; the
+  server drops the body. The server owns framing, `Date`, `100 Continue`,
+  and its own 400/413/431/500 responses.
+
+## WebSocket
+
+The flow: receive `websocket.connect`, then either **accept** or **refuse**.
+
+- Accept: `websocket.accept` (`subprotocol`, `headers` optional). Then
+  `websocket.send` (`text` for characters, `bytes` for binary), receive
+  `websocket.receive` (`text` or `bytes`) and `websocket.disconnect` (`code`,
+  `reason`).
+- **Refuse with an ordinary HTTP response**, before accepting:
+  `http.response.start` (status 300 or above) then `http.response.body`. A
+  `websocket.close` before accept is an error.
+- After accepting you must end with `websocket.close` (`code`, default 1000;
+  `reason`) or by receiving `websocket.disconnect`; sends after the close
+  fail. Optional `websocket.keepalive` (`interval`, `timeout`) pings.
+- Codes: 1000 normal, 1001 going away, 1011 server error, 1012 the server is
+  restarting (what PAGI-Server sends on shutdown), 4000-4999 yours.
 
 ```perl
-async sub redirect ($send, $location, $permanent = 0) {
-    my $status = $permanent ? 301 : 302;
-    await $send->({
-        type    => 'http.response.start',
-        status  => $status,
-        headers => [
-            ['location', $location],
-            ['content-type', 'text/plain'],
-        ],
-    });
-    await $send->({
-        type => 'http.response.body',
-        body => "Redirecting to $location",
-    });
-}
+my $app = async sub {
+    my ($scope, $receive, $send) = @_;
+    die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'websocket';
 
-# Usage
-await redirect($send, '/new-page', 1);  # 301 permanent
-await redirect($send, '/dashboard');     # 302 temporary
-```
-
-### Setting and Reading Cookies
-
-```perl
-async sub app ($scope, $receive, $send) {
-    die "Unsupported" if $scope->{type} ne 'http';
-
-    # Read cookies from request
-    my $cookie_header = get_header($scope, 'cookie') // '';
-    my %cookies;
-    for my $pair (split /;\s*/, $cookie_header) {
-        my ($name, $value) = split /=/, $pair, 2;
-        $cookies{$name} = $value if defined $name;
-    }
-
-    my $visits = ($cookies{visits} // 0) + 1;
-
-    # Set cookie in response
-    my $cookie = "visits=$visits; Path=/; HttpOnly; Max-Age=86400";
-
-    await $send->({
-        type    => 'http.response.start',
-        status  => 200,
-        headers => [
-            ['content-type', 'text/plain'],
-            ['set-cookie', $cookie],
-        ],
-    });
-    await $send->({
-        type => 'http.response.body',
-        body => "You have visited $visits times",
-    });
-}
-```
-
-### CORS Headers
-
-```perl
-async sub handle_cors ($scope, $receive, $send) {
-    my $origin = get_header($scope, 'origin');
-    my @cors_headers;
-
-    if ($origin) {
-        @cors_headers = (
-            ['access-control-allow-origin', $origin],
-            ['access-control-allow-methods', 'GET, POST, PUT, DELETE, OPTIONS'],
-            ['access-control-allow-headers', 'Content-Type, Authorization'],
-            ['access-control-max-age', '86400'],
-        );
-    }
-
-    # Handle preflight OPTIONS request
-    if ($scope->{method} eq 'OPTIONS') {
-        await $send->({
-            type    => 'http.response.start',
-            status  => 204,
-            headers => [@cors_headers],
-        });
-        await $send->({ type => 'http.response.body', body => '' });
+    await $receive->();                                    # websocket.connect
+    unless (authorised($scope)) {
+        await $send->({ type => 'http.response.start', status => 401,
+            headers => [ [ 'content-type', 'text/plain' ] ] });
+        await $send->({ type => 'http.response.body', body => 'Unauthorized' });
         return;
     }
+    await $send->({ type => 'websocket.accept' });
 
-    # Normal response with CORS headers
-    await $send->({
-        type    => 'http.response.start',
-        status  => 200,
-        headers => [
-            ['content-type', 'application/json'],
-            @cors_headers,
-        ],
-    });
-    await $send->({
-        type => 'http.response.body',
-        body => '{"message":"CORS-enabled response"}',
-    });
-}
+    while (1) {
+        my $event = await $receive->();
+        last if $event->{type} eq 'websocket.disconnect';
+        next unless $event->{type} eq 'websocket.receive';
+        await $send->({ type => 'websocket.send', text => "echo: " . ($event->{text} // '') });
+    }
+};
 ```
 
-### Bearer Token Authentication
+## Server-Sent Events
+
+A request is an `sse` scope when its `Accept` header names
+`text/event-stream` exactly (q > 0; wildcards don't count), any method, not a
+WebSocket upgrade.
+
+- The first receive is `sse.request` (`body`, `more`; one empty event for a
+  GET). Then `sse.disconnect` when the client goes.
+- Send `sse.start` (`status` default 200, `headers` with the content type),
+  then `sse.send` (`data`, a required character string; optional `event`,
+  `id`, `retry`), `sse.comment` (`comment`), `sse.keepalive` (`interval`,
+  `comment`).
+- **End a started stream with `sse.close`** (optional server-side `reason`,
+  never sent to the client). Unless the client left first.
+- **Refuse with an ordinary HTTP response** before `sse.start`
+  (`http.response.start`, `http.response.body`), any status.
 
 ```perl
-async sub require_auth ($scope, $receive, $send, $handler) {
-    my $auth = get_header($scope, 'authorization') // '';
+use Future::IO;
 
-    if ($auth =~ /^Bearer\s+(.+)$/) {
-        my $token = $1;
-        my $user = validate_token($token);  # Your validation
+my $app = async sub {
+    my ($scope, $receive, $send) = @_;
+    die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'sse';
 
-        if ($user) {
-            # Attach user to scope for handler
-            $scope->{user} = $user;
-            await $handler->($scope, $receive, $send);
+    await $send->({ type => 'sse.start', status => 200,
+        headers => [ [ 'content-type', 'text/event-stream' ] ] });
+
+    my $disconnect = (async sub {            # receives sse.request first
+        while (1) {
+            my $event = await $receive->();
+            return $event if $event->{type} eq 'sse.disconnect';
+        }
+    })->();
+
+    for my $n (1 .. 3) {
+        last if $disconnect->is_ready;
+        await Future::IO->sleep(1);
+        await $send->({ type => 'sse.send', event => 'tick', data => "$n" });
+    }
+
+    return if $disconnect->is_ready;         # the client left: no sse.close
+    $disconnect->cancel;
+    await $send->({ type => 'sse.close' });
+};
+```
+
+## Lifespan
+
+One `lifespan` scope per process (per worker): receive `lifespan.startup`,
+reply `lifespan.startup.complete` (or `.failed` with `message`, which stops
+startup); later receive `lifespan.shutdown`, reply
+`lifespan.shutdown.complete` (or `.failed`). The scope carries `state`, which
+the server copies (shallowly) into each request's scope:
+
+```perl
+async sub handle_lifespan {
+    my ($scope, $receive, $send) = @_;
+    my $state = $scope->{state} //= {};
+    while (1) {
+        my $event = await $receive->();
+        if ($event->{type} eq 'lifespan.startup') {
+            $state->{config} = { greeting => 'hello' };    # set containers once
+            await $send->({ type => 'lifespan.startup.complete' });
+        }
+        elsif ($event->{type} eq 'lifespan.shutdown') {
+            await $send->({ type => 'lifespan.shutdown.complete' });
             return;
         }
     }
-
-    # Unauthorized
-    await $send->({
-        type    => 'http.response.start',
-        status  => 401,
-        headers => [
-            ['content-type', 'application/json'],
-            ['www-authenticate', 'Bearer realm="api"'],
-        ],
-    });
-    await $send->({
-        type => 'http.response.body',
-        body => '{"error":"Unauthorized"}',
-    });
-}
-
-# Usage in router
-if ($path =~ m{^/api/}) {
-    await require_auth($scope, $receive, $send, \&handle_api);
 }
 ```
 
-## Quick Reference
+Requests read `$scope->{state}{config}`. Top-level keys are per copy, so put a
+container in `state` at startup and mutate through it; don't replace keys
+later. An app that dies on a lifespan scope "doesn't support lifespan", and
+the server continues (`--lifespan on` makes that fatal). On shutdown the server
+closes connections (WebSockets with 1012), waits for their app calls to
+return, then sends `lifespan.shutdown`.
 
-### Scope Types
-| Type | Description |
-|------|-------------|
-| `http` | Single HTTP request/response |
-| `websocket` | Bidirectional WebSocket |
-| `sse` | Server-Sent Events stream |
-| `lifespan` | Startup/shutdown lifecycle |
+## Several protocols in one app
 
-### HTTP Events
-| Event | Direction | Purpose |
-|-------|-----------|---------|
-| `http.request` | receive | Request body chunk |
-| `http.response.start` | send | Status + headers (+ `trailers` flag) |
-| `http.response.body` | send | Body chunk (or `file`/`fh`) |
-| `http.response.trailers` | send | Trailer headers (if enabled) |
-| `http.disconnect` | receive | Client disconnected |
-| `http.fullflush` | send | Force TCP flush (extension) |
+```perl
+my $app = async sub {
+    my ($scope, $receive, $send) = @_;
+    my $type = $scope->{type};
+    return await handle_lifespan($scope, $receive, $send)  if $type eq 'lifespan';
+    return await handle_http($scope, $receive, $send)      if $type eq 'http';
+    return await handle_websocket($scope, $receive, $send) if $type eq 'websocket';
+    return await handle_sse($scope, $receive, $send)       if $type eq 'sse';
+    die "Unsupported scope type: $type";
+};
+```
 
-### WebSocket Events
-| Event | Direction | Purpose |
-|-------|-----------|---------|
-| `websocket.connect` | receive | Connection request |
-| `websocket.accept` | send | Accept connection |
-| `websocket.receive` | receive | Message from client |
-| `websocket.send` | send | Message to client |
-| `websocket.disconnect` | receive | Client disconnected |
-| `websocket.close` | send | Close connection |
+Middleware is the same shape: a function from app to app that wraps
+`$send`/`$receive` or passes a copied scope. Guards that protect HTTP should
+cover `sse` too (it is HTTP with a different response shape).
 
-### SSE Events
-| Event | Direction | Purpose |
-|-------|-----------|---------|
-| `sse.start` | send | Begin stream |
-| `sse.send` | send | Send event |
-| `sse.disconnect` | receive | Client disconnected |
+## Event loops and blocking
 
-### Lifespan Events
-| Event | Direction | Purpose |
-|-------|-----------|---------|
-| `lifespan.startup` | receive | Server starting |
-| `lifespan.startup.complete` | send | Ready for connections |
-| `lifespan.startup.failed` | send | Startup error |
-| `lifespan.shutdown` | receive | Server stopping |
-| `lifespan.shutdown.complete` | send | Cleanup done |
-| `lifespan.shutdown.failed` | send | Cleanup error |
+- PAGI's contract is Futures. Use **`Future::IO`** for sleeps, timers and I/O
+  (`await Future::IO->sleep(1)`); `pagi-server` binds Future::IO to its loop
+  before loading the app. Don't bind or create a loop in an app or library;
+  IO::Async is PAGI-Server's implementation detail.
+- Never block: no `sleep`, no blocking DBI/LWP in a handler, never `->get` on
+  a Future. Use async clients, or move CPU-heavy work to a worker process or
+  job queue. See `PAGI::EventLoops`.
+- Background work needs a parent that holds it, such as the lifespan scope; a
+  Future started at file scope is reaped ("lost its returning future").
 
-### Extensions
-| Extension | Purpose |
-|-----------|---------|
-| `tls` | TLS connection details (cert, version, cipher) |
-| `fullflush` | Immediate TCP buffer flush |
+## UTF-8
 
-### Scope Keys Reference
-| Key | Type | Description |
-|-----|------|-------------|
-| `$scope->{extensions}` | HashRef | Server-advertised extensions |
-| `$scope->{extensions}{tls}` | HashRef | TLS info (HTTPS only) |
-| `$scope->{pagi}{version}` | String | PAGI spec version |
-| `$scope->{pagi}{features}` | HashRef | Server capabilities |
-| `$scope->{state}` | HashRef | Shared from lifespan |
+- `path` is decoded characters; `raw_path`, `query_string`, header values and
+  bodies are bytes. Decode what you read; **encode what you send**:
+  `body => Encode::encode('UTF-8', $text)` and a byte-length
+  `content-length`.
+- `websocket.send` and `sse.send`: `text`/`data` take characters (the server
+  encodes); `bytes` takes bytes.
+- See `PAGI` "UTF-8 HANDLING OVERVIEW".
+
+## Extensions
+
+`$scope->{extensions}` lists what the server offers: `tls` (connection
+details; `PAGI::Spec::Tls`) and `fullflush` (`{ type => 'http.fullflush' }`
+forces a flush; PAGI::Server advertises it only when configured with
+`extensions => { fullflush => {} }`). Check before using an extension.
+
+## Running
+
+`pagi-server [options] [--app] app.pl`. The ones you'll reach for:
+
+| Option | Meaning |
+|---|---|
+| `-p, --port` / `-o, --host` | listen address (default port 5000) |
+| `-w, --workers N` | pre-fork workers |
+| `-E, --env development\|production` | mode; development adds PAGI-Tools Lint |
+| `--http2` | HTTP/2 (needs Net::HTTP2::nghttp2) |
+| `--ssl-cert`, `--ssl-key` | TLS |
+| `--lifespan on` | fail if the app declines lifespan |
+| `--log-level`, `-q` (errors only), `--log-format text\|json` | diagnostics |
+| `--timeout N` | connection idle timeout (default 60) |
+| `--request-timeout N` | request stall timeout (default off) |
+| `--max-body-size N` | the server answers 413 itself |
+| `--shutdown-timeout N` | how long shutdown waits for app calls |
+| `--future-xs` | run on Future::XS (needs 0.16 or later) |
+
+`pagi-server --help` and its POD list every option and the signal handling.
+
+## PSGI
+
+PAGI-Tools' `PAGI::App::WrapPSGI` runs a PSGI app under PAGI; it blocks its
+worker's loop, so use workers. See `PAGI::PSGI`.
+
+## Pitfalls
+
+1. Not checking the scope type, or not dying on an unknown one.
+2. Not awaiting a send.
+3. Refusing a WebSocket with `websocket.close`, or an SSE request with
+   `sse.start` and an error status: refusals are HTTP responses.
+4. Returning without the terminal event (or sending one after the client
+   left).
+5. Treating the first SSE receive as the disconnect: it is `sse.request`.
+6. Sending characters in `body`, or a character-count `content-length`.
+7. Blocking: `sleep`, `->get`, blocking clients.
+8. Mutating the scope you were handed instead of passing a copy.
+9. `use 5.36;` (dies) instead of `use v5.36;`.
