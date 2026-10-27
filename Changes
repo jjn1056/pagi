@@ -1,6 +1,6 @@
 # This file documents the revision history for Perl extension PAGI
 
-Unreleased
+0.003002
 
   [Specification]
   - Www 0.7, "Sends Are Sequential": an application MAY issue a $send before
