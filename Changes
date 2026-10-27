@@ -3,6 +3,18 @@
 Unreleased
 
   [Specification]
+  - Www 0.7, "Sends Are Sequential": an application MAY issue a $send before
+    an earlier one has resolved, and a server MUST accept it and process a
+    connection's sends in the order they were called -- each delivered
+    whole and in order, a later send never overtaking or discarding an
+    earlier one, and a terminal event (the final http.response.body,
+    sse.close, websocket.close) taking effect only after every send issued
+    before it. The rule was that an application must not overlap sends,
+    with the effect unspecified, which left every application with more
+    than one producer to queue its own sends. Example 18's README already
+    describes this behaviour. This is Www 0.7: a server reports
+    spec_version '0.7' once it keeps the rule, and PAGI::Upgrading has a
+    0.6 TO 0.7 section.
   - PAGI::Spec::Extensions is version 0.4: the entry that removed
     websocket.http.response from the registry (with Www 0.6) was labelled
     0.6 in its history while the document still said 0.3. The content is

@@ -6,7 +6,7 @@ PAGI::Spec::Www - PAGI message formats for HTTP, WebSocket, and SSE
 
 =head1 HTTP, WebSocket & SSE PAGI Message Format
 
-B<Version>: 0.6 (Draft)
+B<Version>: 0.7 (Draft)
 
 The HTTP, WebSocket & SSE PAGI sub-specification defines how HTTP/1.1, HTTP/2, WebSocket, and Server-Sent Events (SSE) connections are transported within PAGI.
 
@@ -15,6 +15,14 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 =head2 Spec Versions
 
 =over
+
+=item -
+
+C<0.7>: An application MAY issue a C<$send> before an earlier one has
+resolved, and a server MUST process a connection's sends in the order they
+were called, each delivered whole, with a terminal event taking effect only
+after every send issued before it (see L</Sends Are Sequential>). Before 0.7
+an application had to wait for each send to resolve before issuing the next.
 
 =item -
 
@@ -1880,12 +1888,23 @@ depend on them.
 
 =head3 Sends Are Sequential
 
-An application B<must not> issue a new C<$send> on a connection before the
-previous send's Future has resolved; the effect of overlapping sends is
-unspecified. Applications with concurrent producers serialize them (for
-example through a queue) before sending. (This matches the one-outstanding-
-write rule of comparable streaming interfaces; a normally structured
-application that awaits each send satisfies it automatically.)
+On a scope whose C<< $scope->{pagi}{spec_version} >> is C<0.7> or later, an
+application MAY issue a C<$send> on a connection before an earlier send's
+Future has resolved, so concurrent producers -- a WebSocket handler's replies
+and its broadcasts, an SSE stream's events and a timer's -- need not queue
+their sends themselves. A server MUST accept such a send and MUST process a
+connection's sends in the order the application called C<$send>: the client
+receives each send's output whole and in that order, and a later send never
+overtakes or discards an earlier one. A terminal event -- the final
+C<http.response.body>, C<sse.close>, C<websocket.close> -- takes effect only
+after every send issued before it. Each send's Future settles per the Send
+Completion Contract in L<PAGI::Spec>, and the application still awaits every
+send it issues.
+
+Under an earlier version an application B<must not> issue a new C<$send>
+before the previous send's Future has resolved; the effect of overlapping
+sends is unspecified, and an application with concurrent producers
+serializes them itself.
 
 =head3 Disconnected Client - sending after disconnect
 
@@ -3083,6 +3102,12 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 =head2 Version History
 
 =over
+
+=item -
+
+C<0.7> (Draft): Overlapping sends: an application may issue a C<$send>
+before an earlier one resolves; the server processes them in call order,
+whole, with terminal events last.
 
 =item -
 

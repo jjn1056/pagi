@@ -11,6 +11,36 @@ Each section below covers one version of the HTTP/WebSocket/SSE sub-spec
 writing to the raw spec, framework authors, and server implementers. The
 version a server implements is C<< $scope->{pagi}{spec_version} >>.
 
+=head1 0.6 TO 0.7
+
+Sub-spec 0.7 lets an application issue a send before an earlier one has
+resolved, and requires the server to keep a connection's sends in order.
+That is a new server requirement, so C<spec_version> moves to C<'0.7'>.
+
+=head2 Application authors
+
+On a 0.7 scope, concurrent producers -- a WebSocket handler's replies and its
+broadcasts, an SSE stream's events and a timer's -- may each C<await $send>
+without a queue between them: the server delivers each send whole, in the
+order they were called, and a C<websocket.close>, C<sse.close> or final body
+issued behind pending sends takes effect after them. Under 0.6 or earlier,
+keep serializing the sends yourself.
+
+=head2 Framework authors
+
+A helper that serializes its sends only to satisfy the old rule can stop on
+a 0.7 scope. Gate on C<spec_version> if the framework also runs on older
+servers.
+
+=head2 Server implementers
+
+Accept a send issued while earlier sends on the same connection are pending,
+and process the sends in call order: each delivered whole, none overtaking or
+discarding an earlier one, and a terminal event (the final
+C<http.response.body>, C<sse.close>, C<websocket.close>) applied only after
+every send issued before it. Report C<< spec_version => '0.7' >> once that
+holds on every protocol and transport you serve.
+
 =head1 0.5 TO 0.6
 
 Sub-spec 0.6 makes the connection state object universal, adds C<abort> and
