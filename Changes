@@ -3,6 +3,11 @@
 Unreleased
 
   [Specification]
+  - Www, high_water_mark: a send's Future stays pending until the buffer
+    has drained below low_water_mark. It said "until the buffer drains
+    enough for the server to continue processing the event", which read as
+    the server not yet having written the event; under 0.7 a server may
+    write first and hold only the Future. No new specification version.
   - Www 0.7, "Sends Are Sequential": an application MAY issue a $send before
     an earlier one has resolved, and a server MUST accept it and process a
     connection's sends in the order they were called -- each delivered

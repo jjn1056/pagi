@@ -2923,8 +2923,8 @@ If a server provides C<pagi.transport>, it B<must> implement C<buffered_amount>.
 
 B<C<high_water_mark()>> -- Returns the buffered-byte threshold at or above which
 the server applies backpressure: the Future returned by a C<$send> that would
-exceed it remains pending until the buffer drains enough for the server to
-continue processing the event. Awaiting that Future suspends the application
+exceed it remains pending until the buffer has drained below
+C<low_water_mark>. Awaiting that Future suspends the application
 coroutine, not the Perl thread. Applications use the threshold relative to the
 ceiling rather than hard-coding a byte count. Returns C<undef> if the server has
 no fixed high-water mark.
