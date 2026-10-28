@@ -1912,7 +1912,9 @@ between the frames of one message, as RFC 6455 section 5.4 allows. The scope's t
 Incomplete>), including C<http.response.trailers> and a C<file> or C<fh>
 body, takes effect only after every send issued before it, so a trailers send
 behind a body send is processed after that body, and its Future may stay
-pending while the body is still being sent.
+pending while the body is still being sent. A body that never ends -- an
+C<fh> on a pipe that never reaches end of file, say -- therefore holds the
+trailers behind it back for good: they are never sent.
 
 Each send's Future settles per the Send Completion Contract in L<PAGI::Spec>,
 and the application still awaits every send it issues. A server validates
