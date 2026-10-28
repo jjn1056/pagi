@@ -14,7 +14,7 @@ version a server implements is C<< $scope->{pagi}{spec_version} >>.
 =head1 0.6 TO 0.7
 
 Sub-spec 0.7 lets an application issue a send before an earlier one has
-resolved, and requires the server to keep a connection's sends in order.
+resolved, and requires the server to keep a scope's sends in order.
 That is a new server requirement, so C<spec_version> moves to C<'0.7'>.
 
 =head2 Application authors
@@ -34,12 +34,28 @@ servers.
 
 =head2 Server implementers
 
-Accept a send issued while earlier sends on the same connection are pending,
-and process the sends in call order: each delivered whole, none overtaking or
-discarding an earlier one, and a terminal event (the final
-C<http.response.body>, C<sse.close>, C<websocket.close>) applied only after
-every send issued before it. Report C<< spec_version => '0.7' >> once that
-holds on every protocol and transport you serve.
+Accept a send issued while earlier sends on the same scope are pending, and
+process the sends in call order: each delivered whole, none overtaking or
+discarding an earlier one, and the scope's terminal event -- including
+C<http.response.trailers>, a C<file>/C<fh> body, and C<sse.close> -- applied
+only after every send issued before it. A send the application issues after
+its own C<websocket.close> or C<sse.close> fails; one issued before it is
+processed. Validate each send when it is called, against the state every
+earlier call left, so that rule holds while the close is still waiting. A
+trailers send behind a large C<file> or C<fh> body may stay pending for as
+long as the body takes to send; that is intended. A cancelled send must not stall the sends behind it. Count sends
+you have accepted but not yet written in C<buffered_amount>.
+
+Backpressure is where this goes wrong. A server that, on each send, first
+waits for its buffer to drain and then writes lets a send that arrives while
+another is waiting overtake it. One way to keep the rule is to commit each
+send to the scope's output in call order when it is called, and only then
+wait for the buffer to drain before resolving its Future; another, which also covers a
+C<file> or C<fh> body read over many turns of the event loop, is a per-scope
+queue that every send, terminal events included, joins before any
+backpressure wait. Update C<is_connected>, C<response_complete> and the end
+callbacks when the terminal event takes effect, not when it is called. Report C<< spec_version => '0.7' >> once the rule holds on
+every protocol and transport you serve.
 
 =head1 0.5 TO 0.6
 

@@ -15,6 +15,17 @@ Unreleased
     describes this behaviour. This is Www 0.7: a server reports
     spec_version '0.7' once it keeps the rule, and PAGI::Upgrading has a
     0.6 TO 0.7 section.
+  - Www 0.7 also says what the rule means at the edges: sends are ordered
+    per scope, not per TCP connection; "whole" means one send's output is
+    never interleaved with another's; the terminal event includes trailers
+    and file/fh bodies; sse.close takes effect once earlier sends are
+    processed rather than on receipt; a send issued after the
+    application's own websocket.close or sse.close fails, one issued before
+    it is delivered; Futures need not settle in call order; a cancelled
+    send does not stall later ones; and buffered_amount counts sends
+    accepted but not yet written. A server validates each send when it is
+    called, and a deferred terminal event's facts (is_connected,
+    response_complete, the end callbacks) change when it takes effect.
   - PAGI::Spec::Extensions is version 0.4: the entry that removed
     websocket.http.response from the registry (with Www 0.6) was labelled
     0.6 in its history while the document still said 0.3. The content is

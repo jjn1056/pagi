@@ -407,8 +407,9 @@ successfully resolved Future and performs no work: it neither delivers the
 event nor signals closure. Applications detect closure through the protocol's
 disconnect event and any applicable connection-state object.
 
-Applications SHOULD NOT cancel the Future returned by C<$send>; the effect of
-cancelling one is unspecified.
+Applications SHOULD NOT cancel the Future returned by C<$send>; beyond what a
+protocol specification says (see L<PAGI::Spec::Www/"Sends Are Sequential">),
+the effect of cancelling one is unspecified.
 
 =head3 Application Completion Contract
 

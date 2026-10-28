@@ -18,11 +18,17 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 
 =item -
 
-C<0.7>: An application MAY issue a C<$send> before an earlier one has
-resolved, and a server MUST process a connection's sends in the order they
-were called, each delivered whole, with a terminal event taking effect only
-after every send issued before it (see L</Sends Are Sequential>). Before 0.7
-an application had to wait for each send to resolve before issuing the next.
+C<0.7>: An application MAY issue a C<$send> before an earlier one on the same
+scope has resolved, and a server MUST process a scope's sends in the order
+they were called, each delivered whole, with the terminal event -- trailers
+and C<file>/C<fh> bodies included -- taking effect only after every send
+issued before it; a cancelled send does not stall the sends behind it, and
+C<buffered_amount> counts sends accepted but not yet written (see L</Sends Are
+Sequential>). C<sse.close> takes effect once earlier sends are processed
+rather than on receipt, and a send issued after the application's own
+C<websocket.close> or C<sse.close> fails while one issued before it is
+processed. Before 0.7 an application had to wait for each send to resolve
+before issuing the next.
 
 =item -
 
@@ -816,7 +822,9 @@ callbacks with C<(undef, undef)>, and resolve C<end_future()> with C<undef>.
 
 =back
 
-Steps 1 and 2 update the synchronous facts immediately at the terminal event;
+Steps 1 and 2 update the synchronous facts immediately when the terminal event
+takes effect, which is after every send issued before it (see L</Sends Are
+Sequential>);
 step 4's callback delivery follows the deferral rule above and MAY run after the
 handler returns.
 
@@ -1889,17 +1897,35 @@ depend on them.
 =head3 Sends Are Sequential
 
 On a scope whose C<< $scope->{pagi}{spec_version} >> is C<0.7> or later, an
-application MAY issue a C<$send> on a connection before an earlier send's
-Future has resolved, so concurrent producers -- a WebSocket handler's replies
-and its broadcasts, an SSE stream's events and a timer's -- need not queue
-their sends themselves. A server MUST accept such a send and MUST process a
-connection's sends in the order the application called C<$send>: the client
-receives each send's output whole and in that order, and a later send never
-overtakes or discards an earlier one. A terminal event -- the final
-C<http.response.body>, C<sse.close>, C<websocket.close> -- takes effect only
-after every send issued before it. Each send's Future settles per the Send
-Completion Contract in L<PAGI::Spec>, and the application still awaits every
-send it issues.
+application MAY issue a C<$send> before an earlier send on the same scope has
+resolved, so concurrent producers -- a WebSocket handler's replies and its
+broadcasts, an SSE stream's events and a timer's -- need not queue their sends
+themselves. A server MUST accept such a send and MUST process a scope's sends
+in the order the application called C<$send>: the client receives each send's
+output whole and in that order, and a later send never overtakes or discards
+an earlier one. B<Whole> means one send's output is never interleaved with
+another's: the data frames of one WebSocket message are not interleaved with
+another message's, and the bytes of an HTTP body or SSE send are contiguous
+within its stream. Output the server generates itself, such as a keepalive,
+may fall between two sends; on a WebSocket it may also be a control frame
+between the frames of one message, as RFC 6455 section 5.4 allows. The scope's terminal event (see L</Application Left a Response
+Incomplete>), including C<http.response.trailers> and a C<file> or C<fh>
+body, takes effect only after every send issued before it, so a trailers send
+behind a body send is processed after that body, and its Future may stay
+pending while the body is still being sent.
+
+Each send's Future settles per the Send Completion Contract in L<PAGI::Spec>,
+and the application still awaits every send it issues. A server validates
+each send when C<$send> is called, against the scope's state as left by every
+earlier call, pending or not -- so a send issued after the application's own
+C<websocket.close> or C<sse.close> is out of sequence even while the close is
+still waiting its turn. The Futures therefore need not settle in call order: a
+send the server rejects fails at once, even while an earlier send is still
+pending. An application
+that cancels a pending send's Future (which L<PAGI::Spec> advises against)
+does not stall the sends behind it: they proceed as if the cancelled send had
+settled, and whether the cancelled send's own output is delivered is
+unspecified.
 
 Under an earlier version an application B<must not> issue a new C<$send>
 before the previous send's Future has resolved; the effect of overlapping
@@ -2303,10 +2329,11 @@ B<transport> closed -- the peer disconnected, a timeout fired, the server is
 shutting down -- a C<$send> is a B<no-op>: it neither delivers data nor
 raises, because the application may race the disconnect through no fault of
 its own; applications detect a closed WebSocket through the
-C<websocket.disconnect> event delivered to C<$receive>. After the
-B<application itself> sent C<websocket.close>, further sends are a
-programming error and the server MUST fail the C<$send> Future -- the
-application cannot race itself.
+C<websocket.disconnect> event delivered to C<$receive>. A send the
+B<application itself> issues after its own C<websocket.close> is a
+programming error and the server MUST fail its C<$send> Future -- the
+application cannot race itself. A send issued before the close and still
+pending is processed first (see L</Sends Are Sequential>).
 
 A send already B<in flight> when the transport closes settles per the Send
 Completion Contract in L<PAGI::Spec>: it resolves successfully; the
@@ -2749,8 +2776,9 @@ B<Example:>
 C<sse.close> ends the SSE stream. It is the SSE analog of
 C<http.response.body> with C<<< more => 0 >>>, and like that event it is the
 stream's terminal event: the server flushes any buffered events, writes the
-end-of-stream marker, and closes the stream. It takes effect B<immediately>
-on receipt, before the application returns, which lets a helper deep in the
+end-of-stream marker, and closes the stream. It takes effect as soon as every
+send issued before it has been processed (see L</Sends Are Sequential>),
+without waiting for the application to return, which lets a helper deep in the
 call stack end the stream without unwinding to the top; a subsequent return
 is a no-op. An application that returns after C<sse.start> without having
 sent C<sse.close> has left the response incomplete (see L</Application Left
@@ -2776,8 +2804,9 @@ client's next connection.
 
 =back
 
-After C<sse.close>, any further C<sse.send>, C<sse.comment>, or C<sse.keepalive>
-on the same connection B<MUST> raise -- the stream is closed. A C<$receive>
+An C<sse.send>, C<sse.comment>, or C<sse.keepalive> issued after C<sse.close> on
+the same scope B<MUST> raise -- the stream is closed; one issued before it and
+still pending is processed first (see L</Sends Are Sequential>). A C<$receive>
 call, pending or later, resolves with C<sse.disconnect> carrying no C<reason>:
 the scope ended cleanly (see L</"Meaning per scope">). C<sse.close> is
 B<idempotent>: a second C<sse.close> is ignored. C<sse.close> does not by itself
@@ -2882,7 +2911,10 @@ norm and tolerate its absence per the contract above.
 
 B<C<buffered_amount()>> -- Returns the number of bytes queued for the client but
 not yet written to the network, as an integer; C<0> when the send buffer is
-fully drained. This is a synchronous, non-blocking, non-destructive read -- it
+fully drained. On a 0.7 scope it includes the output of every send the server
+has accepted and not yet written, including sends still waiting behind
+earlier ones (see L</Sends Are Sequential>); for a C<file> or C<fh> body, it
+includes the bytes the server has read from it and not yet written. This is a synchronous, non-blocking, non-destructive read -- it
 neither sends, receives, nor consumes queued messages.
 
     my $pending = $scope->{'pagi.transport'}->buffered_amount;
@@ -3106,8 +3138,9 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 =item -
 
 C<0.7> (Draft): Overlapping sends: an application may issue a C<$send>
-before an earlier one resolves; the server processes them in call order,
-whole, with terminal events last.
+before an earlier one on the same scope resolves; the server processes them
+in call order, whole, with the terminal event last; cancelled sends do not
+stall later ones; C<buffered_amount> counts waiting sends.
 
 =item -
 
