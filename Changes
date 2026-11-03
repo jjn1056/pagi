@@ -3,6 +3,11 @@
 0.003002
 
   [Specification]
+  - Www, pagi.connection: disconnect_future and end_future say plainly what
+    cancelling a returned Future does -- nothing to the server's disconnect
+    handling or to any other Future the method returned -- in place of the
+    term "cancellation-isolated" and its justification. It also says what was left unsaid: after a clean end a
+    disconnect_future never resolves. No behaviour changes.
   - Www, high_water_mark: a send's Future stays pending until the buffer
     has drained below low_water_mark. It said "until the buffer drains
     enough for the server to continue processing the event", which read as
