@@ -88,8 +88,8 @@ After:
     await Future->wait_any($lookup, $conn->disconnect_future);
     return unless $conn->is_connected;
 
-C<disconnect_future> returns a fresh, cancellation-isolated observer on
-every call; losing a race cancels nothing else. Register C<on_complete> and
+C<disconnect_future> returns a fresh Future on every call; losing a race
+cancels nothing else. Register C<on_complete> and
 C<on_disconnect> for audit and cleanup; they fire on every ending including
 a completed refusal. C<on_disconnect> callbacks now receive
 C<($reason, $detail)>; C<disconnect_detail> is diagnostic text, never a
