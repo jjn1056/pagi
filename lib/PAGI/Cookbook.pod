@@ -253,6 +253,20 @@ completes, and cancels the other:
 
     my $result = await Future->wait_any( $expensive_work, $conn->disconnect_future );
 
+That suits a single race. In a loop -- a heartbeat, or a long poll that waits
+again and again -- don't race C<disconnect_future> or C<end_future> on every
+pass: a race against a Future the connection keeps pending leaves a callback
+on it until the connection ends, whichever combinator you use, so memory grows
+with every pass. Register once, and race a Future of your own each time:
+
+    my $wake;
+    $conn->on_end(sub { $wake->done if $wake && !$wake->is_ready });
+
+    while ($conn->is_connected) {
+        await $send->({ type => 'http.response.body', body => "ping\n", more => 1 });
+        await Future->wait_any( Future::IO->sleep(15), $wake = Future->new );
+    }
+
 C<on_disconnect> fires B<only> when something goes wrong -- the client drops, a
 timeout fires, the server aborts. Its counterpart C<on_complete> fires B<only>
 when the response was fully delivered. Exactly one of the two runs per request,

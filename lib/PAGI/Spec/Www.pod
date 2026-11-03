@@ -511,10 +511,8 @@ B<C<disconnect_future()>> - Returns a Future that resolves, with the reason, on 
 
 Cancelling a returned Future -- directly, or as the loser of
 C<< Future->wait_any >> -- MUST NOT affect the server's disconnect
-handling or any other Future this method returned. A Future that has lost
-one race cannot win a later one; call the method again for each race.
-After a clean end the Future never resolves (C<end_future> observes both
-outcomes).
+handling or any other Future this method returned. After a clean end the
+Future never resolves (C<end_future> observes both outcomes).
 
 B<C<on_end($callback)>> - Registers a callback invoked once when the scope
 reaches its terminal outcome, B<clean or abnormal>. Exactly one terminal
