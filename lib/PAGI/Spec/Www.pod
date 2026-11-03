@@ -617,7 +617,12 @@ Servers MUST use these standard reason strings where the condition applies:
 
 =item C<client_closed>
 
-Client initiated clean close (TCP FIN) mid-request
+Client initiated clean close (TCP FIN) while a request was being handled.
+This includes a half-close, where the client closes only its sending side:
+a server cannot tell the two apart without writing, so, like other HTTP
+servers, it treats a FIN as the client leaving, despite RFC 9112 S9.6's
+note that a half-close does not by itself mean the client has lost
+interest in the response.
 
 =item C<client_timeout>
 

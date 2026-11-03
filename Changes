@@ -3,6 +3,11 @@
 0.003002
 
   [Specification]
+  - Www, client_closed: a FIN counts while a request is being handled, a
+    half-close included -- a server cannot tell it from a full close without
+    writing, and other HTTP servers (Uvicorn, Hypercorn, Mojolicious) treat it
+    the same way, despite RFC 9112 S9.6's note. A note on the rule, not a
+    new one.
   - Www, pagi.connection: disconnect_future and end_future say plainly what
     cancelling a returned Future does -- nothing to the server's disconnect
     handling or to any other Future the method returned -- in place of the
