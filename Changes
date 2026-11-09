@@ -3,6 +3,15 @@
 0.003002
 
   [Specification]
+  - Www 0.7, "Statuses Without Content": the server suppresses the body of a
+    1xx, 204 or 304 response under the same rules as a HEAD response's --
+    no body bytes, no file/fh opened, trailers accepted and discarded, each
+    send resolving as usual -- since RFC 9110 says those responses cannot
+    contain content, RFC 9112 ends their HTTP/1.1 message at the header
+    section, and RFC 9113 gives them no DATA frames. The application may
+    send body events, as for HEAD. 205 is left to the application: its
+    message is framed like any other. PAGI::Upgrading's 0.6 TO 0.7 section
+    lists it for server implementers.
   - Www, client_closed: a FIN counts while a request is being handled, a
     half-close included -- a server cannot tell it from a full close without
     writing, and other HTTP servers (Uvicorn, Hypercorn, Mojolicious) treat it
