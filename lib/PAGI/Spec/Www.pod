@@ -1587,8 +1587,10 @@ the server's job here too, under the same rules as L</HEAD Requests>: the
 application MAY send body events, the server B<MUST NOT> transmit their
 bytes, C<file> and C<fh> body events are not opened, a trailers event is
 accepted and discarded, and each C<$send> resolves as usual, the terminal
-event completing the request. The headers are sent as given, so a C<304>
-keeps the C<Content-Length> its C<200> would have had (RFC 9110 S8.6).
+event completing the request. The headers are the application's, sent as
+given: a C<304> MAY carry the C<Content-Length> its C<200> would have had,
+and a C<1xx> or C<204> B<MUST NOT> carry one (RFC 9110 S8.6). An HTTP/2
+peer may reset a stream whose C<204> does.
 
 C<205> is not in this list. Its message is framed like any other, so RFC
 9110 S15.3.6's rule that it has no content is the application's to keep, not
