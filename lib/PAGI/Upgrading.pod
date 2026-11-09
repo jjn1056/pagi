@@ -34,7 +34,7 @@ servers.
 
 =head2 Server implementers
 
-Suppress the body of a C<1xx>, C<204> or C<304> response under the rules you
+Suppress the body of a C<204> or C<304> response under the rules you
 already keep for C<HEAD>: write no body bytes, open no C<file> or C<fh>,
 accept and discard trailers, and resolve each send as usual (Www, "Statuses
 Without Content"). Over HTTP/2 that means no DATA frame for the stream.
