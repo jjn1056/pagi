@@ -161,10 +161,10 @@ B<Explicit duplicates> - Duplicate header names (common for C<Set-Cookie>) are v
 B<Easier manipulation> - Filtering, mapping, and transforming headers works naturally with array operations:
 
     # Remove all cookies
-    my @filtered = grep { $_->[0] ne 'set-cookie' } @$headers;
+    my @filtered = grep { lc($_->[0]) ne 'set-cookie' } @$headers;
 
     # Find a header
-    my ($ct) = grep { $_->[0] eq 'content-type' } @$headers;
+    my ($ct) = grep { lc($_->[0]) eq 'content-type' } @$headers;
 
 =item 4.
 
@@ -178,7 +178,14 @@ B<Rules:>
 
 =item -
 
-Header names MUST be lowercase byte strings
+Header names the server delivers to the application, in a scope's
+C<headers> and in received events, MUST be lowercase byte strings
+
+=item -
+
+Header names an application sends SHOULD be lowercase byte strings. They may
+arrive in any case, so an intermediary reading headers an application sent
+SHOULD compare names case-insensitively, as the examples above do with C<lc>
 
 =item -
 
@@ -1288,17 +1295,18 @@ C<trailers> (Int, default C<0>) -- C<1> if trailers will be sent after body via 
 =back
 
 B<Header byte safety.> Because header names and values cross into HTTP message
-framing, a server B<MUST NOT> emit a header whose name or value contains C<CR>
-(C<\x0D>), C<LF> (C<\x0A>), or C<NUL> (C<\x00>), nor a name containing any other
-control character. The server B<MUST> reject such a header by failing the Future
-returned by C<$send> rather than forwarding it or silently rewriting the
-offending bytes: letting C<CR>/C<LF> through permits HTTP response splitting
-(CRLF injection), while silently stripping them mutates the application's data
-without signalling the bug. This is the same guarantee C<sse.send> gives for
+framing, a server B<MUST NOT> emit a header whose name is not a valid field
+name, or whose value is not a valid field value, as RFC 9110 S5.1 and S5.5
+define them. The server B<MUST> reject such a header by failing the Future
+returned by C<$send> rather than forwarding it or silently rewriting it: a
+C<CR> or C<LF> lets one header end early and another begin (HTTP response
+splitting), a colon in a name lets one header pose as another, and silently
+rewriting the offending bytes mutates the application's data without
+signalling the bug. This is the same guarantee C<sse.send> gives for
 its C<event> and C<id> fields (see L</Send SSE - C<send> event>): the server's
 emission path is the single point that guards the wire, so applications and
 frameworks MAY hold header values as opaque bytes and need not pre-validate
-them. (RFC 9110 S5.5; RFC 9112 S11.1.)
+them. (RFC 9110 S5.1, S5.5; RFC 9112 S11.1.)
 
 =head3 Response Body - C<send> event
 
@@ -1497,7 +1505,7 @@ C<type> -- C<"http.response.trailers">
 
 =item -
 
-C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers encoded the same way as response headers (lower-case names, byte values)
+C<headers> (ArrayRef[ArrayRef[Bytes]], default C<[]>) -- Trailer headers, encoded the same way as response headers
 
 =back
 
@@ -3162,7 +3170,11 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 C<0.7> (Draft): Overlapping sends: an application may issue a C<$send>
 before an earlier one on the same scope resolves; the server processes them
 in call order, whole, with the terminal event last; cancelled sends do not
-stall later ones; C<buffered_amount> counts waiting sends.
+stall later ones; C<buffered_amount> counts waiting sends. Header byte
+safety refers to RFC 9110 S5.1 and S5.5 instead of listing bytes, so a header
+name must be a token and a value a valid field value. Header names an
+application sends SHOULD be lowercase (they were MUST), and an intermediary
+compares them case-insensitively.
 
 =item -
 
