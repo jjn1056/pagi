@@ -3,6 +3,19 @@
 0.003002
 
   [Specification]
+  - Www 0.7, "Header byte safety": a server fails the send for a header
+    whose name is not a valid field name or whose value is not a valid
+    field value, as RFC 9110 S5.1 and S5.5 define them, in place of a list
+    of bytes (CR, LF, NUL, control characters in names) that let a colon or
+    a space in a name through: on HTTP/1.1, "set-cookie:a=b; x" went out as
+    a Set-Cookie header. The spec points at the RFC rather than restating
+    its grammar. PAGI::Upgrading's 0.6 TO 0.7 section lists it for server
+    implementers.
+  - Www 0.7, "Headers Format": header names an application sends SHOULD be
+    lowercase; they were MUST, which nothing enforced and ASGI's author
+    says was wrong for responses (asgiref c1d3d97). Names the server
+    delivers stay MUST. An intermediary compares an application's header
+    names case-insensitively, and the examples now use lc.
   - Www 0.7, "Statuses Without Content": the server suppresses the body of a
     204 or 304 response under the same rules as a HEAD response's --
     no body bytes, no file/fh opened, trailers accepted and discarded, each

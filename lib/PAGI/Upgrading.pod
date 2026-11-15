@@ -32,7 +32,15 @@ A helper that serializes its sends only to satisfy the old rule can stop on
 a 0.7 scope. Gate on C<spec_version> if the framework also runs on older
 servers.
 
+Middleware that reads the headers an application sent compares their names
+case-insensitively: they SHOULD be lowercase, and no longer MUST be.
+
 =head2 Server implementers
+
+Fail the send for a response header whose name isn't a token (RFC 9110 S5.1)
+or whose value isn't a valid field value (RFC 9110 S5.5), not only for one
+containing C<CR>, C<LF> or C<NUL> (Www, "Header byte safety"). Don't reject a
+name for its case.
 
 Suppress the body of a C<204> or C<304> response under the rules you
 already keep for C<HEAD>: write no body bytes, open no C<file> or C<fh>,
