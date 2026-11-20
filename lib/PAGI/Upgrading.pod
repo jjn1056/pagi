@@ -26,6 +26,11 @@ order they were called, and a C<websocket.close>, C<sse.close> or final body
 issued behind pending sends takes effect after them. Under 0.6 or earlier,
 keep serializing the sends yourself.
 
+With PAGI core 0.6, a send made after the client has gone resolves on a later
+turn of the event loop, so work whose only waits are sends can be raced
+against the scope's end and stops at its next send; see Www, "Example: Racing
+Against Disconnect", for which Future to race.
+
 =head2 Framework authors
 
 A helper that serializes its sends only to satisfy the old rule can stop on
@@ -69,6 +74,17 @@ queue that every send, terminal events included, joins before any
 backpressure wait. Update C<is_connected>, C<response_complete> and the end
 callbacks when the terminal event takes effect, not when it is called. Report C<< spec_version => '0.7' >> once the rule holds on
 every protocol and transport you serve.
+
+Resolve a send the connection can no longer carry -- made after the
+connection has closed, cleanly or not, or on a WebSocket once you have sent a
+Close of your own -- on a later turn of the event loop, never within the call
+to C<$send> (PAGI core 0.6), by awaiting C<< Future::IO->sleep(0) >> say. An
+already resolved Future lets an application whose only waits are sends run
+without ever returning to the loop, so the scope's end, which you deliver
+there, never reaches it. A send after the application's own
+C<websocket.close> or C<sse.close> still fails, and sends pending when the
+connection closes still settle at once. Report C<< version => '0.6' >> once
+this holds.
 
 =head1 0.5 TO 0.6
 
