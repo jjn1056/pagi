@@ -1024,8 +1024,8 @@ double-unlink.
 
         my $event_future = wait_for_event();
 
-        # Race: wait for event OR disconnect
-        await Future->wait_any($conn->disconnect_future, $event_future);
+        # Race: wait for the event OR the end of the scope
+        await Future->wait_any($conn->end_future, $event_future);
 
         return unless $conn->is_connected;
 
@@ -1033,14 +1033,21 @@ double-unlink.
         await send_response($send, $event);
     }
 
+Race C<end_future> on every scope type. While the race runs, the only end
+that can come is the one the application did not make: an C<http> or C<sse>
+scope ends cleanly only by the application's own terminal event, sent after
+the race, and a WebSocket closing handshake the client starts is a clean end
+that C<end_future> reports and C<disconnect_future> does not.
+
 On a scope whose C<< $scope->{pagi}{version} >> is C<0.6> or later, work whose
 only waits are sends -- an export, a feed -- is raced the same way, and stops
 at its next send after the end, since that send resolves on a later turn of
-the event loop (Send Completion Contract in L<PAGI::Spec>). On a
-WebSocket, race C<end_future> instead: a closing handshake the client starts
-is a clean end, which C<disconnect_future> does not report.
+the event loop (Send Completion Contract in L<PAGI::Spec>). Send the terminal
+event after the race; once the scope has ended, it is discarded the same way.
 
-    await Future->wait_any($export, $conn->end_future);   # WebSocket
+    await $send->({ type => 'sse.start', status => 200 });
+    await Future->wait_any($feed->(), $conn->end_future);
+    await $send->({ type => 'sse.close' });
 
 =head2 HTTP
 

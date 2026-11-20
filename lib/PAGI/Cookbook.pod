@@ -248,10 +248,11 @@ Future you can race against:
     };
 
 To cancel a long-running task the moment the client leaves, race it against
-C<< $conn->disconnect_future >> -- C<wait_any> resolves as soon as either Future
-completes, and cancels the other:
+C<< $conn->end_future >> -- C<wait_any> resolves as soon as either Future
+completes, and cancels the other. C<end_future> is the one to race on every
+scope type (L<PAGI::Spec::Www/"Example: Racing Against Disconnect">):
 
-    my $result = await Future->wait_any( $expensive_work, $conn->disconnect_future );
+    my $result = await Future->wait_any( $expensive_work, $conn->end_future );
 
 That suits a single race. In a loop -- a heartbeat, or a long poll that waits
 again and again -- don't race C<disconnect_future> or C<end_future> on every
