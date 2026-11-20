@@ -3,6 +3,26 @@
 0.003002
 
   [Specification]
+  - Core spec 0.5 -> 0.6, "Send Completion Contract": a send made after
+    the connection has closed, however it ended, still does no work and
+    resolves successfully, but on a later turn of the event loop, never
+    within the call to $send. An already resolved Future let an application
+    whose only waits are sends run without returning to the loop, so the
+    end of the scope never reached it: raced against disconnect_future, as
+    Www advises, it ran to its end. Cancelling such a send's Future, as
+    that race does, has no effect on the server. A protocol may still make
+    a send after the application's own terminal event an error, and sends
+    pending when the connection closes still settle at once.
+  - Www 0.7: a WebSocket send made once the server has sent a Close of its
+    own (in reply to the peer's, or on shutdown) is discarded the same way.
+    "Example: Racing Against Disconnect" now races end_future, and teaches
+    it as the one Future to race on every scope type, with the terminal
+    event sent after the race: while the race runs, the only end that can
+    come is one the application did not make, and a closing handshake the
+    client starts is a clean end, which disconnect_future does not report.
+    It covers work whose only waits are sends, and the Cookbook's race does
+    the same. PAGI::Upgrading's 0.6 TO 0.7 section lists both for
+    applications and server implementers.
   - Www 0.7, "Header byte safety": a server fails the send for a header
     whose name is not a valid field name or whose value is not a valid
     field value, as RFC 9110 S5.1 and S5.5 define them, in place of a list

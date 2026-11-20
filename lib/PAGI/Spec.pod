@@ -9,7 +9,7 @@ PAGI::Spec - The base PAGI specification: application interface and core concept
 I<Note: code examples are illustrative; their style is a documentation
 convenience, not a requirement of the specification.>
 
-B<Version>: 0.5 (Draft)
+B<Version>: 0.6 (Draft)
 
 =head2 Introduction
 
@@ -101,7 +101,7 @@ C<pagi>: A hashref containing:
 
 =item -
 
-C<version> -- the core PAGI specification version, e.g. C<'0.5'>
+C<version> -- the core PAGI specification version, e.g. C<'0.6'>
 
 =item -
 
@@ -402,14 +402,22 @@ safe.
 
 Before the connection closes, event-validation and event-resource failures
 required by the applicable protocol specification MUST fail the returned
-Future. After the connection has closed, C<$send> instead returns a
-successfully resolved Future and performs no work: it neither delivers the
-event nor signals closure. Applications detect closure through the protocol's
-disconnect event and any applicable connection-state object.
+Future. After the connection has closed, however it ended, C<$send> instead
+performs no work: it neither delivers the event nor signals closure, and its
+Future MUST resolve successfully on a later turn of the event loop, never
+within the call to C<$send>. Were it already resolved, an application whose
+only waits are sends would never return to the event loop, and the scope's
+end, which the server delivers there, could never reach it. A protocol
+specification may instead make a send after the application's own terminal
+event an error, and may name other points after which sends are discarded
+the same way. Applications detect closure through the protocol's disconnect
+event and any applicable connection-state object.
 
 Applications SHOULD NOT cancel the Future returned by C<$send>; beyond what a
 protocol specification says (see L<PAGI::Spec::Www/"Sends Are Sequential">),
-the effect of cancelling one is unspecified.
+the effect of cancelling one is unspecified. The exception is a send the
+server is discarding as above: cancelling its Future, as racing work against
+the scope's end does, has no effect on the server.
 
 =head3 Application Completion Contract
 
@@ -663,6 +671,18 @@ Byte content (e.g., body payloads) must be passed as Perl scalars B<without> the
 =head2 Version History
 
 =over
+
+=item -
+
+0.6 (Draft): Send Completion Contract: a send made after the connection has
+closed, however it ended, still does no work and resolves successfully, but
+on a later turn of the event loop, never within the call to C<$send>, so an
+application whose only waits are sends returns to the loop and the scope's
+end can reach it; a protocol specification may instead make a send after the
+application's own terminal event an error, and may name other points after
+which sends are discarded the same way; cancelling the Future of such a send
+has no effect on the server. Sends pending when the connection ends still
+settle promptly, as in 0.5.
 
 =item -
 

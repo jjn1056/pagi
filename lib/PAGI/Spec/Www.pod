@@ -30,7 +30,9 @@ C<websocket.close> or C<sse.close> fails while one issued before it is
 processed. Before 0.7 an application had to wait for each send to resolve
 before issuing the next. A server also suppresses the body of a C<204> or
 C<304> response, as it does a C<HEAD> response's (see L</Statuses Without
-Content>).
+Content>). A WebSocket send made once the server has sent a Close of its own
+is a no-op, as one after the transport closed is, and like it
+resolves on a later turn of the event loop (PAGI core 0.6).
 
 =item -
 
@@ -1022,14 +1024,32 @@ double-unlink.
 
         my $event_future = wait_for_event();
 
-        # Race: wait for event OR disconnect
-        await Future->wait_any($conn->disconnect_future, $event_future);
+        # Race: wait for the event OR the end of the scope
+        await Future->wait_any($conn->end_future, $event_future);
 
         return unless $conn->is_connected;
 
         my $event = await $event_future;
         await send_response($send, $event);
     }
+
+Race C<end_future> on every scope type. While the race runs, the only end
+that can come is the one the application did not make: an C<http> or C<sse>
+scope ends cleanly only by the application's own terminal event, sent after
+the race, and a WebSocket closing handshake the client starts is a clean end
+that C<end_future> reports and C<disconnect_future> does not.
+
+On a scope whose C<< $scope->{pagi}{version} >> is C<0.6> or later, work whose
+only waits are sends -- an export, a feed -- is raced the same way, and stops
+at its next send after the end, since that send resolves on a later turn of
+the event loop (Send Completion Contract in L<PAGI::Spec>). Send the terminal
+event after the race; once the scope has ended, it is discarded the same way.
+Sent inside the race, the terminal event is itself the end: C<end_future>
+resolves, and work the race is still awaiting after it is cancelled.
+
+    await $send->({ type => 'sse.start', status => 200 });
+    await Future->wait_any($feed->(), $conn->end_future);
+    await $send->({ type => 'sse.close' });
 
 =head2 HTTP
 
@@ -1119,7 +1139,7 @@ C<type> (String) -- C<"http">
 
 =item -
 
-C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.5'>)
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.6'>)
 
 =item -
 
@@ -1966,7 +1986,7 @@ serializes them itself.
 
 If the client disconnects or cancels the connection, servers MUST send an explicit C<http.disconnect> event to the application and update the connection state (see L</Connection State>).
 
-A subsequent C<$send> is a B<no-op>: it neither delivers data nor raises. Applications therefore detect disconnection through the C<http.disconnect> event or the C<pagi.connection> connection-state object (see L</Connection State>) -- PAGI's non-destructive, race-friendly mechanism for exactly this -- rather than by inspecting the result of C<$send>.
+A subsequent C<$send> is a B<no-op>: it neither delivers data nor raises, and its Future resolves on a later turn of the event loop (Send Completion Contract in L<PAGI::Spec>). Applications therefore detect disconnection through the C<http.disconnect> event or the C<pagi.connection> connection-state object (see L</Connection State>) -- PAGI's non-destructive, race-friendly mechanism for exactly this -- rather than by inspecting the result of C<$send>.
 
 A send already B<in flight> when the disconnect is detected is not an error
 either: it settles by resolving successfully, per the Send Completion
@@ -2020,7 +2040,7 @@ C<type> (String) -- C<"websocket">
 
 =item -
 
-C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.5'>)
+C<< $scope->{pagi}{version} >> (String) -- The PAGI core spec version (e.g. C<'0.6'>)
 
 =item -
 
@@ -2356,10 +2376,14 @@ peer-supplied text as data.
 
 How a C<$send> behaves after closure depends on who closed. After the
 B<transport> closed -- the peer disconnected, a timeout fired, the server is
-shutting down -- a C<$send> is a B<no-op>: it neither delivers data nor
-raises, because the application may race the disconnect through no fault of
-its own; applications detect a closed WebSocket through the
-C<websocket.disconnect> event delivered to C<$receive>. A send the
+shutting down -- or once the server has sent a Close of its own, in reply to
+the peer's or on shutdown (RFC 6455 section 5.5.1 allows no data after a
+Close), a C<$send> is a
+B<no-op>: it neither delivers data nor raises, because the application may
+race the disconnect through no fault of its own, and its Future resolves on
+a later turn of the event loop, as after the connection has closed (Send
+Completion Contract in L<PAGI::Spec>). Applications detect a closed WebSocket
+through the C<websocket.disconnect> event delivered to C<$receive>. A send the
 B<application itself> issues after its own C<websocket.close> is a
 programming error and the server MUST fail its C<$send> Future -- the
 application cannot race itself. A send issued before the close and still
