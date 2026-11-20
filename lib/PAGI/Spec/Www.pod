@@ -1044,6 +1044,8 @@ only waits are sends -- an export, a feed -- is raced the same way, and stops
 at its next send after the end, since that send resolves on a later turn of
 the event loop (Send Completion Contract in L<PAGI::Spec>). Send the terminal
 event after the race; once the scope has ended, it is discarded the same way.
+Sent inside the race, the terminal event is itself the end: C<end_future>
+resolves, and work the race is still awaiting after it is cancelled.
 
     await $send->({ type => 'sse.start', status => 200 });
     await Future->wait_any($feed->(), $conn->end_future);
