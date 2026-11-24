@@ -3,6 +3,12 @@
 0.003002
 
   [Specification]
+  - Www: an application sends its terminal event only when its work
+    finished. The racing example said to send it after the race, where a
+    send after the end is discarded; that contradicted "Application Left a
+    Response Incomplete" (an application that stopped because its client
+    left MUST NOT send the terminal event), since every intermediary in the
+    $send chain still sees the event.
   - Core spec 0.5 -> 0.6, "Send Completion Contract": a send made after
     the connection has closed, however it ended, still does no work and
     resolves successfully, but on a later turn of the event loop, never
@@ -16,8 +22,7 @@
   - Www 0.7: a WebSocket send made once the server has sent a Close of its
     own (in reply to the peer's, or on shutdown) is discarded the same way.
     "Example: Racing Against Disconnect" now races end_future, and teaches
-    it as the one Future to race on every scope type, with the terminal
-    event sent after the race: while the race runs, the only end that can
+    it as the one Future to race on every scope type, while the race runs, the only end that can
     come is one the application did not make, and a closing handshake the
     client starts is a clean end, which disconnect_future does not report.
     It covers work whose only waits are sends, and the Cookbook's race does

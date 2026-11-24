@@ -244,6 +244,7 @@ Future you can race against:
             await $send->({ type => 'http.response.body', body => "line $i\n", more => 1 });
             await Future::IO->sleep(1);
         }
+        return unless $conn->is_connected;    # cut short: don't claim it finished
         await $send->({ type => 'http.response.body', body => '', more => 0 });
     };
 
