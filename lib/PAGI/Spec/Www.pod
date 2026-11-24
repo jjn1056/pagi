@@ -352,7 +352,8 @@ per WebSocket session including its handshake, per SSE stream), never shared
 across keep-alive requests or HTTP/2 streams. Every accessor and method in
 this section is REQUIRED; a server that omits any of them is not conforming.
 Frameworks may rely on all of them unconditionally on a scope whose
-C<< $scope->{pagi}{spec_version} >> is C<0.6> or later.
+C<< $scope->{pagi}{spec_version} >> is C<0.6> or later, and on
+C<run_until_end> from C<0.7>.
 
 The object reports two distinct ways a request can end, through B<separate>
 callbacks, so an application never has to disambiguate them:
@@ -598,7 +599,8 @@ scope is active, rather than waiting for the end.
 =back
 
 If the scope has already ended when C<run_until_end> is called -- including
-after the application's own terminal event -- C<$code> is not called, and the
+after the application's own terminal event on an C<http> or C<sse> scope --
+C<$code> is not called, and the
 returned Future resolves with an empty list on a later turn of the event loop,
 never within the call. Only work C<$code> starts is covered: start the work,
 and take any subscription it holds, inside C<$code>.
@@ -609,10 +611,19 @@ results, or its failure -- exactly as if the scope were still open; a Future
 still pending is cancelled by the end, and the call resolves with an empty
 list.
 
+On a C<websocket> scope the application's C<websocket.close> starts the
+closing handshake and does not end the scope: the scope ends, and pending
+calls settle, when the handshake completes or the scope ends abnormally (see
+L</Meaning per scope>).
+
 The results report the work, not the client: work may finish on its own after
 the client has gone, before the end is delivered, and the call then resolves
 with its results. Code that depends on the client still being there reads
 C<is_connected> or C<disconnect_reason>.
+
+Work may be cancelled without having received the scope's disconnect event,
+and is cancelled at its next wait after the end: cleanup that must finish
+belongs after the call or in C<on_end>, not in the work.
 
 Cancelling the returned Future cancels the Future C<$code> returned, if it is
 still pending, and leaves the scope and its other observers alone. A scope may
@@ -890,7 +901,7 @@ Calls to C<run_until_end> still pending when the scope ends are settled as
 part of the end's delivery, on both the abnormal and the clean path: for each
 call, the server cancels the work, then resolves the call's Future with an
 empty list. The order among calls, and between calls and the terminal
-callbacks, is not specified. That settlement is a terminal delivery like the
+callbacks or the settlement of pending sends and receives, is not specified. That settlement is a terminal delivery like the
 callbacks: never synchronous inside an application's own call into C<$send>
 or C<$receive>.
 
