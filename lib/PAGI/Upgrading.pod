@@ -28,9 +28,10 @@ issued behind pending sends takes effect after them. Under 0.6 or earlier,
 keep serializing the sends yourself.
 
 Run work that should stop when the client leaves in
-C<< $conn->run_until_end(sub { ... }) >>; have the work return a value, and
-send the terminal event only when the call returns it (an application that
-stopped because its client left MUST NOT send it; see
+C<< $conn->run_until_end(sub { ... }) >>. It resolves with C<1> when the
+work finished while the scope was active and C<0> otherwise; send the
+terminal event only when it resolves with C<1> (an application that stopped
+because its client left MUST NOT send it; see
 L<PAGI::Spec::Www/"Application Left a Response Incomplete">). On a 0.6 server
 the method does not exist; the closest equivalent keeps the work's Future
 and races it against the scope's end:

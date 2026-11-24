@@ -153,14 +153,13 @@ not claim to be complete.
             trailers => 1,
         });
 
-        my ($finished) = await $conn->run_until_end(async sub {
+        my $completed = await $conn->run_until_end(async sub {
             for my $n (1 .. 3) {
                 await Future::IO->sleep(1) if $n > 1;   # pace the stream
                 await $send->({ type => 'http.response.body', body => "Chunk $n\n", more => 1 });
             }
-            return 1;
         });
-        return unless $finished;                      # the client went away
+        return unless $completed;                     # the client went away
 
         await $send->({ type => 'http.response.body', body => '', more => 0 });
         await $send->({
@@ -252,12 +251,16 @@ way to run work until the scope ends:
     };
 
 To stop a long-running task the moment the client leaves, run it in
-C<< $conn->run_until_end >>: it returns the task's results if the task
-finishes, and cancels the task and returns nothing if the scope ends first
-(L<PAGI::Spec::Www/"Example: Work That Stops When the Client Leaves">):
+C<< $conn->run_until_end >>: it resolves with C<1> if the task finishes, and
+cancels the task and resolves with C<0> if the scope ends first
+(L<PAGI::Spec::Www/"Example: Work That Stops When the Client Leaves">). Keep
+what the task produces in a variable it closes over:
 
-    my ($result) = await $conn->run_until_end(sub { $expensive_work->() });
-    return unless defined $result;    # the client left first
+    my $result;
+    my $completed = await $conn->run_until_end(async sub {
+        $result = await $expensive_work->();
+    });
+    return unless $completed;    # the client left first
 
 A call holds nothing once it settles, so a loop -- a heartbeat, a long poll
 that waits again and again -- can run inside one call or make a call per

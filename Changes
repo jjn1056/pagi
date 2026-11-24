@@ -6,10 +6,11 @@
   - Www 0.7: the connection object gains run_until_end($code), required on
     every http, websocket and sse scope. It runs the work $code returns
     while the scope is open and cancels it if the scope ends first,
-    resolving with the work's results, or with an empty list when the end
-    cancelled it; it fails with the work's failure, and when something else
-    cancels the work. A server releases what it held for a call once the
-    call settles, so one long-lived scope can make many calls. "Example:
+    resolving with 1 if the work finished while the scope was active and 0
+    otherwise (what the work produces stays in a closure); it fails with
+    the work's failure, and when something else cancels the work. A server
+    releases what it held for a call once the call settles, so one
+    long-lived scope can make many calls. "Example:
     Racing Against Disconnect" becomes "Example: Work That Stops When the
     Client Leaves", and the Cookbook's race becomes the method.
     PAGI::Upgrading's 0.6 TO 0.7 section covers it.

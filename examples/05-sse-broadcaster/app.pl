@@ -29,18 +29,17 @@ async sub app {
     );
 
     # Send the events while the client is connected. If it leaves, the work
-    # is cancelled at its next await and run_until_end returns nothing.
-    my ($finished) = await $conn->run_until_end(async sub {
+    # is cancelled at its next await and run_until_end resolves with 0.
+    my $completed = await $conn->run_until_end(async sub {
         for my $msg (@events) {
             await maybe_sleep(1);
             await $send->({ type => 'sse.send', %$msg });
         }
-        return 1;
     });
 
     # A finite stream ends with sse.close, sent only when every event went:
     # a stream cut short by the client leaving does not claim to be complete.
-    await $send->({ type => 'sse.close' }) if $finished;
+    await $send->({ type => 'sse.close' }) if $completed;
 }
 
 \&app;  # Return coderef when loaded via do
