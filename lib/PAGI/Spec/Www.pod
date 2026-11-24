@@ -588,7 +588,7 @@ C<disconnect_reason> set on an abnormal end);
 =item *
 
 fails with the work's failure when the work fails, and with the exception
-when C<$code> dies;
+when C<$code> dies, whatever the state of the scope when it fails;
 
 =item *
 
@@ -1129,7 +1129,7 @@ double-unlink.
 
 Run work that should stop when the client leaves in
 L</Connection Object Interface>'s C<run_until_end>, and send the terminal
-event only when the work finished:
+event only when the call resolves with C<1>:
 
     async sub counter_handler {
         my ($scope, $receive, $send) = @_;
