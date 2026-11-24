@@ -3,6 +3,16 @@
 0.003002
 
   [Specification]
+  - Www 0.8: the connection object gains run_until_end($code), required on
+    every http, websocket and sse scope. It runs the work $code returns
+    while the scope is open and cancels it if the scope ends first,
+    resolving with the work's results, or with an empty list when the end
+    cancelled it; it fails with the work's failure, and when something else
+    cancels the work. A server releases what it held for a call once the
+    call settles, so one long-lived scope can make many calls. "Example:
+    Racing Against Disconnect" becomes "Example: Work That Stops When the
+    Client Leaves", and the Cookbook's race becomes the method.
+    PAGI::Upgrading has a 0.7 TO 0.8 section.
   - Www: an application sends its terminal event only when its work
     finished. The racing example said to send it after the race, where a
     send after the end is discarded; that contradicted "Application Left a
@@ -21,12 +31,10 @@
     pending when the connection closes still settle at once.
   - Www 0.7: a WebSocket send made once the server has sent a Close of its
     own (in reply to the peer's, or on shutdown) is discarded the same way.
-    "Example: Racing Against Disconnect" now races end_future, and teaches
-    it as the one Future to race on every scope type, while the race runs, the only end that can
-    come is one the application did not make, and a closing handshake the
-    client starts is a clean end, which disconnect_future does not report.
-    It covers work whose only waits are sends, and the Cookbook's race does
-    the same. PAGI::Upgrading's 0.6 TO 0.7 section lists both for
+    Raced against the scope's end, work whose only waits are sends stops at
+    its next send; end_future is the Future to race on every scope type,
+    since a closing handshake the client starts is a clean end, which
+    disconnect_future does not report. PAGI::Upgrading's 0.6 TO 0.7 section lists both for
     applications and server implementers.
   - Www 0.7, "Header byte safety": a server fails the send for a header
     whose name is not a valid field name or whose value is not a valid

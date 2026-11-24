@@ -222,7 +222,7 @@ consumes whatever the queue holds next -- request-body data on an HTTP scope, a
 client message on a WebSocket -- and because a refusal that completes normally
 delivers no disconnect event at all; the object lets you check without touching
 the queue. It offers a cheap synchronous check, a cleanup callback, and a
-Future you can race against:
+way to run work until the scope ends:
 
     use Future;
     use Future::IO;
@@ -248,26 +248,24 @@ Future you can race against:
         await $send->({ type => 'http.response.body', body => '', more => 0 });
     };
 
-To cancel a long-running task the moment the client leaves, race it against
-C<< $conn->end_future >> -- C<wait_any> resolves as soon as either Future
-completes, and cancels the other. C<end_future> is the one to race on every
-scope type (L<PAGI::Spec::Www/"Example: Racing Against Disconnect">):
+To stop a long-running task the moment the client leaves, run it in
+C<< $conn->run_until_end >>: it returns the task's results if the task
+finishes, and cancels the task and returns nothing if the scope ends first
+(L<PAGI::Spec::Www/"Example: Work That Stops When the Client Leaves">):
 
-    my $result = await Future->wait_any( $expensive_work, $conn->end_future );
+    my ($result) = await $conn->run_until_end(sub { $expensive_work->() });
+    return unless defined $result;    # the client left first
 
-That suits a single race. In a loop -- a heartbeat, or a long poll that waits
-again and again -- don't race C<disconnect_future> or C<end_future> on every
-pass: a race against a Future the connection keeps pending leaves a callback
-on it until the connection ends, whichever combinator you use, so memory grows
-with every pass. Register once, and race a Future of your own each time:
+A call holds nothing once it settles, so a loop -- a heartbeat, a long poll
+that waits again and again -- can run inside one call or make a call per
+pass. A heartbeat never finishes, so no terminal event follows it:
 
-    my $wake;
-    $conn->on_end(sub { $wake->done if $wake && !$wake->is_ready });
-
-    while ($conn->is_connected) {
-        await $send->({ type => 'http.response.body', body => "ping\n", more => 1 });
-        await Future->wait_any( Future::IO->sleep(15), $wake = Future->new );
-    }
+    await $conn->run_until_end(async sub {
+        while (1) {
+            await $send->({ type => 'http.response.body', body => "ping\n", more => 1 });
+            await Future::IO->sleep(15);
+        }
+    });
 
 C<on_disconnect> fires B<only> when something goes wrong -- the client drops, a
 timeout fires, the server aborts. Its counterpart C<on_complete> fires B<only>
@@ -289,8 +287,9 @@ WebSocket and SSE recipes do -- but anything that does not own the queue uses
 the object.
 
 The full connection-state interface (C<is_connected>, C<disconnect_reason>,
-C<disconnect_detail>, C<on_disconnect>, C<on_complete>, C<disconnect_future>,
-C<response_started>, C<response_complete>, and C<abort>) is specified in
+C<disconnect_detail>, C<on_disconnect>, C<on_complete>, C<on_end>,
+C<disconnect_future>, C<end_future>, C<run_until_end>, C<response_started>,
+C<response_complete>, and C<abort>) is specified in
 L<PAGI::Spec::Www/"Connection State">.
 
 =head1 WEBSOCKET

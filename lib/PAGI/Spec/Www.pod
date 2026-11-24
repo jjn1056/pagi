@@ -6,7 +6,7 @@ PAGI::Spec::Www - PAGI message formats for HTTP, WebSocket, and SSE
 
 =head1 HTTP, WebSocket & SSE PAGI Message Format
 
-B<Version>: 0.7 (Draft)
+B<Version>: 0.8 (Draft)
 
 The HTTP, WebSocket & SSE PAGI sub-specification defines how HTTP/1.1, HTTP/2, WebSocket, and Server-Sent Events (SSE) connections are transported within PAGI.
 
@@ -15,6 +15,15 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 =head2 Spec Versions
 
 =over
+
+=item -
+
+C<0.8>: C<pagi.connection> adds C<run_until_end($code)>, required on every
+C<http>, C<websocket> and C<sse> scope: it runs the work C<$code> returns
+while the scope is active, cancels it if the scope ends first, and resolves
+with the work's results or, when the end cancelled it, an empty list (see
+L</Connection Object Interface>). A server releases what it holds for each
+call when the call settles.
 
 =item -
 
@@ -552,6 +561,90 @@ as for C<disconnect_future>.
 
     my $reason = await $conn->end_future;   # token, or undef on a clean end
 
+B<C<run_until_end($code)>> - Runs one operation while the scope is active. If
+the scope ends while the operation is pending, the server cancels the
+operation.
+
+C<$code> is called once, with no arguments, and returns a Future that stands
+for the work: an C<async sub> returns one, and a plain sub may return any
+Future, for example one built with C<< Future->wait_any >>. C<run_until_end>
+returns a Future that:
+
+=over 4
+
+=item *
+
+resolves with the work's results when the work finishes;
+
+=item *
+
+resolves with an empty list when the scope's end is delivered while the work
+is still pending. The server cancels the work before it resolves this Future,
+so code after an C<await> on it never runs alongside the work, and the scope
+already reports its end (C<is_connected> false, C<disconnect_reason> set on an
+abnormal end);
+
+=item *
+
+fails with the work's failure when the work fails, and with the exception
+when C<$code> dies;
+
+=item *
+
+fails when C<$code> returns something other than a Future;
+
+=item *
+
+fails when something other than the scope's end cancels the work while the
+scope is active, rather than waiting for the end.
+
+=back
+
+If the scope has already ended when C<run_until_end> is called -- including
+after the application's own terminal event -- C<$code> is not called, and the
+returned Future resolves with an empty list on a later turn of the event loop,
+never within the call. Only work C<$code> starts is covered: start the work,
+and take any subscription it holds, inside C<$code>.
+
+C<$code> may itself end the scope, by calling C<abort> or sending the
+terminal event. A Future it returns already settled keeps its outcome -- its
+results, or its failure -- exactly as if the scope were still open; a Future
+still pending is cancelled by the end, and the call resolves with an empty
+list.
+
+The results report the work, not the client: work may finish on its own after
+the client has gone, before the end is delivered, and the call then resolves
+with its results. Code that depends on the client still being there reads
+C<is_connected> or C<disconnect_reason>.
+
+Cancelling the returned Future cancels the Future C<$code> returned, if it is
+still pending, and leaves the scope and its other observers alone. A scope may
+have several calls pending at once.
+
+When a call settles, however it settles, the server MUST release what it held
+for that call: its observation of the scope's end and its references to the
+work and to C<$code>. A scope that stays open while it makes many calls -- a
+WebSocket handling each message in one -- holds only the calls still pending.
+
+The terminal event says the response is complete, so send it only when the
+work finished (see L</Application Left a Response Incomplete>): have the work
+return a value, and send the terminal event when the call returns it. Work cut
+short by the end returns nothing, and the application returns without the
+terminal event.
+
+    await $send->({ type => 'sse.start', status => 200 });
+    my ($finished) = await $conn->run_until_end(async sub {
+        while (1) {
+            my $text = await $feed->next_text;
+            return 1 unless defined $text;        # the feed has ended
+            await $send->({ type => 'sse.send', data => $text });
+        }
+    });
+    await $send->({ type => 'sse.close' }) if $finished;
+
+A WebSocket handler is the same: run the session's work in the call, and
+send C<websocket.close> when the work finished.
+
 B<C<abort($detail)>> - Requests that the server end this scope's transport
 now: close the connection on HTTP/1.1, reset only this stream
 (C<RST_STREAM>, e.g. C<CANCEL>) on HTTP/2. C<abort> returns immediately with no meaningful
@@ -723,7 +816,7 @@ MUST provide C<pagi.connection> on every C<http>, C<websocket>, and C<sse> scope
 
 =item 2.
 
-MUST implement C<is_connected()>, C<disconnect_reason()>, C<disconnect_detail()>, C<close_code()>, C<close_reason()>, C<on_disconnect()>, C<on_complete()>, C<on_end()>, C<disconnect_future()>, C<end_future()>, C<response_started()>, C<response_complete()>, and C<abort()> methods
+MUST implement C<is_connected()>, C<disconnect_reason()>, C<disconnect_detail()>, C<close_code()>, C<close_reason()>, C<on_disconnect()>, C<on_complete()>, C<on_end()>, C<disconnect_future()>, C<end_future()>, C<run_until_end()>, C<response_started()>, C<response_complete()>, and C<abort()> methods
 
 =item 3.
 
@@ -795,6 +888,14 @@ callbacks are invoked at step 4, both carrying the same reason token as
 C<disconnect_future> and C<on_disconnect>. C<on_end> fires exactly once for the
 scope, here on the abnormal path and per the clean-end order below on the clean
 path.
+
+Calls to C<run_until_end> still pending when the scope ends are settled as
+part of the end's delivery, on both the abnormal and the clean path: for each
+call, the server cancels the work, then resolves the call's Future with an
+empty list. The order among calls, and between calls and the terminal
+callbacks, is not specified. That settlement is a terminal delivery like the
+callbacks: never synchronous inside an application's own call into C<$send>
+or C<$receive>.
 
 This order applies to every scope type, and to an end initiated by
 C<abort> exactly as to one detected on the transport. Delivery of every
@@ -1016,42 +1117,53 @@ Exactly one of the two callbacks runs, so the temp file is always removed
 exactly once -- no manual cleanup in the request body, and no risk of a
 double-unlink.
 
-=head3 Example: Racing Against Disconnect
+=head3 Example: Work That Stops When the Client Leaves
+
+Run work that should stop when the client leaves in
+L</Connection Object Interface>'s C<run_until_end>, and send the terminal
+event only when the work finished:
+
+    async sub counter_handler {
+        my ($scope, $receive, $send) = @_;
+        my $conn = $scope->{'pagi.connection'};
+
+        await $send->({
+            type    => 'http.response.start',
+            status  => 200,
+            headers => [ [ 'content-type', 'text/plain' ] ],
+        });
+
+        my ($finished) = await $conn->run_until_end(async sub {
+            for my $n (1 .. 5) {
+                await $send->({ type => 'http.response.body', body => "$n\n", more => 1 });
+                await Future::IO->sleep(1);
+            }
+            return 1;
+        });
+
+        # The final body says the response is complete: send it only when
+        # all five lines went.
+        return unless $finished;
+        await $send->({ type => 'http.response.body', body => "done\n", more => 0 });
+    }
+
+The client leaving cancels the work at its next wait -- the sleep, or a send,
+which on a scope whose C<< $scope->{pagi}{version} >> is C<0.6> or later
+resolves on a later turn of the event loop once the scope has ended (Send
+Completion Contract in L<PAGI::Spec>) -- and the call returns nothing, so
+the handler returns without claiming completion.
+
+A long poll waits on something outside the scope:
 
     async sub long_poll_handler {
         my ($scope, $receive, $send) = @_;
         my $conn = $scope->{'pagi.connection'};
 
-        my $event_future = wait_for_event();
+        my ($event) = await $conn->run_until_end(sub { wait_for_event() });
+        return unless defined $event;          # the client left first
 
-        # Race: wait for the event OR the end of the scope
-        await Future->wait_any($conn->end_future, $event_future);
-
-        return unless $conn->is_connected;
-
-        my $event = await $event_future;
         await send_response($send, $event);
     }
-
-Race C<end_future> on every scope type. While the race runs, the only end
-that can come is the one the application did not make: an C<http> or C<sse>
-scope ends cleanly only by the application's own terminal event, sent after
-the race, and a WebSocket closing handshake the client starts is a clean end
-that C<end_future> reports and C<disconnect_future> does not.
-
-On a scope whose C<< $scope->{pagi}{version} >> is C<0.6> or later, work whose
-only waits are sends -- an export, a feed -- is raced the same way, and stops
-at its next send after the end, since that send resolves on a later turn of
-the event loop (Send Completion Contract in L<PAGI::Spec>). Send the terminal
-event only when the work finished: an application that stopped because its
-client left MUST NOT send it (see L</Application Left a Response
-Incomplete>). Sent inside the race, the terminal event is itself the end:
-C<end_future> resolves, and work the race is still awaiting after it is
-cancelled.
-
-    await $send->({ type => 'sse.start', status => 200 });
-    await Future->wait_any($feed->(), $conn->end_future);
-    await $send->({ type => 'sse.close' }) if $conn->is_connected;
 
 =head2 HTTP
 
@@ -3190,6 +3302,12 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 =head2 Version History
 
 =over
+
+=item -
+
+C<0.8> (Draft): C<run_until_end> on the connection object; the racing
+example's advice to send the terminal event after the race, contrary to
+L</Application Left a Response Incomplete>, is withdrawn.
 
 =item -
 

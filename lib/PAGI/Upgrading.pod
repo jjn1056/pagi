@@ -11,6 +11,45 @@ Each section below covers one version of the HTTP/WebSocket/SSE sub-spec
 writing to the raw spec, framework authors, and server implementers. The
 version a server implements is C<< $scope->{pagi}{spec_version} >>.
 
+=head1 0.7 TO 0.8
+
+Sub-spec 0.8 adds C<run_until_end> to the connection object. It is a new
+server requirement, so C<spec_version> moves to C<'0.8'>.
+
+=head2 Application authors
+
+Run work that should stop when the client leaves in
+C<< $conn->run_until_end(sub { ... }) >>; have the work return a value, and
+send the terminal event only when the call returns it. On a 0.7 server the
+method does not exist; the closest equivalent is
+
+    await Future->wait_any($work->(), $conn->end_future);
+
+which leaves a callback on the connection for every race until the scope
+ends, waits for the end if something else cancels the work, and resolves with
+the end's reason when the end wins.
+
+0.7's racing example said to send the terminal event after the race, where a
+send after the end is discarded. That contradicted "Application Left a
+Response Incomplete": an application that stopped because its client left
+MUST NOT send the terminal event, since every intermediary in the C<$send>
+chain still sees it. Send it only when the work finished.
+
+=head2 Framework authors
+
+Gate on C<spec_version>: C<run_until_end> is present on a scope reporting
+C<0.8> or later.
+
+=head2 Server implementers
+
+Implement C<run_until_end> as specified in L<PAGI::Spec::Www/"Connection
+Object Interface"> and settle pending calls in the end delivery as
+L<PAGI::Spec::Www/"State Transition Order"> describes. Keep the pending calls
+in a structure the scope owns and remove each one when it settles; building
+each call on a fresh C<end_future> observer leaves one callback per call on
+the scope's end. Report C<< spec_version => '0.8' >> once that holds on every
+protocol you serve.
+
 =head1 0.6 TO 0.7
 
 Sub-spec 0.7 lets an application issue a send before an earlier one has
@@ -27,9 +66,9 @@ issued behind pending sends takes effect after them. Under 0.6 or earlier,
 keep serializing the sends yourself.
 
 With PAGI core 0.6, a send made after the client has gone resolves on a later
-turn of the event loop, so work whose only waits are sends can be raced
-against the scope's end and stops at its next send; see Www, "Example: Racing
-Against Disconnect", for which Future to race.
+turn of the event loop, so work whose only waits are sends stops at its next
+send once it is raced against the scope's end; from 0.8, run it in
+C<run_until_end> (see L</0.7 TO 0.8>).
 
 =head2 Framework authors
 
