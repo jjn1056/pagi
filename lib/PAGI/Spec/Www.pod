@@ -6,7 +6,7 @@ PAGI::Spec::Www - PAGI message formats for HTTP, WebSocket, and SSE
 
 =head1 HTTP, WebSocket & SSE PAGI Message Format
 
-B<Version>: 0.8 (Draft)
+B<Version>: 0.7 (Draft)
 
 The HTTP, WebSocket & SSE PAGI sub-specification defines how HTTP/1.1, HTTP/2, WebSocket, and Server-Sent Events (SSE) connections are transported within PAGI.
 
@@ -15,15 +15,6 @@ It is designed to be a superset of the PSGI specification and specifies how to t
 =head2 Spec Versions
 
 =over
-
-=item -
-
-C<0.8>: C<pagi.connection> adds C<run_until_end($code)>, required on every
-C<http>, C<websocket> and C<sse> scope: it runs the work C<$code> returns
-while the scope is active, cancels it if the scope ends first, and resolves
-with the work's results or, when the end cancelled it, an empty list (see
-L</Connection Object Interface>). A server releases what it holds for each
-call when the call settles.
 
 =item -
 
@@ -42,6 +33,12 @@ C<304> response, as it does a C<HEAD> response's (see L</Statuses Without
 Content>). A WebSocket send made once the server has sent a Close of its own
 is a no-op, as one after the transport closed is, and like it
 resolves on a later turn of the event loop (PAGI core 0.6).
+C<pagi.connection> adds C<run_until_end($code)>, required on every C<http>,
+C<websocket> and C<sse> scope: it runs the work C<$code> returns while the
+scope is active, cancels it if the scope ends first, and resolves with the
+work's results or, when the end cancelled it, an empty list (see
+L</Connection Object Interface>); a server releases what it holds for each
+call when the call settles.
 
 =item -
 
@@ -3305,12 +3302,6 @@ C<root_path>: Unicode path string matching C<SCRIPT_NAME>
 
 =item -
 
-C<0.8> (Draft): C<run_until_end> on the connection object; the racing
-example's advice to send the terminal event after the race, contrary to
-L</Application Left a Response Incomplete>, is withdrawn.
-
-=item -
-
 C<0.7> (Draft): Overlapping sends: an application may issue a C<$send>
 before an earlier one on the same scope resolves; the server processes them
 in call order, whole, with the terminal event last; cancelled sends do not
@@ -3318,7 +3309,7 @@ stall later ones; C<buffered_amount> counts waiting sends. Header byte
 safety refers to RFC 9110 S5.1 and S5.5 instead of listing bytes, so a header
 name must be a token and a value a valid field value. Header names an
 application sends SHOULD be lowercase (they were MUST), and an intermediary
-compares them case-insensitively.
+compares them case-insensitively. C<run_until_end> on the connection object.
 
 =item -
 
