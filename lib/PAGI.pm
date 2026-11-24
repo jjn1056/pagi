@@ -476,7 +476,7 @@ async web programming in Perl, contributions are welcome:
 
 =head1 AUTHOR
 
-John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
+John Napiorkowski E<lt>jjn1056@gmail.comE<gt>
 
 =head1 LICENSE
 
