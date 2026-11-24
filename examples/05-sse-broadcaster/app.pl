@@ -10,19 +10,11 @@ sub maybe_sleep {
     return $HAS_FUTURE_IO ? Future::IO->sleep($seconds) : Future->done;
 }
 
-async sub watch_sse_disconnect {
-    my ($receive) = @_;
-
-    while (1) {
-        my $event = await $receive->();
-        return $event if $event->{type} eq 'sse.disconnect';
-    }
-}
-
 async sub app {
     my ($scope, $receive, $send) = @_;
 
     die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'sse';
+    my $conn = $scope->{'pagi.connection'};
 
     await $send->({
         type    => 'sse.start',
@@ -30,25 +22,25 @@ async sub app {
         headers => [ [ 'content-type', 'text/event-stream' ] ],
     });
 
-    my $disconnect = watch_sse_disconnect($receive);
     my @events = (
         { event => 'tick', data => '1' },
         { event => 'tick', data => '2' },
         { event => 'done', data => 'finished' },
     );
 
-    for my $msg (@events) {
-        last if $disconnect->is_ready;
-        await maybe_sleep(1);
-        await $send->({ type => 'sse.send', %$msg });
-    }
+    # Send the events while the client is connected. If it leaves, the work
+    # is cancelled at its next await and run_until_end returns nothing.
+    my ($finished) = await $conn->run_until_end(async sub {
+        for my $msg (@events) {
+            await maybe_sleep(1);
+            await $send->({ type => 'sse.send', %$msg });
+        }
+        return 1;
+    });
 
-    # A finite stream ends with sse.close. Skip it if the client already left:
-    # a terminal event after a disconnect would assert a delivery that did not
-    # happen.
-    await $send->({ type => 'sse.close' }) unless $disconnect->is_ready;
-
-    $disconnect->cancel if $disconnect->can('cancel') && !$disconnect->is_ready;
+    # A finite stream ends with sse.close, sent only when every event went:
+    # a stream cut short by the client leaving does not claim to be complete.
+    await $send->({ type => 'sse.close' }) if $finished;
 }
 
 \&app;  # Return coderef when loaded via do
