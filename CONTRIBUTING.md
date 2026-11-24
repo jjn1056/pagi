@@ -50,7 +50,7 @@ This is a volunteer project maintained in my spare time. I cannot commit to
 timelines for reviewing PRs or responding to issues.
 
 If your organization needs priority support, expedited PR review, or custom
-development, I'm available for contract work. Contact jjnapiork@cpan.org to
+development, I'm available for contract work. Contact jjn1056@gmail.com to
 discuss.
 
 ## Questions?
