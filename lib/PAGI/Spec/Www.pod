@@ -1166,6 +1166,8 @@ A long poll waits on something outside the scope:
         await $conn->run_until_end(async sub {
             $event = await wait_for_event();
         });
+        # An event taken just as the client left is the application's to put
+        # back or hand on: nothing else will deliver it.
         return unless $conn->is_connected;     # the client left first
 
         await send_response($send, $event);
