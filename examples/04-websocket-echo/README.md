@@ -3,8 +3,16 @@
 Handles the WebSocket protocol:
 1. Waits for `websocket.connect`.
 2. Sends `websocket.accept` to complete the handshake.
-3. Echoes incoming frames back via `websocket.send`.
-4. Stops when `websocket.disconnect` arrives or when `websocket.receive` contains neither `text` nor `bytes`.
+3. Echoes each message back via `websocket.send`: text as text, binary as binary.
+4. Stops when `websocket.disconnect` arrives (the client closed or left), or
+   when the client sends `bye`.
+
+The echo loop runs in `$conn->run_until_end`; the Close goes out after it,
+only if the client is still connected. So a `bye` ends the session from the
+server's side with `websocket.close` 1000, and a client that closed or left
+gets nothing more. Afterwards the app logs how the session ended, read from
+the connection: `disconnect_reason` for an abnormal end, `close_code` for a
+client's polite close.
 
 ## Quick Start
 
@@ -27,6 +35,8 @@ websocat ws://localhost:5000/
 # => Hello
 # Type: PAGI WebSocket!
 # => PAGI WebSocket!
+# Type: bye
+# (the server closes the connection with code 1000)
 ```
 
 **3. Or use JavaScript in browser console:**
@@ -40,3 +50,4 @@ ws.onopen = () => ws.send('Hello from browser!');
 ## Spec References
 
 - WebSocket scope & events – `PAGI::Spec::Www`
+- `run_until_end`, `is_connected` – `PAGI::Spec::Www`, "Connection Object Interface"
