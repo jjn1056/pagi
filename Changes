@@ -13,7 +13,9 @@
     long-lived scope can make many calls. "Example:
     Racing Against Disconnect" becomes "Example: Work That Stops When the
     Client Leaves", and the Cookbook's race becomes the method.
-    PAGI::Upgrading's 0.6 TO 0.7 section covers it.
+    PAGI::Upgrading's 0.6 TO 0.7 section covers it. New example
+    20-streaming-echo streams a request body in and a response body out
+    at once, both inside one run_until_end.
   - Www: an application sends its terminal event only when its work
     finished ("Application Left a Response Incomplete": one that stopped
     because its client left MUST NOT send it, since every intermediary in

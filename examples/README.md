@@ -60,6 +60,7 @@ How you poke an example depends on its protocol:
 13. `17-event-middleware` - the same source the *right way*: a middleware owns it and delivers its events through `$receive`, so the app just awaits events and switches on `type`
 14. `18-bidirectional-websocket` - full-duplex WebSocket: a receive-loop and an unsolicited server send-loop running concurrently (two branches joined with `wait_any`)
 15. `19-shutdown-cleanup` - per-connection cleanup that finishes before the process exits: a WebSocket app saves each session asynchronously on its `server_shutdown` disconnect, and `lifespan.shutdown` runs after them all
+16. `20-streaming-echo` - an HTTP request body and response body streamed at once: each uploaded number answered as it arrives while a ticker runs on its own, both in one `run_until_end` (the HTTP twin of 18)
 
 ## Embedding & event loops
 
