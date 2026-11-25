@@ -6,8 +6,8 @@
   - Www 0.7: the connection object gains run_until_end($code), required on
     every http, websocket and sse scope. It runs the work $code returns
     while the scope is open and cancels it if the scope ends first,
-    resolving with 1 if the work finished while the scope was active and 0
-    otherwise (what the work produces stays in a closure); it fails with
+    resolving with no value; the application sends the ending after it if
+    is_connected (what the work produces stays in a closure). It fails with
     the work's failure, and when something else cancels the work. A server
     releases what it held for a call once the call settles, so one
     long-lived scope can make many calls. "Example:

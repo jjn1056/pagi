@@ -45,8 +45,8 @@ async sub app {
 
     # The body is the work. run_until_end runs it while the request is open:
     # if the client leaves, the work is cancelled at its next await (a send
-    # or the sleep) and run_until_end resolves with 0.
-    my $completed = await $conn->run_until_end(async sub {
+    # or the sleep).
+    await $conn->run_until_end(async sub {
         for my $n (1 .. 3) {
             await Future::IO->sleep(1) if $n > 1;
             await $send->({ type => 'http.response.body', body => "Chunk $n\n", more => 1 });
@@ -54,8 +54,8 @@ async sub app {
     });
 
     # The end of the response, and its trailer, say the body is complete, so
-    # they go only when the work produced all of it.
-    unless ($completed) {
+    # they go only to a client that is still there.
+    unless ($conn->is_connected) {
         warn "Client left early: " . ($conn->disconnect_reason // 'unknown') . "\n";
         return;
     }
