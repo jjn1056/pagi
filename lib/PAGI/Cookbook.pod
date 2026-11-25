@@ -822,7 +822,7 @@ L<PAGI::EventLoops> - event loops, non-blocking I/O, and binding a server to a l
 
 =head1 AUTHOR
 
-John Napiorkowski E<lt>jjnapiork@cpan.orgE<gt>
+John Napiorkowski E<lt>jjn1056@gmail.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
