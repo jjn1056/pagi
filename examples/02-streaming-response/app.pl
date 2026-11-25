@@ -30,6 +30,7 @@ async sub app {
     my ($scope, $receive, $send) = @_;
 
     die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'http';
+    my $conn = $scope->{'pagi.connection'};
 
     # First, drain any request body
     await drain_request($receive);
@@ -42,36 +43,23 @@ async sub app {
         trailers => 1,
     });
 
-    my @chunks = (
-        "Chunk 1\n",
-        "Chunk 2\n",
-        "Chunk 3\n",
-    );
-
-    # Start a task that waits for client disconnect.
-    # This returns a Future that completes when http.disconnect is received.
-    my $disconnect_future = $receive->();
-
-    for my $i (0 .. $#chunks) {
-        my $body = $chunks[$i];
-        my $more = ($i < $#chunks) ? 1 : 0;
-
-        # Check if client disconnected before sending
-        if ($disconnect_future->is_ready) {
-            warn "Client disconnected before all chunks sent\n";
-            return;
+    # The body is the work. run_until_end runs it while the request is open:
+    # if the client leaves, the work is cancelled at its next await (a send
+    # or the sleep).
+    await $conn->run_until_end(async sub {
+        for my $n (1 .. 3) {
+            await Future::IO->sleep(1) if $n > 1;
+            await $send->({ type => 'http.response.body', body => "Chunk $n\n", more => 1 });
         }
+    });
 
-        await $send->({ type => 'http.response.body', body => $body, more => $more });
-        await Future::IO->sleep(1) if $more;
-    }
-
-    # Check disconnect before sending trailers
-    if ($disconnect_future->is_ready) {
-        warn "Client disconnected before trailers\n";
+    # The end of the response, and its trailer, say the body is complete, so
+    # they go only to a client that is still there.
+    unless ($conn->is_connected) {
+        warn "Client left early: " . ($conn->disconnect_reason // 'unknown') . "\n";
         return;
     }
-
+    await $send->({ type => 'http.response.body', body => '', more => 0 });
     await $send->({
         type    => 'http.response.trailers',
         headers => [ [ 'x-stream-complete', '1' ] ],

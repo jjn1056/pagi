@@ -3,6 +3,24 @@
 0.003002
 
   [Specification]
+  - Www 0.7: the connection object gains run_until_end($code), required on
+    every http, websocket and sse scope. It runs the work $code returns
+    while the scope is open and cancels it if the scope ends first,
+    resolving with no value; the application sends the ending after it if
+    is_connected (what the work produces stays in a closure). It fails with
+    the work's failure, and when something else cancels the work. A server
+    releases what it held for a call once the call settles, so one
+    long-lived scope can make many calls. "Example:
+    Racing Against Disconnect" becomes "Example: Work That Stops When the
+    Client Leaves", and the Cookbook's race becomes the method.
+    PAGI::Upgrading's 0.6 TO 0.7 section covers it. New example
+    20-streaming-echo streams a request body in and a response body out
+    at once, both inside one run_until_end.
+  - Www: an application sends its terminal event only when its work
+    finished ("Application Left a Response Incomplete": one that stopped
+    because its client left MUST NOT send it, since every intermediary in
+    the $send chain still sees it). The examples and the Cookbook show the
+    check.
   - Core spec 0.5 -> 0.6, "Send Completion Contract": a send made after
     the connection has closed, however it ended, still does no work and
     resolves successfully, but on a later turn of the event loop, never
@@ -15,14 +33,9 @@
     pending when the connection closes still settle at once.
   - Www 0.7: a WebSocket send made once the server has sent a Close of its
     own (in reply to the peer's, or on shutdown) is discarded the same way.
-    "Example: Racing Against Disconnect" now races end_future, and teaches
-    it as the one Future to race on every scope type, with the terminal
-    event sent after the race: while the race runs, the only end that can
-    come is one the application did not make, and a closing handshake the
-    client starts is a clean end, which disconnect_future does not report.
-    It covers work whose only waits are sends, and the Cookbook's race does
-    the same. PAGI::Upgrading's 0.6 TO 0.7 section lists both for
-    applications and server implementers.
+    Raced against the scope's end, work whose only waits are sends stops at
+    its next send. PAGI::Upgrading's 0.6 TO 0.7 section lists it for
+    server implementers.
   - Www 0.7, "Header byte safety": a server fails the send for a header
     whose name is not a valid field name or whose value is not a valid
     field value, as RFC 9110 S5.1 and S5.5 define them, in place of a list

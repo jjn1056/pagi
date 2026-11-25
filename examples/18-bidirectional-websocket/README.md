@@ -14,13 +14,18 @@ directions live at once.
 
 It's the tree-of-futures idea applied to a single connection: the handler node
 **branches** into two children the loop turns concurrently, joined with
-`wait_any`:
+`wait_any`, and run inside `run_until_end` on the connection object, so the
+client leaving cancels both:
 
 ```perl
-my $incoming = (async sub { ... await $receive->() ... })->();   # client -> server
-my $outgoing = (async sub { ... await $send->(...) ... })->();   # server -> client
-await Future->wait_any($incoming, $outgoing);   # a disconnect ends incoming -> cancels outgoing
+my $incoming = async sub { ... await $receive->() ... };   # client -> server
+my $outgoing = async sub { ... await $send->(...) ... };   # server -> client
+await $conn->run_until_end(sub { Future->wait_any($incoming->(), $outgoing->()) });
 ```
+
+Only the client ends this session, so nothing is sent after the call. A
+session the server ends itself would send its `websocket.close` there, only if
+`$conn->is_connected` (see `20-streaming-echo`, the HTTP twin of this one).
 
 `$send` and `$receive` never block each other: one branch can sit in
 `await $receive->()` while the other is in `await Future::IO->sleep` then
@@ -72,4 +77,5 @@ branch running concurrently with the incoming one.
 ## Spec References
 
 - WebSocket scope and events – `PAGI::Spec::Www`
+- `run_until_end` – `PAGI::Spec::Www`, "Connection Object Interface"
 - Concurrent branches as a tree of futures – `PAGI::EventLoops`

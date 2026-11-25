@@ -14,8 +14,9 @@ version a server implements is C<< $scope->{pagi}{spec_version} >>.
 =head1 0.6 TO 0.7
 
 Sub-spec 0.7 lets an application issue a send before an earlier one has
-resolved, and requires the server to keep a scope's sends in order.
-That is a new server requirement, so C<spec_version> moves to C<'0.7'>.
+resolved, requires the server to keep a scope's sends in order, and adds
+C<run_until_end> to the connection object. Those are new server
+requirements, so C<spec_version> moves to C<'0.7'>.
 
 =head2 Application authors
 
@@ -26,16 +27,30 @@ order they were called, and a C<websocket.close>, C<sse.close> or final body
 issued behind pending sends takes effect after them. Under 0.6 or earlier,
 keep serializing the sends yourself.
 
-With PAGI core 0.6, a send made after the client has gone resolves on a later
-turn of the event loop, so work whose only waits are sends can be raced
-against the scope's end and stops at its next send; see Www, "Example: Racing
-Against Disconnect", for which Future to race.
+Run work that should stop when the client leaves in
+C<< $conn->run_until_end(sub { ... }) >>, and send the terminal event after it
+only if C<< $conn->is_connected >> (an application that stopped
+because its client left MUST NOT send it; see
+L<PAGI::Spec::Www/"Application Left a Response Incomplete">). On a 0.6 server
+the method does not exist; the closest equivalent keeps the work's Future
+and races it against the scope's end:
+
+    my $work = $produce->();
+    await Future->wait_any($work, $conn->end_future);
+    return unless $work->is_done;
+
+That race leaves a callback on the connection until the scope ends, and waits
+for the end if something else cancels the work. With PAGI core 0.6, a send
+made after the client has gone resolves on a later turn of the event loop, so
+work whose only waits are sends stops at its next send either way.
 
 =head2 Framework authors
 
 A helper that serializes its sends only to satisfy the old rule can stop on
 a 0.7 scope. Gate on C<spec_version> if the framework also runs on older
-servers.
+servers. C<run_until_end> is present on a scope reporting C<0.7> or
+later; anything that supplies its own C<pagi.connection> (a test client, a
+wrapper) must provide it too.
 
 Middleware that reads the headers an application sent compares their names
 case-insensitively: they SHOULD be lowercase, and no longer MUST be.
@@ -85,6 +100,13 @@ there, never reaches it. A send after the application's own
 C<websocket.close> or C<sse.close> still fails, and sends pending when the
 connection closes still settle at once. Report C<< version => '0.6' >> once
 this holds.
+
+Implement C<run_until_end> as L<PAGI::Spec::Www/"Connection Object
+Interface"> specifies, and settle pending calls in the end delivery as
+L<PAGI::Spec::Www/"State Transition Order"> describes. Keep the pending calls
+in a structure the scope owns and remove each one when it settles: building
+each call on a fresh C<end_future> observer leaves one callback per call on
+the scope's end.
 
 =head1 0.5 TO 0.6
 

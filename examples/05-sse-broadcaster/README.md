@@ -3,8 +3,10 @@
 Streams `text/event-stream` data by emitting:
 - `sse.start` (replaces `http.response.start` for SSE).
 - Multiple `sse.send` events with UTF-8 text payloads.
-- `sse.close` after the last event (skipped if the client already left).
-- Stops early if `sse.disconnect` arrives.
+- The events run in `$conn->run_until_end`, so the stream stops at its next
+  wait when the client leaves.
+- `sse.close` only when every event went: a stream cut short does not claim
+  to be complete.
 
 ## Quick Start
 
@@ -19,12 +21,14 @@ pagi-server --app examples/05-sse-broadcaster/app.pl --port 5000
 ```bash
 # Subscribe to SSE stream (events arrive periodically)
 curl -N -v -H "Accept: text/event-stream" http://localhost:5000/   
-# => event: time
-# => data: Current time: 2024-01-15 10:30:00
+# => event: tick
+# => data: 1
 # =>
-# => event: time
-# => data: Current time: 2024-01-15 10:30:01
-# => ...
+# => event: tick
+# => data: 2
+# =>
+# => event: done
+# => data: finished
 
 # Press Ctrl+C to disconnect
 ```
@@ -33,7 +37,8 @@ curl -N -v -H "Accept: text/event-stream" http://localhost:5000/
 
 ```javascript
 const es = new EventSource('http://localhost:5000/');
-es.addEventListener('time', (e) => console.log('Time:', e.data));
+es.addEventListener('tick', (e) => console.log('tick:', e.data));
+es.addEventListener('done', (e) => { console.log('done:', e.data); es.close(); });
 es.onerror = () => console.log('Connection lost');
 ```
 

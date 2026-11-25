@@ -48,7 +48,7 @@ How you poke an example depends on its protocol:
 1. `01-hello-http` - minimal HTTP response
 2. `02-streaming-response` - chunked body, trailers, disconnect handling
 3. `03-request-body` - reads multi-event request bodies
-4. `04-websocket-echo` - handshake and echo loop
+4. `04-websocket-echo` - handshake and echo loop; `bye` closes from the server's side, after `run_until_end`
 5. `05-sse-broadcaster` - server-sent events
 6. `06-lifespan-state` - lifespan protocol with shared state
 7. `07-extension-fullflush` - middleware using the `fullflush` extension
@@ -60,6 +60,8 @@ How you poke an example depends on its protocol:
 13. `17-event-middleware` - the same source the *right way*: a middleware owns it and delivers its events through `$receive`, so the app just awaits events and switches on `type`
 14. `18-bidirectional-websocket` - full-duplex WebSocket: a receive-loop and an unsolicited server send-loop running concurrently (two branches joined with `wait_any`)
 15. `19-shutdown-cleanup` - per-connection cleanup that finishes before the process exits: a WebSocket app saves each session asynchronously on its `server_shutdown` disconnect, and `lifespan.shutdown` runs after them all
+16. `20-streaming-echo` - an HTTP request body and response body streamed at once: each uploaded number answered as it arrives while a ticker runs on its own, both in one `run_until_end` (the HTTP twin of 18)
+17. `21-sse-endings` - every way an event stream ends -- completed, client left, server idle or write timeout, shutdown, the app's own deadline, a failing source -- and how the app tells them apart after `run_until_end`
 
 ## Embedding & event loops
 
