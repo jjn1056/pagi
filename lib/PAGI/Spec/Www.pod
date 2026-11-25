@@ -601,8 +601,8 @@ Send data inside the work, and the ending -- the terminal body or trailers,
 C<sse.close>, C<websocket.close> -- once, after the call, only if
 C<is_connected> is still true (see L</Application Left a Response
 Incomplete>). A scope that has ended, whether the end cut the work short or
-came just after it finished, reports C<is_connected> false, and the
-application returns without the ending. Why it ended is on the connection,
+the work finished only after the scope had ended, reports C<is_connected>
+false, and the application returns without the ending. Why it ended is on the connection,
 whose terminal facts do not change once it has ended: C<disconnect_reason>
 and C<disconnect_detail>, or, for a WebSocket the peer closed, C<close_code>
 and C<close_reason>.
@@ -3318,9 +3318,10 @@ stall later ones; C<buffered_amount> counts waiting sends. Header byte
 safety refers to RFC 9110 S5.1 and S5.5 instead of listing bytes, so a header
 name must be a token and a value a valid field value. Header names an
 application sends SHOULD be lowercase (they were MUST), and an intermediary
-compares them case-insensitively. C<run_until_end> on the connection object:
-the application sends data inside it and the ending after it, if
-C<is_connected>.
+compares them case-insensitively. C<run_until_end> on the connection object
+runs the work C<$code> returns while the scope is active and cancels it if
+the scope ends first; the application sends data inside it and the ending
+after it, if C<is_connected>.
 
 =item -
 
