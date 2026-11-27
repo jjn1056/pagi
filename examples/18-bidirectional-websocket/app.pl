@@ -25,7 +25,7 @@ async sub app {
     my $conn = $scope->{'pagi.connection'};
 
     my $event = await $receive->();
-    die "Expected websocket.connect" if $event->{type} ne 'websocket.connect';
+    return unless $event->{type} eq 'websocket.connect';    # or the client left during the handshake
     await $send->({ type => 'websocket.accept' });
 
     # Branch 1: receive client messages, echo them back (uppercased for fun).
