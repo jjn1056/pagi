@@ -305,15 +305,16 @@ I<Example: F<examples/04-websocket-echo>>
 
 A WebSocket scope opens with a C<websocket.connect> event that you answer with
 C<websocket.accept>; then you loop, receiving C<websocket.receive> frames and
-sending C<websocket.send>, until C<websocket.disconnect>. Unlike HTTP, one scope
-spans the whole connection:
+sending C<websocket.send>, until C<websocket.disconnect>. If the client leaves
+during the handshake, the first event is C<websocket.disconnect> instead, and
+there is nothing to accept. Unlike HTTP, one scope spans the whole connection:
 
     my $app = async sub {
         my ($scope, $receive, $send) = @_;
         die "Unsupported scope type: $scope->{type}" if $scope->{type} ne 'websocket';
 
         my $event = await $receive->();
-        die "Expected websocket.connect" if $event->{type} ne 'websocket.connect';
+        return unless $event->{type} eq 'websocket.connect';    # or the client left during the handshake
         await $send->({ type => 'websocket.accept' });
 
         while (1) {
